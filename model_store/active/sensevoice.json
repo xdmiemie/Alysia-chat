@@ -1,0 +1,7 @@
+{
+  "model_type": "sensevoice",
+  "version": "sensevoice-small-base-v1",
+  "required_files": [
+    "model_store/registry/sensevoice/sensevoice-small/base-v1/model.pt"
+  ]
+}

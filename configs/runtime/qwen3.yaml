@@ -1,0 +1,9 @@
+service_name: llama-server
+host: 127.0.0.1
+port: 8080
+model_manifest: model_store/active/qwen3.json
+context_size: 8192
+temperature: 0.7
+top_p: 0.9
+top_k: 20
+max_tokens: 256

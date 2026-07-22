@@ -1,0 +1,4 @@
+service_name: gpt-sovits-service
+host: 127.0.0.1
+port: 5002
+model_manifest: model_store/active/gpt_sovits_elysia.json

@@ -1,0 +1,6 @@
+name: gpt-sovits-training
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip

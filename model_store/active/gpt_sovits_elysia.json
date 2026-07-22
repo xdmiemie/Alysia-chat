@@ -1,0 +1,10 @@
+{
+  "model_type": "gpt_sovits",
+  "character_id": "elysia",
+  "version": "base-v1",
+  "required_files": [
+    "model_store/registry/gpt_sovits/elysia/base-v1/gpt.ckpt",
+    "model_store/registry/gpt_sovits/elysia/base-v1/sovits.pth",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/neutral.wav"
+  ]
+}

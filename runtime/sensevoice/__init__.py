@@ -1,0 +1,1 @@
+"""SenseVoice service package placeholder."""

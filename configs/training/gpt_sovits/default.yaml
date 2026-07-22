@@ -1,0 +1,4 @@
+character_id: elysia
+dataset_root: datasets/gpt_sovits/elysia
+runs_dir: training/gpt_sovits/runs
+seed: 20260722

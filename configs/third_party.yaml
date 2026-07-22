@@ -1,0 +1,16 @@
+dependencies:
+  sensevoice:
+    repo: https://github.com/FunAudioLLM/SenseVoice
+    path: third_party/SenseVoice
+    pinned_commit: null
+    install_status: pending
+  llama_cpp:
+    repo: https://github.com/ggml-org/llama.cpp
+    path: third_party/llama.cpp
+    pinned_commit: null
+    install_status: pending
+  gpt_sovits:
+    repo: https://github.com/RVC-Boss/GPT-SoVITS
+    path: third_party/GPT-SoVITS
+    pinned_commit: null
+    install_status: pending

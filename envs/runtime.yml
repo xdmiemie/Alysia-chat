@@ -1,0 +1,8 @@
+name: companion-runtime
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - -r ../runtime/audio/requirements.txt

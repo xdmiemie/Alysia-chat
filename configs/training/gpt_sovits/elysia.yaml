@@ -1,0 +1,6 @@
+character_id: elysia
+dataset_root: datasets/gpt_sovits/elysia
+runs_dir: training/gpt_sovits/runs
+language: zh
+speaker: elysia
+seed: 20260722
