@@ -22,7 +22,7 @@ datasets/**/test/
 
 training/**/runs/
 
-model_store/registry/
+model_store/registry/*
 model_store/staging/
 model_store/rejected/
 model_store/cache/
@@ -37,6 +37,34 @@ model_store/cache/
 
 !model_store/active/
 !model_store/active/*.json
+
+# Track only the current TTS base model in Git/LFS. Future registry versions
+# remain ignored unless explicitly allowlisted here.
+!model_store/registry/gpt_sovits/
+model_store/registry/gpt_sovits/*
+!model_store/registry/gpt_sovits/elysia/
+model_store/registry/gpt_sovits/elysia/*
+!model_store/registry/gpt_sovits/elysia/base-v1/
+model_store/registry/gpt_sovits/elysia/base-v1/*
+!model_store/registry/gpt_sovits/elysia/base-v1/README.md
+!model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2-e15.ckpt
+!model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2_e24_s13080.pth
+!model_store/registry/gpt_sovits/elysia/base-v1/references/
+model_store/registry/gpt_sovits/elysia/base-v1/references/*
+!model_store/registry/gpt_sovits/elysia/base-v1/references/gentle.txt
+!model_store/registry/gpt_sovits/elysia/base-v1/references/gentle.wav
+!model_store/registry/gpt_sovits/elysia/base-v1/references/happy.txt
+!model_store/registry/gpt_sovits/elysia/base-v1/references/happy.wav
+!model_store/registry/gpt_sovits/elysia/base-v1/references/neutral.txt
+!model_store/registry/gpt_sovits/elysia/base-v1/references/neutral.wav
+!model_store/registry/gpt_sovits/elysia/base-v1/references/neutral_trimmed.txt
+!model_store/registry/gpt_sovits/elysia/base-v1/references/neutral_trimmed.wav
+!model_store/registry/gpt_sovits/elysia/base-v1/references/sad.txt
+!model_store/registry/gpt_sovits/elysia/base-v1/references/sad.wav
+!model_store/registry/gpt_sovits/elysia/base-v1/references/serious.txt
+!model_store/registry/gpt_sovits/elysia/base-v1/references/serious.wav
+!model_store/registry/gpt_sovits/elysia/base-v1/references/surprised.txt
+!model_store/registry/gpt_sovits/elysia/base-v1/references/surprised.wav
 
 .vscode/
 third_party/GPT-SoVITS/*
