@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -68,6 +69,19 @@ def check_cuda() -> CheckResult:
     if torch is not None and torch.cuda.is_available():
         return CheckResult("CUDA available", "OK", f"torch {torch.__version__}")
 
+    env_python = _gpt_sovits_env_path("python.exe")
+    if env_python.exists():
+        code, output = run_command(
+            [
+                str(env_python),
+                "-c",
+                "import torch; print(torch.__version__ if torch.cuda.is_available() else '')",
+            ],
+            timeout=8,
+        )
+        if code == 0 and output.strip():
+            return CheckResult("CUDA available", "OK", f"GPTSoVits torch {output.strip().splitlines()[0]}")
+
     code, output = run_command(["nvcc", "--version"], timeout=4)
     if code == 0 and "release" in output:
         version_line = next((line.strip() for line in output.splitlines() if "release" in line), "")
@@ -79,6 +93,9 @@ def check_cuda() -> CheckResult:
 def check_ffmpeg() -> CheckResult:
     exe = shutil.which("ffmpeg")
     if not exe:
+        env_ffmpeg = _gpt_sovits_env_path("Library", "bin", "ffmpeg.exe")
+        exe = str(env_ffmpeg) if env_ffmpeg.exists() else None
+    if not exe:
         return CheckResult("FFmpeg available", "FAIL", "ffmpeg was not found on PATH")
 
     code, output = run_command([exe, "-version"], timeout=4)
@@ -86,6 +103,13 @@ def check_ffmpeg() -> CheckResult:
         first_line = output.splitlines()[0] if output else exe
         return CheckResult("FFmpeg available", "OK", first_line)
     return CheckResult("FFmpeg available", "FAIL", output or exe)
+
+
+def _gpt_sovits_env_path(*parts: str) -> Path:
+    conda_root = os.environ.get("CONDA_ROOT")
+    if conda_root:
+        return Path(conda_root) / "envs" / "GPTSoVits" / Path(*parts)
+    return Path.home() / "miniconda3" / "envs" / "GPTSoVits" / Path(*parts)
 
 
 def _sounddevice():

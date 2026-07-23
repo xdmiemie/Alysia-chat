@@ -3,8 +3,14 @@
   "character_id": "elysia",
   "version": "base-v1",
   "required_files": [
-    "model_store/registry/gpt_sovits/elysia/base-v1/gpt.ckpt",
-    "model_store/registry/gpt_sovits/elysia/base-v1/sovits.pth",
-    "model_store/registry/gpt_sovits/elysia/base-v1/references/neutral.wav"
+    "model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2-e15.ckpt",
+    "model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2_e24_s13080.pth",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/neutral.wav",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/neutral_trimmed.wav",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/happy.wav",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/gentle.wav",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/sad.wav",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/surprised.wav",
+    "model_store/registry/gpt_sovits/elysia/base-v1/references/serious.wav"
   ]
 }

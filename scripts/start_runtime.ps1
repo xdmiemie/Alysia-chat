@@ -3,6 +3,7 @@ param(
     [switch]$SenseVoice,
     [switch]$Qwen3,
     [switch]$LlamaServer,
+    [switch]$GPTSoVITS,
     [switch]$Doctor
 )
 
@@ -19,7 +20,7 @@ if (Test-Path $CondaPrefixPython) {
     $Python = "python"
 }
 
-if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer)) {
+if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer -and -not $GPTSoVITS)) {
     & $Python (Join-Path $ProjectRoot "scripts\doctor.py")
 }
 
@@ -37,4 +38,8 @@ if ($LlamaServer) {
 
 if ($Qwen3) {
     & $Python (Join-Path $ProjectRoot "scripts\qwen3_chat.py")
+}
+
+if ($GPTSoVITS) {
+    & $Python -m uvicorn runtime.gpt_sovits.api:app --host 127.0.0.1 --port 5002
 }

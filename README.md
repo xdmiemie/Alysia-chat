@@ -40,6 +40,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -AudioLoopback
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -Qwen3
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
 powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
 ```
 
@@ -153,3 +154,108 @@ storage/logs/qwen3-llama-server.out.log
 
 The chat client sends `/no_think`, keeps the last 8 turns, requires structured
 JSON, and retries once when the model returns invalid JSON or `<think>`.
+
+## Stage 4 GPT-SoVITS Speech
+
+Prepare GPT-SoVITS weights and reference audio under the paths listed in
+`model_store/active/gpt_sovits_elysia.json`:
+
+```text
+model_store/registry/gpt_sovits/elysia/base-v1/gpt.ckpt
+model_store/registry/gpt_sovits/elysia/base-v1/sovits.pth
+model_store/registry/gpt_sovits/elysia/base-v1/references/neutral.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/happy.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/gentle.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/sad.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/surprised.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/serious.wav
+```
+
+Put the exact transcript for each reference clip in
+`configs/characters/elysia/reference_texts.yaml`, then start the upstream
+GPT-SoVITS API at `http://127.0.0.1:9880/tts`.
+
+Check that all required weights and reference clips are present:
+
+```powershell
+.venv\Scripts\python.exe scripts/check_gpt_sovits_assets.py
+```
+
+Start the project wrapper service:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r runtime/gpt_sovits/requirements.txt
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
+```
+
+Generate a single WAV or run the fixed 20-sentence acceptance set:
+
+```powershell
+.venv\Scripts\python.exe scripts/gpt_sovits_speech.py "辛苦啦，今天先休息一下。" --emotion gentle
+.venv\Scripts\python.exe scripts/gpt_sovits_acceptance.py
+```
+
+The wrapper exposes:
+
+```http
+POST /v1/audio/speech
+```
+
+The request body is:
+
+```json
+{
+  "text": "辛苦啦，今天是不是发生了什么让你很累的事情？",
+  "character_id": "elysia",
+  "emotion": "gentle",
+  "speed": 0.95,
+  "format": "wav"
+}
+```
+
+## Stage 4 Current Runbook
+
+The current Elysia GPT-SoVITS assets are:
+
+```text
+model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2-e15.ckpt
+model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2_e24_s13080.pth
+model_store/registry/gpt_sovits/elysia/base-v1/references/neutral_trimmed.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/happy.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/gentle.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/sad.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/surprised.wav
+model_store/registry/gpt_sovits/elysia/base-v1/references/serious.wav
+```
+
+Each reference clip needs a same-name `.txt` transcript beside the `.wav`.
+GPT-SoVITS requires reference audio to be between 3 and 10 seconds; the neutral
+emotion uses `neutral_trimmed.wav` because the original `neutral.wav` is longer
+than 10 seconds.
+
+Start the official upstream API:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_gpt_sovits_upstream.ps1
+```
+
+Stop it with `Ctrl+C`. In another terminal, generate one WAV or run acceptance:
+
+```powershell
+.venv\Scripts\python.exe scripts/gpt_sovits_speech.py "text to synthesize" --emotion gentle
+.venv\Scripts\python.exe scripts/gpt_sovits_acceptance.py
+```
+
+Optional one-shot smoke check:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_gpt_sovits_stage4_smoke.ps1
+```
+
+Windows compatibility packages used by this setup:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/patch_gpt_sovits_windows.ps1
+& "C:\Users\MLTZ\miniconda3\envs\GPTSoVits\Scripts\pip.exe" install torchcodec opencc-python-reimplemented
+& "C:\Users\MLTZ\miniconda3\envs\GPTSoVits\python.exe" -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('averaged_perceptron_tagger'); nltk.download('cmudict')"
+```

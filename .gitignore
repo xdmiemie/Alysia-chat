@@ -37,3 +37,7 @@ model_store/cache/
 
 !model_store/active/
 !model_store/active/*.json
+
+.vscode/
+third_party/GPT-SoVITS/*
+!third_party/GPT-SoVITS/.gitkeep

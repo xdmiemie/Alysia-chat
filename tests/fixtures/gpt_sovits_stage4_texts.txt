@@ -1,0 +1,20 @@
+{"text":"辛苦啦，今天是不是发生了什么让你很累的事情？","emotion":"gentle","speed":0.95}
+{"text":"早上好，今天也要轻轻地开始哦。","emotion":"neutral","speed":1.0}
+{"text":"太棒啦，你刚刚真的做得很好！","emotion":"happy","speed":1.05}
+{"text":"没关系，难过的时候慢一点也可以。","emotion":"sad","speed":0.92}
+{"text":"欸？这个消息也太突然了吧！","emotion":"surprised","speed":1.08}
+{"text":"这件事我们认真一点处理，好吗？","emotion":"serious","speed":0.96}
+{"text":"今天是2026-07-23，记得把重要的事情写下来。","emotion":"neutral","speed":1.0}
+{"text":"我会在8点30分提醒你喝水。","emotion":"gentle","speed":0.98}
+{"text":"OK，那我们先把CPU、GPU和API这些词读清楚。","emotion":"neutral","speed":1.0}
+{"text":"**别担心**，我会陪你把问题拆小一点。","emotion":"gentle","speed":0.95}
+{"text":"第一步，先保存文件；第二步，再运行测试。","emotion":"serious","speed":0.97}
+{"text":"哈哈，这个结果真让人开心。","emotion":"happy","speed":1.06}
+{"text":"如果你累了，我们就先休息五分钟。","emotion":"gentle","speed":0.94}
+{"text":"不要急，我在这里。","emotion":"sad","speed":0.9}
+{"text":"这段话稍微长一点，用来测试切句是否自然：我们先确认模型服务，再检查返回音频，最后把生成的文件保存到目录里。","emotion":"neutral","speed":1.0}
+{"text":"Markdown链接 [测试](https://example.com) 应该不会被读成网址。","emotion":"neutral","speed":1.0}
+{"text":"特殊符号 @#$% 会被过滤掉，只保留能朗读的内容。","emotion":"serious","speed":0.96}
+{"text":"英文缩写 TTS 和 ASR 都是语音系统里的关键部分。","emotion":"neutral","speed":1.0}
+{"text":"今天的小目标已经完成啦，给你一点掌声。","emotion":"happy","speed":1.04}
+{"text":"晚安，愿你一会儿睡得安稳。","emotion":"gentle","speed":0.93}
