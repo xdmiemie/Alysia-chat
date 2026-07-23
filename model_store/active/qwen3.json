@@ -2,6 +2,6 @@
   "model_type": "qwen3",
   "version": "qwen3-8b-q4-k-m-base-v1",
   "required_files": [
-    "model_store/registry/qwen3/qwen3-8b/q4-k-m-base-v1/qwen3-8b-q4_k_m.gguf"
+    "model_store/registry/qwen3/qwen3-8b/q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf"
   ]
 }

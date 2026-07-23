@@ -38,6 +38,8 @@ upstream repositories are tracked in `configs/third_party.yaml`.
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -AudioLoopback
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -Qwen3
 powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
 ```
 
@@ -109,3 +111,45 @@ The service exposes:
 ```http
 POST /v1/audio/transcriptions
 ```
+
+## Stage 3 Qwen3 Character Chat
+
+Prepare a Qwen3 GGUF model at the path referenced by
+`model_store/active/qwen3.json`.
+
+```powershell
+winget install llama.cpp
+.venv\Scripts\python.exe -m pip install -r runtime/qwen3/requirements.txt
+.venv\Scripts\python.exe scripts/download_qwen3_model.py
+```
+
+Start the local `llama-server` before using the chat client:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer
+```
+
+In another terminal, send a single message, run the acceptance check, or start
+an interactive chat:
+
+```powershell
+.venv\Scripts\python.exe scripts/qwen3_chat.py "今天有点累" --json
+.venv\Scripts\python.exe scripts/qwen3_acceptance.py
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -Qwen3
+```
+
+Stop the local Qwen3 service when you are done testing:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
+```
+
+Qwen3 service logs are written to:
+
+```text
+storage/logs/qwen3-llama-server.err.log
+storage/logs/qwen3-llama-server.out.log
+```
+
+The chat client sends `/no_think`, keeps the last 8 turns, requires structured
+JSON, and retries once when the model returns invalid JSON or `<think>`.
