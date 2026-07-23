@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
+from runtime.audio.audio_format import WaveMetrics
 from runtime.audio.audio_format import inspect_wav
 from runtime.gpt_sovits.backend import write_audio_bytes
 from runtime.gpt_sovits.types import SpeechRequest, SpeechResult
@@ -32,6 +33,21 @@ class ChatSession(Protocol):
 
 class Synthesizer(Protocol):
     def synthesize(self, request: SpeechRequest) -> SpeechResult:
+        ...
+
+
+class LiveRecording(Protocol):
+    wav_path: Path
+    metrics: WaveMetrics
+
+
+class LiveRecorder(Protocol):
+    def listen_once(self, recordings_dir: str | Path) -> LiveRecording:
+        ...
+
+
+class Speaker(Protocol):
+    def play(self, audio_path: str | Path) -> None:
         ...
 
 
@@ -232,7 +248,176 @@ class Stage5DialogueRunner:
         return write_audio_bytes(self.output_dir / filename, speech.audio_bytes)
 
 
+class RealtimeDialogueRunner:
+    def __init__(
+        self,
+        transcriber: Transcriber,
+        chat_session: ChatSession,
+        synthesizer: Synthesizer,
+        recorder: LiveRecorder,
+        speaker: Speaker,
+        recordings_dir: str | Path = "storage/recordings/stage6",
+        output_dir: str | Path = "storage/generated_audio/stage6_dialogue",
+        character_id: str = "elysia",
+        asr_fallback_text: str = DEFAULT_ASR_FALLBACK_TEXT,
+        llm_fallback_text: str = DEFAULT_LLM_FALLBACK_TEXT,
+    ) -> None:
+        self.transcriber = transcriber
+        self.chat_session = chat_session
+        self.synthesizer = synthesizer
+        self.recorder = recorder
+        self.speaker = speaker
+        self.recordings_dir = Path(recordings_dir)
+        self.output_dir = Path(output_dir)
+        self.character_id = character_id
+        self.asr_fallback_text = asr_fallback_text
+        self.llm_fallback_text = llm_fallback_text
+
+    def run(self, max_turns: int | None = None) -> list[DialogueTurnResult]:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.recordings_dir.mkdir(parents=True, exist_ok=True)
+        results: list[DialogueTurnResult] = []
+        index = 1
+        while max_turns is None or index <= max_turns:
+            result = self.run_one(index)
+            results.append(result)
+            self.append_manifest(result)
+            index += 1
+        return results
+
+    def run_one(self, index: int) -> DialogueTurnResult:
+        request_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+        states: list[str] = []
+        created_at = datetime.now().isoformat(timespec="seconds")
+        started = time.perf_counter()
+        after_speech_started = started
+
+        def set_state(state: str) -> str:
+            states.append(state)
+            return state
+
+        set_state("IDLE")
+        timings = {
+            "recording_ms": 0,
+            "input_audio_ms": 0,
+            "asr_ms": None,
+            "asr_inference_ms": None,
+            "llm_first_token_ms": None,
+            "llm_total_ms": None,
+            "tts_ms": None,
+            "tts_backend_ms": None,
+            "total_after_speech_ms": None,
+            "total_ms": None,
+        }
+        transcription: TranscriptionResult | None = None
+        reply: CharacterReply | None = None
+        input_audio = ""
+        output_path = ""
+        ok = False
+        error = ""
+
+        try:
+            set_state("LISTENING")
+            recording = self.recorder.listen_once(self.recordings_dir)
+            input_audio = str(recording.wav_path)
+            timings["recording_ms"] = int(recording.metrics.duration_seconds * 1000)
+            timings["input_audio_ms"] = timings["recording_ms"]
+            after_speech_started = time.perf_counter()
+            set_state("SPEECH_CAPTURED")
+
+            set_state("TRANSCRIBING")
+            asr_started = time.perf_counter()
+            transcription = self.transcriber.transcribe(recording.wav_path)
+            timings["asr_ms"] = _elapsed_ms(asr_started)
+            timings["asr_inference_ms"] = transcription.inference_ms
+
+            if transcription.skipped or not transcription.text.strip():
+                error = transcription.reason or "SenseVoice returned no speech text"
+                reply = CharacterReply(
+                    reply=self.asr_fallback_text,
+                    emotion="gentle",
+                    intensity=0.55,
+                    speed=0.95,
+                )
+            else:
+                set_state("GENERATING_REPLY")
+                llm_started = time.perf_counter()
+                try:
+                    reply = self.chat_session.chat(transcription.text)
+                    timings["llm_total_ms"] = _elapsed_ms(llm_started)
+                    timings["llm_first_token_ms"] = timings["llm_total_ms"]
+                    ok = True
+                except Exception as exc:
+                    timings["llm_total_ms"] = _elapsed_ms(llm_started)
+                    error = f"Qwen3 failed: {exc}"
+                    reply = CharacterReply(
+                        reply=self.llm_fallback_text,
+                        emotion="gentle",
+                        intensity=0.55,
+                        speed=0.95,
+                    )
+
+            set_state("SYNTHESIZING")
+            tts_started = time.perf_counter()
+            speech = self.synthesizer.synthesize(
+                SpeechRequest(
+                    text=reply.reply,
+                    character_id=self.character_id,
+                    emotion=reply.emotion,
+                    speed=reply.speed,
+                    format="wav",
+                )
+            )
+            timings["tts_ms"] = _elapsed_ms(tts_started)
+            timings["tts_backend_ms"] = speech.backend_ms
+            output_path = str(self._write_turn_audio(index, request_id, speech))
+
+            set_state("PLAYING")
+            self.speaker.play(output_path)
+            set_state("PLAYED")
+        except KeyboardInterrupt:
+            error = "interrupted"
+            set_state("INTERRUPTED")
+            raise
+        except Exception as exc:
+            error = error or str(exc)
+            set_state("FAILED")
+        finally:
+            set_state("IDLE")
+            timings["total_after_speech_ms"] = _elapsed_ms_since(after_speech_started)
+            timings["total_ms"] = _elapsed_ms_since(started)
+
+        return DialogueTurnResult(
+            request_id=request_id,
+            index=index,
+            ok=ok and bool(output_path),
+            input_audio=input_audio,
+            output_audio=output_path,
+            state=states[-1],
+            states=tuple(states),
+            error=error,
+            transcription=transcription.to_dict() if transcription else None,
+            reply=reply.to_dict() if reply else None,
+            timings=StageTiming(**timings),
+            created_at=created_at,
+        )
+
+    def _write_turn_audio(self, index: int, request_id: str, speech: SpeechResult) -> Path:
+        filename = f"{index:02d}-{request_id}.wav"
+        return write_audio_bytes(self.output_dir / filename, speech.audio_bytes)
+
+    def append_manifest(self, result: DialogueTurnResult) -> None:
+        manifest_path = self.output_dir / "manifest.jsonl"
+        with manifest_path.open("a", encoding="utf-8") as manifest:
+            manifest.write(json.dumps(result.to_dict(), ensure_ascii=False) + "\n")
+
+
 def default_stage5_output_dir(base_dir: str | Path = "storage/generated_audio/stage5_dialogue") -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path(base_dir) / timestamp
+
+
+def default_stage6_output_dir(base_dir: str | Path = "storage/generated_audio/stage6_dialogue") -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return Path(base_dir) / timestamp
 

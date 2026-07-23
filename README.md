@@ -3,16 +3,14 @@
 This repository follows the staged plan in `项目阶段要求.md`.
 
 Stage 0 establishes the project skeleton, configuration files, environment
-definitions, model manifests, Git repository, and diagnostics. Stage 1 implements
-a local microphone-to-speaker loopback. It does not call ASR, LLM, or TTS
-services yet.
+definitions, model manifests, Git repository, and diagnostics. Stages 1-6 build
+from local audio loopback to a realtime microphone dialogue app that starts and
+stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-5 are complete. The remaining plan is:
+Stages 0-6 are complete. The remaining plan is:
 
-- Stage 6: microphone streaming input, speaker streaming output, and one app
-  entry that starts and stops required model services.
 - Stage 7: Qwen3 role-training pipeline with dataset-swappable configs,
   resume support, and checkpoint retention.
 - Stage 8: TTS training pipeline with the same dataset, resume, and checkpoint
@@ -48,6 +46,7 @@ upstream repositories are tracked in `configs/third_party.yaml`.
 ## Runtime Scripts
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_app.ps1 -Character elysia
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -AudioLoopback
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer
@@ -59,6 +58,38 @@ powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
 
 `-GPTSoVITS` starts the official GPT-SoVITS upstream API on port `9880`.
 `-GPTSoVITSWrapper` starts this project's optional wrapper API on port `5002`.
+
+## Stage 6 Realtime App
+
+The main app entry starts Qwen3 `llama-server` on port `8080` and the official
+GPT-SoVITS upstream API on port `9880` when they are not already running. It
+waits for health checks, starts the Python microphone dialogue loop, and stops
+only the model processes it started when you press `Ctrl+C` or the app exits.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_app.ps1 -Character elysia
+```
+
+For a bounded acceptance run, stop after 20 complete microphone-to-speaker turns:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_app.ps1 -Character elysia -MaxTurns 20
+```
+
+The Python app can also be run directly when Qwen3 and GPT-SoVITS are already
+up:
+
+```powershell
+.venv\Scripts\python.exe -m runtime.app.main --character-id elysia --max-turns 3
+```
+
+Microphone capture uses 16 kHz mono PCM, 30 ms VAD frames, 450 ms pre-roll, and
+WebRTC VAD when available. If `webrtcvad` is not installed, it falls back to RMS
+energy with an adaptive noise floor. Generated replies are played immediately
+while microphone listening is paused, and per-turn audio plus `manifest.jsonl`
+are written under `storage/generated_audio/stage6_dialogue/<timestamp>/`.
+Captured utterances, metrics, and VAD event logs are written under
+`storage/recordings/stage6/`.
 
 ## Install stage 1 dependencies
 
@@ -278,7 +309,7 @@ Stop it with `Ctrl+C`. In another terminal, generate one WAV or run acceptance:
 Optional one-shot smoke check:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_gpt_sovits_stage4_smoke.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/run_gpt_sovits_stage4_smoke.ps1
 ```
 
 Windows compatibility packages used by this setup:

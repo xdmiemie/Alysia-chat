@@ -6,7 +6,7 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $UpstreamScript = Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1"
 $LogsDir = Join-Path $ProjectRoot "storage\logs"
 $OutLog = Join-Path $LogsDir "gpt-sovits-upstream.out.log"
