@@ -8,6 +8,7 @@ top_p: 0.9
 top_k: 20
 max_tokens: 256
 max_history_turns: 8
+few_shot_examples: 6
 request_timeout_seconds: 60
 character_config: configs/characters/elysia/character.yaml
 system_prompt: configs/characters/elysia/system_prompt.txt

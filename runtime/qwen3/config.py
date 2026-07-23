@@ -18,6 +18,7 @@ class Qwen3Config:
     top_k: int = 20
     max_tokens: int = 256
     max_history_turns: int = 8
+    few_shot_examples: int = 6
     request_timeout_seconds: float = 60.0
     character_config: Path = Path("configs/characters/elysia/character.yaml")
     system_prompt: Path = Path("configs/characters/elysia/system_prompt.txt")
@@ -41,6 +42,7 @@ def load_qwen3_config(path: str | Path = "configs/runtime/qwen3.yaml") -> Qwen3C
         top_k=int(raw.get("top_k", Qwen3Config.top_k)),
         max_tokens=int(raw.get("max_tokens", Qwen3Config.max_tokens)),
         max_history_turns=int(raw.get("max_history_turns", Qwen3Config.max_history_turns)),
+        few_shot_examples=int(raw.get("few_shot_examples", Qwen3Config.few_shot_examples)),
         request_timeout_seconds=float(
             raw.get("request_timeout_seconds", Qwen3Config.request_timeout_seconds)
         ),

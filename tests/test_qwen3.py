@@ -5,9 +5,9 @@ import json
 import pytest
 
 from runtime.qwen3.config import Qwen3Config
-from runtime.qwen3.prompt import build_system_prompt
+from runtime.qwen3.prompt import build_example_messages, build_system_prompt
 from runtime.qwen3.service import Qwen3ChatSession, parse_character_reply
-from runtime.qwen3.types import ChatMessage
+from runtime.qwen3.types import CharacterReply, ChatMessage
 
 
 class FakeChatClient:
@@ -131,3 +131,16 @@ def test_system_prompt_contains_no_think_and_json_contract(tmp_path):
     assert "Return only valid JSON" in prompt
     assert "<think>" in prompt
     assert "Never claim to be an AI assistant" in prompt
+
+
+def test_build_example_messages_selects_relevant_few_shots():
+    examples = [
+        ("早上好", CharacterReply("早安呀。", "gentle", 0.5, 1.0)),
+        ("我代码报错了", CharacterReply("别急，我们一点点看。", "serious", 0.6, 0.96)),
+        ("我今天很开心", CharacterReply("那太好了。", "happy", 0.7, 1.04)),
+    ]
+
+    messages = build_example_messages(examples, user_text="代码又报错了", limit=1)
+
+    assert messages[0].role == "user"
+    assert messages[0].content.endswith("我代码报错了")

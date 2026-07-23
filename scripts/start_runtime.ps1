@@ -4,6 +4,7 @@ param(
     [switch]$Qwen3,
     [switch]$LlamaServer,
     [switch]$GPTSoVITS,
+    [switch]$GPTSoVITSWrapper,
     [switch]$Doctor
 )
 
@@ -20,7 +21,7 @@ if (Test-Path $CondaPrefixPython) {
     $Python = "python"
 }
 
-if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer -and -not $GPTSoVITS)) {
+if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer -and -not $GPTSoVITS -and -not $GPTSoVITSWrapper)) {
     & $Python (Join-Path $ProjectRoot "scripts\doctor.py")
 }
 
@@ -41,5 +42,9 @@ if ($Qwen3) {
 }
 
 if ($GPTSoVITS) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1")
+}
+
+if ($GPTSoVITSWrapper) {
     & $Python -m uvicorn runtime.gpt_sovits.api:app --host 127.0.0.1 --port 5002
 }

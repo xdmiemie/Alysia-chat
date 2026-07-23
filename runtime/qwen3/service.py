@@ -25,7 +25,7 @@ class Qwen3ChatSession:
         config: Qwen3Config,
         client: ChatCompletionClient,
         system_prompt: str,
-        examples: list[ChatMessage] | None = None,
+        examples: list[tuple[str, CharacterReply]] | None = None,
     ) -> None:
         self.config = config
         self.client = client
@@ -38,7 +38,7 @@ class Qwen3ChatSession:
         config = load_qwen3_config(config_path)
         profile = load_character_profile(config.character_config)
         system_prompt = build_system_prompt(profile, config.system_prompt)
-        examples = build_example_messages(load_examples(config.examples_path))
+        examples = load_examples(config.examples_path)
         return cls(
             config=config,
             client=LlamaServerClient(config),
@@ -75,7 +75,7 @@ class Qwen3ChatSession:
 
     def _build_messages(self, user_text: str, retry_reason: str | None) -> list[ChatMessage]:
         messages = [ChatMessage(role="system", content=self.system_prompt)]
-        messages.extend(self.examples)
+        messages.extend(build_example_messages(self.examples, user_text=user_text, limit=self.config.few_shot_examples))
         for turn in self.turns:
             messages.append(ChatMessage(role="user", content=f"/no_think\n{turn.user}"))
             messages.append(

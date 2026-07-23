@@ -7,6 +7,18 @@ definitions, model manifests, Git repository, and diagnostics. Stage 1 implement
 a local microphone-to-speaker loopback. It does not call ASR, LLM, or TTS
 services yet.
 
+## Stage Roadmap
+
+Stages 0-5 are complete. The remaining plan is:
+
+- Stage 6: microphone streaming input, speaker streaming output, and one app
+  entry that starts and stops required model services.
+- Stage 7: Qwen3 role-training pipeline with dataset-swappable configs,
+  resume support, and checkpoint retention.
+- Stage 8: TTS training pipeline with the same dataset, resume, and checkpoint
+  controls.
+- Stage 9: selectable character/model loading from the Stage 6 app entry.
+
 ## Stage 0 Doctor
 
 ```powershell
@@ -20,7 +32,7 @@ The doctor checks:
 - NVIDIA GPU and CUDA availability
 - FFmpeg on `PATH`
 - microphone and speaker devices
-- runtime ports `8000`, `5001`, `8080`, and `5002`
+- runtime ports `8000`, `5001`, `8080`, `9880`, and `5002`
 - SenseVoice, Qwen3, and GPT-SoVITS model files from `model_store/active/*.json`
 
 Use strict mode when you want a failing exit code for missing hardware, occupied
@@ -41,8 +53,12 @@ powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -AudioLoopbac
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -Qwen3
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITSWrapper
 powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
 ```
+
+`-GPTSoVITS` starts the official GPT-SoVITS upstream API on port `9880`.
+`-GPTSoVITSWrapper` starts this project's optional wrapper API on port `5002`.
 
 ## Install stage 1 dependencies
 
@@ -181,11 +197,18 @@ Check that all required weights and reference clips are present:
 .venv\Scripts\python.exe scripts/check_gpt_sovits_assets.py
 ```
 
-Start the project wrapper service:
+Start the official upstream GPT-SoVITS API. This is the service used by the
+stage 4 CLI scripts, and it listens on port `9880`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
+```
+
+The optional project wrapper listens on port `5002`:
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -r runtime/gpt_sovits/requirements.txt
-powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITSWrapper
 ```
 
 Generate a single WAV or run the fixed 20-sentence acceptance set:
@@ -233,7 +256,13 @@ GPT-SoVITS requires reference audio to be between 3 and 10 seconds; the neutral
 emotion uses `neutral_trimmed.wav` because the original `neutral.wav` is longer
 than 10 seconds.
 
-Start the official upstream API:
+Start the official upstream API on port `9880`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
+```
+
+This is equivalent to running:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_gpt_sovits_upstream.ps1
@@ -259,3 +288,44 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/patch_gpt_sovits_win
 & "C:\Users\MLTZ\miniconda3\envs\GPTSoVits\Scripts\pip.exe" install torchcodec opencc-python-reimplemented
 & "C:\Users\MLTZ\miniconda3\envs\GPTSoVits\python.exe" -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('averaged_perceptron_tagger'); nltk.download('cmudict')"
 ```
+
+## Stage 5 File Dialogue Loop
+
+Stage 5 temporarily skips microphone input and speaker playback. It reads WAV
+questions from `storage/generated_audio/dialogue_questions_20`, runs them through
+SenseVoice, Qwen3, and GPT-SoVITS in order, then writes generated WAV replies to
+`storage/generated_audio/stage5_dialogue/<timestamp>/`.
+
+Start the required model services first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
+```
+
+Stage 5 talks directly to:
+
+```text
+Qwen3 llama-server: http://127.0.0.1:8080
+GPT-SoVITS upstream: http://127.0.0.1:9880/tts
+```
+
+It does not require the project GPT-SoVITS wrapper on port `5002`.
+SenseVoice is loaded in-process from the local model manifest.
+
+Then run:
+
+```powershell
+.venv\Scripts\python.exe scripts/dialogue_stage5.py
+```
+
+Useful options:
+
+```powershell
+.venv\Scripts\python.exe scripts/dialogue_stage5.py --limit 3 --json
+.venv\Scripts\python.exe scripts/dialogue_stage5.py --output-dir storage/generated_audio/stage5_dialogue/manual_run
+```
+
+Each run writes a `manifest.jsonl` with request IDs, state transitions,
+transcribed text, reply metadata, output WAV paths, errors, and per-stage
+timings. The stage 5 loop does not play audio directly.

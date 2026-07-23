@@ -51,11 +51,45 @@ def build_system_prompt(profile: CharacterProfile, prompt_path: str | Path) -> s
     )
 
 
-def build_example_messages(examples: list[tuple[str, CharacterReply]]) -> list[ChatMessage]:
+def build_example_messages(
+    examples: list[tuple[str, CharacterReply]],
+    user_text: str | None = None,
+    limit: int | None = None,
+) -> list[ChatMessage]:
+    selected = _select_examples(examples, user_text=user_text, limit=limit)
     messages: list[ChatMessage] = []
-    for user, assistant in examples:
+    for user, assistant in selected:
         if not user:
             continue
         messages.append(ChatMessage(role="user", content=f"/no_think\n{user}"))
         messages.append(ChatMessage(role="assistant", content=json.dumps(assistant.to_dict(), ensure_ascii=False)))
     return messages
+
+
+def _select_examples(
+    examples: list[tuple[str, CharacterReply]],
+    user_text: str | None,
+    limit: int | None,
+) -> list[tuple[str, CharacterReply]]:
+    if limit is None or limit <= 0 or len(examples) <= limit:
+        return examples
+    query = (user_text or "").strip()
+    if not query:
+        return examples[:limit]
+
+    scored = [(_example_score(query, user), index, (user, assistant)) for index, (user, assistant) in enumerate(examples)]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in scored[:limit]]
+
+
+def _example_score(query: str, candidate: str) -> int:
+    if query == candidate:
+        return 10_000
+    query_chars = set(query)
+    candidate_chars = set(candidate)
+    char_overlap = len(query_chars & candidate_chars)
+    query_bigrams = {query[index : index + 2] for index in range(max(0, len(query) - 1))}
+    candidate_bigrams = {candidate[index : index + 2] for index in range(max(0, len(candidate) - 1))}
+    bigram_overlap = len(query_bigrams & candidate_bigrams)
+    substring_bonus = 20 if query in candidate or candidate in query else 0
+    return substring_bonus + char_overlap + bigram_overlap * 3

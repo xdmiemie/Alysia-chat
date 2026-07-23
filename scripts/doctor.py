@@ -22,7 +22,8 @@ PORTS = {
     "companion-app": 8000,
     "sensevoice-service": 5001,
     "llama-server": 8080,
-    "gpt-sovits-service": 5002,
+    "gpt-sovits-upstream": 9880,
+    "gpt-sovits-wrapper": 5002,
 }
 
 
