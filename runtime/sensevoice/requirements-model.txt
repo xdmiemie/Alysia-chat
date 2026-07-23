@@ -1,0 +1,6 @@
+-r requirements.txt
+funasr>=1.2
+modelscope>=1.17
+soundfile>=0.12
+torch>=2.0
+torchaudio>=2.0

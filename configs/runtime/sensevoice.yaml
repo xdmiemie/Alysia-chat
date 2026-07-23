@@ -2,3 +2,6 @@ service_name: sensevoice-service
 host: 127.0.0.1
 port: 5001
 model_manifest: model_store/active/sensevoice.json
+device: cpu
+min_duration_ms: 300
+silence_peak_threshold: 0.002

@@ -11,8 +11,8 @@ services yet.
 
 ```powershell
 conda create -p .venv python=3.10 -y
-.venv\python.exe -m pip install -r runtime/audio/requirements.txt pytest
-.venv\python.exe scripts/doctor.py
+.venv\Scripts\python.exe -m pip install -r runtime/audio/requirements.txt pytest
+.venv\Scripts\python.exe scripts/doctor.py
 ```
 
 The doctor checks:
@@ -27,7 +27,7 @@ Use strict mode when you want a failing exit code for missing hardware, occupied
 ports, or missing model files:
 
 ```powershell
-.venv\python.exe scripts/doctor.py --strict
+.venv\Scripts\python.exe scripts/doctor.py --strict
 ```
 
 The third-party source locations are reserved under `third_party/`, and their
@@ -45,26 +45,26 @@ powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
 
 ```powershell
 conda create -p .venv python=3.10 -y
-.venv\python.exe -m pip install -r runtime/audio/requirements.txt
+.venv\Scripts\python.exe -m pip install -r runtime/audio/requirements.txt
 ```
 
 ## List audio devices
 
 ```powershell
-.venv\python.exe scripts/audio_loopback.py --list-devices
+.venv\Scripts\python.exe scripts/audio_loopback.py --list-devices
 ```
 
 Put the desired device indexes into `configs/runtime/audio.yaml`, or override
 them on the command line:
 
 ```powershell
-.venv\python.exe scripts/audio_loopback.py --input-device 1 --output-device 3
+.venv\Scripts\python.exe scripts/audio_loopback.py --input-device 1 --output-device 3
 ```
 
 ## Run the stage 1 acceptance loop
 
 ```powershell
-.venv\python.exe scripts/audio_loopback.py
+.venv\Scripts\python.exe scripts/audio_loopback.py
 ```
 
 Flow:
@@ -79,3 +79,33 @@ The WAV file is saved and played back automatically
 Recordings are 16 kHz, 16-bit, mono PCM/WAV files. Each recording gets a sibling
 JSON metrics file containing duration, sample rate, peak volume, clipping status,
 and saved path.
+
+## Stage 2 SenseVoice Transcription
+
+Install the lightweight service dependencies:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r runtime/sensevoice/requirements.txt
+```
+
+Install the model backend dependencies in the dedicated SenseVoice environment
+when you are ready to run the real model:
+
+```powershell
+conda env create -f envs/sensevoice.yml
+```
+
+Put the SenseVoiceSmall model files under the path referenced by
+`model_store/active/sensevoice.json`, then run:
+
+```powershell
+.venv\Scripts\python.exe scripts/download_sensevoice_model.py
+.venv\Scripts\python.exe scripts/sensevoice_transcribe.py test_audio.WAV --json
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -SenseVoice
+```
+
+The service exposes:
+
+```http
+POST /v1/audio/transcriptions
+```
