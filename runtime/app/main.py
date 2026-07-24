@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from runtime.app.orchestrator import RealtimeDialogueRunner, default_stage6_output_dir
 from runtime.audio.devices import list_devices
+from runtime.audio.devices import select_input_device, select_output_device
 from runtime.audio.player import play_wav
 from runtime.audio.vad_recorder import RealtimeVadRecorder, VadConfig
 from runtime.common.config import load_audio_config
@@ -94,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
             result = runner.run_one(index)
             runner.append_manifest(result)
             _print_result(result, json_output=args.json)
+            if _is_fatal_turn_setup_error(result):
+                print("Fatal realtime setup error; stopping instead of retrying forever.", file=sys.stderr)
+                return 1
             index += 1
     except KeyboardInterrupt:
         print("\nInterrupted. Runtime app stopped.")
@@ -145,17 +149,8 @@ def check_stage6_health(
 
 def _validate_audio_devices(input_device: int | None, output_device: int | None) -> None:
     devices = list_devices()
-    input_candidates = [device for device in devices if device.is_input]
-    output_candidates = [device for device in devices if device.is_output]
-    if not input_candidates:
-        raise RuntimeError("no microphone input device found")
-    if not output_candidates:
-        raise RuntimeError("no speaker output device found")
-
-    if input_device is not None and not any(device.index == input_device and device.is_input for device in devices):
-        raise RuntimeError(f"configured input_device is not a microphone: {input_device}")
-    if output_device is not None and not any(device.index == output_device and device.is_output for device in devices):
-        raise RuntimeError(f"configured output_device is not a speaker: {output_device}")
+    select_input_device(input_device, devices)
+    select_output_device(output_device, devices)
 
 
 def _validate_manifest_files(manifest_path: str | Path, label: str) -> None:
@@ -191,6 +186,10 @@ def _print_result(result, json_output: bool) -> None:
     print(f"[{status}] input={result.input_audio} text={text!r} output={result.output_audio}")
     if result.error:
         print(f"  error={result.error}")
+
+
+def _is_fatal_turn_setup_error(result) -> bool:
+    return bool(result.error and not result.input_audio and not result.output_audio)
 
 
 if __name__ == "__main__":

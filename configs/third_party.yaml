@@ -6,9 +6,9 @@ dependencies:
     install_status: pending
   llama_cpp:
     repo: https://github.com/ggml-org/llama.cpp
-    path: third_party/llama.cpp
+    path: tools/llama.cpp
     pinned_commit: null
-    install_status: pending
+    install_status: bootstrap
   gpt_sovits:
     repo: https://github.com/RVC-Boss/GPT-SoVITS
     path: third_party/GPT-SoVITS

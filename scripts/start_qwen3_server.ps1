@@ -1,5 +1,5 @@
 param(
-    [string]$LlamaCommand = "llama-server",
+    [string]$LlamaExecutable = "",
     [switch]$Background
 )
 
@@ -9,42 +9,32 @@ $ModelPath = Join-Path $ProjectRoot "model_store\registry\qwen3\qwen3-8b\q4-k-m-
 $PidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
 $StdoutLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.out.log"
 $StderrLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.err.log"
-$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 
 if (-not (Test-Path $ModelPath)) {
     throw "Qwen3 GGUF model not found: $ModelPath"
 }
 
-$ResolvedLlamaCommand = Get-Command $LlamaCommand -ErrorAction SilentlyContinue
-if ($ResolvedLlamaCommand) {
-    $LlamaExecutable = $ResolvedLlamaCommand.Source
-} else {
-    $WingetPackages = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
-    $LlamaExecutable = Get-ChildItem -Path $WingetPackages -Recurse -Filter "llama-server.exe" -ErrorAction SilentlyContinue |
+if ([string]::IsNullOrWhiteSpace($LlamaExecutable)) {
+    $LlamaToolRoot = Join-Path $ProjectRoot "tools\llama.cpp"
+    $LlamaExecutable = Get-ChildItem -LiteralPath $LlamaToolRoot -Recurse -Filter "llama-server.exe" -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
     if (-not $LlamaExecutable) {
-        throw "Could not find $LlamaCommand on PATH or under WinGet packages. Install llama.cpp or reopen PowerShell after winget install."
+        throw "Could not find project llama-server under tools\llama.cpp. Run quickstart/bootstrap.ps1 first."
     }
 }
-
-if ($LlamaCommand -like "*llama-server*") {
-    $ServerArgs = @(
-        "--model", $ModelPath,
-        "--host", "127.0.0.1",
-        "--port", "8080",
-        "--ctx-size", "8192",
-        "--n-gpu-layers", "99"
-    )
-} else {
-    $ServerArgs = @(
-        "serve",
-        "--model", $ModelPath,
-        "--host", "127.0.0.1",
-        "--port", "8080",
-        "--ctx-size", "8192",
-        "--n-gpu-layers", "99"
-    )
+if (-not (Test-Path -LiteralPath $LlamaExecutable)) {
+    throw "llama-server executable does not exist: $LlamaExecutable"
 }
+
+$LlamaBinDir = Split-Path $LlamaExecutable -Parent
+$env:Path = "$LlamaBinDir;$env:Path"
+$ServerArgs = @(
+    "--model", $ModelPath,
+    "--host", "127.0.0.1",
+    "--port", "8080",
+    "--ctx-size", "8192",
+    "--n-gpu-layers", "99"
+)
 
 if ($Background) {
     New-Item -ItemType Directory -Force -Path (Split-Path $PidFile) | Out-Null
@@ -69,7 +59,9 @@ if ($Background) {
 
     Set-Content -LiteralPath $PidFile -Value $Process.Id
     Write-Host "Started Qwen3 llama-server with PID $($Process.Id)."
+    Write-Host "Using project llama-server: $LlamaExecutable"
     Write-Host "Logs: $StderrLog"
 } else {
+    Write-Host "Using project llama-server: $LlamaExecutable"
     & $LlamaExecutable @ServerArgs
 }

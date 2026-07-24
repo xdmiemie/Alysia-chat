@@ -28,7 +28,7 @@ def _sounddevice():
     except ImportError as exc:
         raise RuntimeError(
             "Missing dependency 'sounddevice'. Install stage 1 requirements with "
-            "'python -m pip install -r runtime/audio/requirements.txt'."
+            "'powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1'."
         ) from exc
     return sd
 
@@ -48,6 +48,34 @@ def list_devices() -> list[AudioDevice]:
             )
         )
     return devices
+
+
+def select_input_device(preferred: int | None = None, devices: Iterable[AudioDevice] | None = None) -> AudioDevice:
+    rows = list(devices if devices is not None else list_devices())
+    if preferred is not None:
+        for device in rows:
+            if device.index == preferred and device.is_input:
+                return device
+        raise RuntimeError(f"configured input_device is not available as a microphone: {preferred}")
+
+    inputs = [device for device in rows if device.is_input]
+    if not inputs:
+        raise RuntimeError("no microphone input device found")
+    return inputs[0]
+
+
+def select_output_device(preferred: int | None = None, devices: Iterable[AudioDevice] | None = None) -> AudioDevice:
+    rows = list(devices if devices is not None else list_devices())
+    if preferred is not None:
+        for device in rows:
+            if device.index == preferred and device.is_output:
+                return device
+        raise RuntimeError(f"configured output_device is not available as a speaker: {preferred}")
+
+    outputs = [device for device in rows if device.is_output]
+    if not outputs:
+        raise RuntimeError("no speaker output device found")
+    return outputs[0]
 
 
 def _single_line(value: str) -> str:

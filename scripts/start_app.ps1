@@ -1,25 +1,19 @@
 param(
     [string]$Character = "elysia",
     [int]$MaxTurns = 0,
+    [string]$Python = "",
     [switch]$SkipHealth
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$CondaPrefixPython = Join-Path $ProjectRoot ".venv\python.exe"
-$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $PidFile = Join-Path $ProjectRoot "storage\temporary\stage6-started-pids.json"
 $QwenPidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
 $GptStdoutLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.out.log"
 $GptStderrLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.err.log"
 
-if (Test-Path $CondaPrefixPython) {
-    $Python = $CondaPrefixPython
-} elseif (Test-Path $VenvPython) {
-    $Python = $VenvPython
-} else {
-    $Python = "python"
-}
+. (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
+$RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
 
 function Test-TcpPort {
     param([string]$HostName, [int]$Port)
@@ -84,7 +78,7 @@ try {
     } else {
         Write-Host "Starting GPT-SoVITS upstream API..."
         $GptScript = Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1"
-        $GptArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $GptScript, "-BindAddr", "127.0.0.1", "-Port", "9880")
+        $GptArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $GptScript, "-Python", $RuntimePython, "-BindAddr", "127.0.0.1", "-Port", "9880")
         $GptProcess = Start-Process `
             -FilePath "powershell" `
             -ArgumentList $GptArgs `
@@ -108,7 +102,8 @@ try {
 
     Push-Location $ProjectRoot
     try {
-        & $Python @AppArgs
+        Write-Host "Using unified runtime Python: $RuntimePython"
+        & $RuntimePython @AppArgs
     } finally {
         Pop-Location
     }

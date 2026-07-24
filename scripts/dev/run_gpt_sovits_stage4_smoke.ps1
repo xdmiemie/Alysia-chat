@@ -11,7 +11,8 @@ $UpstreamScript = Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1"
 $LogsDir = Join-Path $ProjectRoot "storage\logs"
 $OutLog = Join-Path $LogsDir "gpt-sovits-upstream.out.log"
 $ErrLog = Join-Path $LogsDir "gpt-sovits-upstream.err.log"
-$ClientPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+. (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
+$ClientPython = Resolve-AlysiaRuntimePython
 
 if ([string]::IsNullOrWhiteSpace($Text)) {
     $Text = -join ([char[]](36763, 33510, 21862, 65292, 20170, 22825, 20808, 20241, 24687, 19968, 19979, 12290))
@@ -22,7 +23,7 @@ Remove-Item -LiteralPath $OutLog,$ErrLog -Force -ErrorAction SilentlyContinue
 
 $process = Start-Process `
     -FilePath "powershell.exe" `
-    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $UpstreamScript) `
+    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $UpstreamScript, "-Python", $ClientPython) `
     -WorkingDirectory $ProjectRoot `
     -RedirectStandardOutput $OutLog `
     -RedirectStandardError $ErrLog `

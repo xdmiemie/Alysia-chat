@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Protocol
 
 from runtime.audio.audio_format import WaveMetrics, inspect_wav, save_metrics_json, write_pcm16_wav
+from runtime.audio.devices import select_input_device
 
 
 @dataclass(frozen=True)
@@ -238,6 +239,7 @@ class RealtimeVadRecorder:
 
     def listen_once(self, recordings_dir: str | Path) -> VadRecordingResult:
         sd = _sounddevice()
+        input_device = select_input_device(self.input_device)
         frames: queue.Queue[bytes] = queue.Queue()
         segmenter = UtteranceSegmenter(self.config, self.vad)
         frame_index = 0
@@ -251,7 +253,7 @@ class RealtimeVadRecorder:
             samplerate=self.config.sample_rate,
             channels=self.config.channels,
             dtype="int16",
-            device=self.input_device,
+            device=input_device.index,
             blocksize=self.config.frame_samples,
             callback=callback,
         ):
@@ -314,6 +316,6 @@ def _sounddevice():
     except ImportError as exc:
         raise RuntimeError(
             "Missing dependency 'sounddevice'. Install audio requirements with "
-            "'python -m pip install -r runtime/audio/requirements.txt'."
+            "'powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1'."
         ) from exc
     return sd

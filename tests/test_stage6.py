@@ -68,6 +68,11 @@ class FakeRecorder:
         return FakeRecording(wav_path=self.wav_path, metrics=metrics)
 
 
+class FailingRecorder:
+    def listen_once(self, recordings_dir):
+        raise RuntimeError("microphone unavailable")
+
+
 class FakeTranscriber:
     def transcribe(self, audio_path):
         return TranscriptionResult(
@@ -144,3 +149,23 @@ def test_stage6_realtime_runner_records_transcribes_synthesizes_and_plays(tmp_pa
     assert chat.calls == ["hello"]
     assert synth.calls[0].text == "hi there"
     assert (tmp_path / "stage6" / "manifest.jsonl").exists()
+
+
+def test_stage6_manifest_is_written_even_when_turn_fails_before_audio_output(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = RealtimeDialogueRunner(
+        transcriber=FakeTranscriber(),
+        chat_session=FakeChatSession(),
+        synthesizer=FakeSynthesizer(tmp_path),
+        recorder=FailingRecorder(),
+        speaker=FakeSpeaker(),
+        recordings_dir=tmp_path / "recordings",
+        output_dir=tmp_path / "missing-parent" / "stage6",
+    )
+
+    result = runner.run_one(1)
+    runner.append_manifest(result)
+
+    assert result.ok is False
+    assert result.error == "microphone unavailable"
+    assert (tmp_path / "missing-parent" / "stage6" / "manifest.jsonl").exists()

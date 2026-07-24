@@ -1,7 +1,7 @@
 Param(
-    [string]$Python = "C:\Users\MLTZ\miniconda3\envs\GPTSoVits\python.exe",
-    [string]$Repo = "D:\Alysia-chat\third_party\GPT-SoVITS",
-    [string]$Config = "D:\Alysia-chat\configs\runtime\gpt_sovits_tts_infer_elysia.yaml",
+    [string]$Python = "",
+    [string]$Repo = "",
+    [string]$Config = "",
     [string]$BindAddr = "127.0.0.1",
     [int]$Port = 9880
 )
@@ -9,5 +9,70 @@ Param(
 $ErrorActionPreference = "Stop"
 $env:PYTHONUNBUFFERED = "1"
 
+function Resolve-ProjectPath {
+    param([string]$PathValue, [string]$BasePath)
+    if ([System.IO.Path]::IsPathRooted($PathValue)) {
+        return (Resolve-Path -LiteralPath $PathValue).Path
+    }
+    return (Resolve-Path -LiteralPath (Join-Path $BasePath $PathValue)).Path
+}
+
+function Convert-TtsConfigToResolvedPaths {
+    param(
+        [string]$SourceConfig,
+        [string]$OutputConfig,
+        [string]$ProjectRoot,
+        [string]$GptSoVitsRepo
+    )
+
+    $Lines = Get-Content -LiteralPath $SourceConfig
+    $Converted = foreach ($Line in $Lines) {
+        if ($Line -match '^(\s+[A-Za-z0-9_]+_path:\s*)(.+?)\s*$') {
+            $Prefix = $Matches[1]
+            $Value = $Matches[2].Trim().Trim("'").Trim('"')
+            if ([System.IO.Path]::IsPathRooted($Value)) {
+                "${Prefix}$Value"
+            } else {
+                $BasePath = $ProjectRoot
+                if ($Value -like "GPT_SoVITS/*" -or $Value -like "GPT_SoVITS\*" -or $Value -like "tools/*" -or $Value -like "tools\*") {
+                    $BasePath = $GptSoVitsRepo
+                }
+                $Resolved = [System.IO.Path]::GetFullPath((Join-Path $BasePath $Value)).Replace("\", "/")
+                "${Prefix}$Resolved"
+            }
+        } else {
+            $Line
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path $OutputConfig) | Out-Null
+    $Converted | Set-Content -LiteralPath $OutputConfig -Encoding UTF8
+}
+
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
+$ProjectFfmpegBin = Join-Path $ProjectRoot "tools\ffmpeg\bin"
+$ProjectFfmpeg = Join-Path $ProjectFfmpegBin "ffmpeg.exe"
+if (-not (Test-Path -LiteralPath $ProjectFfmpeg)) {
+    throw "Project FFmpeg not found at $ProjectFfmpeg. Run quickstart/bootstrap.ps1 first."
+}
+$env:Path = "$ProjectFfmpegBin;$env:Path"
+if ([string]::IsNullOrWhiteSpace($Repo)) {
+    $Repo = Join-Path $ProjectRoot "third_party\GPT-SoVITS"
+}
+if ([string]::IsNullOrWhiteSpace($Config)) {
+    $Config = Join-Path $ProjectRoot "configs\runtime\gpt_sovits_tts_infer_elysia.yaml"
+}
+
+$Repo = Resolve-ProjectPath -PathValue $Repo -BasePath $ProjectRoot
+$Config = Resolve-ProjectPath -PathValue $Config -BasePath $ProjectRoot
+$ResolvedConfig = Join-Path $ProjectRoot "storage\temporary\gpt_sovits_tts_infer_elysia.resolved.yaml"
+Convert-TtsConfigToResolvedPaths -SourceConfig $Config -OutputConfig $ResolvedConfig -ProjectRoot $ProjectRoot -GptSoVitsRepo $Repo
+
+$ResolvedPython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+
 Set-Location $Repo
-& $Python -u api_v2.py -a $BindAddr -p $Port -c $Config
+Write-Host "Using GPT-SoVITS Python: $ResolvedPython"
+Write-Host "Using project FFmpeg: $ProjectFfmpeg"
+Write-Host "Using GPT-SoVITS config: $ResolvedConfig"
+& $ResolvedPython -u api_v2.py -a $BindAddr -p $Port -c $ResolvedConfig

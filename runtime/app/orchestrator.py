@@ -408,6 +408,7 @@ class RealtimeDialogueRunner:
 
     def append_manifest(self, result: DialogueTurnResult) -> None:
         manifest_path = self.output_dir / "manifest.jsonl"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
         with manifest_path.open("a", encoding="utf-8") as manifest:
             manifest.write(json.dumps(result.to_dict(), ensure_ascii=False) + "\n")
 

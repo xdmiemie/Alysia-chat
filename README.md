@@ -17,18 +17,87 @@ Stages 0-6 are complete. The remaining plan is:
   controls.
 - Stage 9: selectable character/model loading from the Stage 6 app entry.
 
+## Clone-To-Code Quickstart
+
+For a new machine, use the root-level `quickstart/` scripts to make the code
+runtime self-initializing. Runtime now uses a single Python environment centered
+on GPT-SoVITS compatibility. The default Python path is the project-local
+`runtime_env` interpreter: `runtime_env/python.exe` for a packed conda-style
+environment, or `runtime_env/Scripts/python.exe` for a venv built by
+`quickstart/bootstrap.ps1`. Explicit overrides can still be provided through
+`-Python`, `ALYSIA_PYTHON`, or `GPT_SOVITS_PYTHON`. This does not bundle GPU
+drivers, but it pulls Git LFS files, clones the GPT-SoVITS upstream source,
+downloads project-local FFmpeg and llama.cpp tools, creates/reuses the
+project-local unified runtime environment, installs the Python dependencies,
+downloads the Qwen3 and SenseVoice model files, runs the doctor, and then starts
+the app through the normal Stage 6 entry.
+
+Initialize code dependencies only:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
+```
+
+Initialize if needed and run the realtime app:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia
+```
+
+For a lighter setup that skips the heavy SenseVoice model dependency install:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1 -Lightweight
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -LightweightBootstrap
+```
+
+For an offline or code-only setup that skips model downloads:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1 -SkipLfsPull -SkipThirdParty -SkipModelDownloads
+```
+
+Use the skip switches only when the corresponding files are already present or
+you only want to prepare code dependencies; the realtime app still requires Git
+LFS TTS files, GPT-SoVITS source, Qwen3, and SenseVoice before it can run.
+
+External runtime items are still checked or reported by the scripts:
+
+- `tools/ffmpeg/bin/ffmpeg.exe`
+- `tools/llama.cpp/**/llama-server.exe`
+- `third_party/GPT-SoVITS`
+- unified Python from `runtime_env/python.exe` or `runtime_env/Scripts/python.exe`
+- model files referenced by `model_store/active/*.json`; Qwen3 and SenseVoice
+  are downloaded by bootstrap, and the current TTS base is tracked in Git/LFS
+
+For manual Python commands in the sections below, resolve the unified runtime
+Python once:
+
+```powershell
+$Python = (& powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\runtime_python.ps1; Resolve-AlysiaRuntimePython").Trim()
+```
+
+`runtime_python/` and `runtime_env/` are local runtime artifacts and are ignored
+by Git. To recreate them on another machine without conda, run
+`quickstart/bootstrap.ps1`. The script first looks for system Python 3.10; if it
+is missing, it downloads official CPython 3.10.11 for Windows into
+`runtime_python/`. It then creates `runtime_env` with Python 3.10 and installs
+the required packages there. You can also copy/pack a compatible environment into
+`runtime_env/`; run `runtime_env/Scripts/conda-unpack.exe` only when the copied
+environment came from `conda-pack`.
+
 ## Stage 0 Doctor
 
 ```powershell
-conda create -p .venv python=3.10 -y
-.venv\Scripts\python.exe -m pip install -r runtime/audio/requirements.txt pytest
-.venv\Scripts\python.exe scripts/doctor.py
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -Doctor
 ```
 
 The doctor checks:
 
 - NVIDIA GPU and CUDA availability
-- FFmpeg on `PATH`
+- project-local FFmpeg under `tools/ffmpeg`
+- project-local llama-server under `tools/llama.cpp`
 - microphone and speaker devices
 - runtime ports `8000`, `5001`, `8080`, `9880`, and `5002`
 - SenseVoice, Qwen3, and GPT-SoVITS model files from `model_store/active/*.json`
@@ -37,7 +106,7 @@ Use strict mode when you want a failing exit code for missing hardware, occupied
 ports, or missing model files:
 
 ```powershell
-.venv\Scripts\python.exe scripts/doctor.py --strict
+& $Python scripts/doctor.py --strict
 ```
 
 The third-party source locations are reserved under `third_party/`, and their
@@ -80,7 +149,7 @@ The Python app can also be run directly when Qwen3 and GPT-SoVITS are already
 up:
 
 ```powershell
-.venv\Scripts\python.exe -m runtime.app.main --character-id elysia --max-turns 3
+& $Python -m runtime.app.main --character-id elysia --max-turns 3
 ```
 
 Microphone capture uses 16 kHz mono PCM, 30 ms VAD frames, 450 ms pre-roll, and
@@ -94,27 +163,26 @@ Captured utterances, metrics, and VAD event logs are written under
 ## Install stage 1 dependencies
 
 ```powershell
-conda create -p .venv python=3.10 -y
-.venv\Scripts\python.exe -m pip install -r runtime/audio/requirements.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
 ```
 
 ## List audio devices
 
 ```powershell
-.venv\Scripts\python.exe scripts/audio_loopback.py --list-devices
+& $Python scripts/audio_loopback.py --list-devices
 ```
 
 Put the desired device indexes into `configs/runtime/audio.yaml`, or override
 them on the command line:
 
 ```powershell
-.venv\Scripts\python.exe scripts/audio_loopback.py --input-device 1 --output-device 3
+& $Python scripts/audio_loopback.py --input-device 1 --output-device 3
 ```
 
 ## Run the stage 1 acceptance loop
 
 ```powershell
-.venv\Scripts\python.exe scripts/audio_loopback.py
+& $Python scripts/audio_loopback.py
 ```
 
 Flow:
@@ -135,22 +203,23 @@ and saved path.
 Install the lightweight service dependencies:
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -r runtime/sensevoice/requirements.txt
+& $Python -m pip install -r runtime/sensevoice/requirements.txt
 ```
 
-Install the model backend dependencies in the dedicated SenseVoice environment
-when you are ready to run the real model:
+Install the model backend dependencies in the unified runtime environment when
+you are ready to run the real model:
 
 ```powershell
-conda env create -f envs/sensevoice.yml
+& $Python -m pip install -r runtime/sensevoice/requirements-model.txt
 ```
 
 Put the SenseVoiceSmall model files under the path referenced by
-`model_store/active/sensevoice.json`, then run:
+`model_store/active/sensevoice.json`, or let `quickstart/bootstrap.ps1` download
+them automatically. Manual download is still available:
 
 ```powershell
-.venv\Scripts\python.exe scripts/download_sensevoice_model.py
-.venv\Scripts\python.exe scripts/sensevoice_transcribe.py test_audio.WAV --json
+& $Python scripts/download_sensevoice_model.py
+& $Python scripts/sensevoice_transcribe.py test_audio.WAV --json
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -SenseVoice
 ```
 
@@ -163,12 +232,12 @@ POST /v1/audio/transcriptions
 ## Stage 3 Qwen3 Character Chat
 
 Prepare a Qwen3 GGUF model at the path referenced by
-`model_store/active/qwen3.json`.
+`model_store/active/qwen3.json`, or let `quickstart/bootstrap.ps1` download it
+automatically.
 
 ```powershell
-winget install llama.cpp
-.venv\Scripts\python.exe -m pip install -r runtime/qwen3/requirements.txt
-.venv\Scripts\python.exe scripts/download_qwen3_model.py
+& $Python -m pip install -r runtime/qwen3/requirements.txt
+& $Python scripts/download_qwen3_model.py
 ```
 
 Start the local `llama-server` before using the chat client:
@@ -181,8 +250,8 @@ In another terminal, send a single message, run the acceptance check, or start
 an interactive chat:
 
 ```powershell
-.venv\Scripts\python.exe scripts/qwen3_chat.py "今天有点累" --json
-.venv\Scripts\python.exe scripts/qwen3_acceptance.py
+& $Python scripts/qwen3_chat.py "今天有点累" --json
+& $Python scripts/qwen3_acceptance.py
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -Qwen3
 ```
 
@@ -225,7 +294,7 @@ GPT-SoVITS API at `http://127.0.0.1:9880/tts`.
 Check that all required weights and reference clips are present:
 
 ```powershell
-.venv\Scripts\python.exe scripts/check_gpt_sovits_assets.py
+& $Python scripts/check_gpt_sovits_assets.py
 ```
 
 Start the official upstream GPT-SoVITS API. This is the service used by the
@@ -238,15 +307,15 @@ powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
 The optional project wrapper listens on port `5002`:
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -r runtime/gpt_sovits/requirements.txt
+& $Python -m pip install -r runtime/gpt_sovits/requirements.txt
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITSWrapper
 ```
 
 Generate a single WAV or run the fixed 20-sentence acceptance set:
 
 ```powershell
-.venv\Scripts\python.exe scripts/gpt_sovits_speech.py "辛苦啦，今天先休息一下。" --emotion gentle
-.venv\Scripts\python.exe scripts/gpt_sovits_acceptance.py
+& $Python scripts/gpt_sovits_speech.py "辛苦啦，今天先休息一下。" --emotion gentle
+& $Python scripts/gpt_sovits_acceptance.py
 ```
 
 The wrapper exposes:
@@ -302,8 +371,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_gpt_sovits_ups
 Stop it with `Ctrl+C`. In another terminal, generate one WAV or run acceptance:
 
 ```powershell
-.venv\Scripts\python.exe scripts/gpt_sovits_speech.py "text to synthesize" --emotion gentle
-.venv\Scripts\python.exe scripts/gpt_sovits_acceptance.py
+& $Python scripts/gpt_sovits_speech.py "text to synthesize" --emotion gentle
+& $Python scripts/gpt_sovits_acceptance.py
 ```
 
 Optional one-shot smoke check:
@@ -316,8 +385,8 @@ Windows compatibility packages used by this setup:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/patch_gpt_sovits_windows.ps1
-& "C:\Users\MLTZ\miniconda3\envs\GPTSoVits\Scripts\pip.exe" install torchcodec opencc-python-reimplemented
-& "C:\Users\MLTZ\miniconda3\envs\GPTSoVits\python.exe" -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('averaged_perceptron_tagger'); nltk.download('cmudict')"
+& $Python -m pip install torchcodec opencc-python-reimplemented
+& $Python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('averaged_perceptron_tagger'); nltk.download('cmudict')"
 ```
 
 ## Stage 5 File Dialogue Loop
@@ -347,14 +416,14 @@ SenseVoice is loaded in-process from the local model manifest.
 Then run:
 
 ```powershell
-.venv\Scripts\python.exe scripts/dialogue_stage5.py
+& $Python scripts/dialogue_stage5.py
 ```
 
 Useful options:
 
 ```powershell
-.venv\Scripts\python.exe scripts/dialogue_stage5.py --limit 3 --json
-.venv\Scripts\python.exe scripts/dialogue_stage5.py --output-dir storage/generated_audio/stage5_dialogue/manual_run
+& $Python scripts/dialogue_stage5.py --limit 3 --json
+& $Python scripts/dialogue_stage5.py --output-dir storage/generated_audio/stage5_dialogue/manual_run
 ```
 
 Each run writes a `manifest.jsonl` with request IDs, state transitions,

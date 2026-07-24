@@ -3,7 +3,7 @@ channels: 1
 sample_width_bits: 16
 
 # Set these to an integer device index after running:
-# python scripts/audio_loopback.py --list-devices
+# & $Python scripts/audio_loopback.py --list-devices
 input_device: null
 output_device: null
 

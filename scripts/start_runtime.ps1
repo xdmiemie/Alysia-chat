@@ -10,16 +10,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$CondaPrefixPython = Join-Path $ProjectRoot ".venv\python.exe"
-$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-
-if (Test-Path $CondaPrefixPython) {
-    $Python = $CondaPrefixPython
-} elseif (Test-Path $VenvPython) {
-    $Python = $VenvPython
-} else {
-    $Python = "python"
-}
+. (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
+$Python = Resolve-AlysiaRuntimePython
 
 if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer -and -not $GPTSoVITS -and -not $GPTSoVITSWrapper)) {
     & $Python (Join-Path $ProjectRoot "scripts\doctor.py")
@@ -42,7 +34,7 @@ if ($Qwen3) {
 }
 
 if ($GPTSoVITS) {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1")
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1") -Python $Python
 }
 
 if ($GPTSoVITSWrapper) {

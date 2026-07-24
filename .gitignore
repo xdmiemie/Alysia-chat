@@ -3,6 +3,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+runtime_python/
+runtime_env/
+tools/ffmpeg/
+tools/llama.cpp/
 
 storage/logs/*
 storage/temporary/*

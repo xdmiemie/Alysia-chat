@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -70,7 +69,7 @@ def check_cuda() -> CheckResult:
     if torch is not None and torch.cuda.is_available():
         return CheckResult("CUDA available", "OK", f"torch {torch.__version__}")
 
-    env_python = _gpt_sovits_env_path("python.exe")
+    env_python = _runtime_env_path("python.exe")
     if env_python.exists():
         code, output = run_command(
             [
@@ -81,7 +80,7 @@ def check_cuda() -> CheckResult:
             timeout=8,
         )
         if code == 0 and output.strip():
-            return CheckResult("CUDA available", "OK", f"GPTSoVits torch {output.strip().splitlines()[0]}")
+            return CheckResult("CUDA available", "OK", f"runtime torch {output.strip().splitlines()[0]}")
 
     code, output = run_command(["nvcc", "--version"], timeout=4)
     if code == 0 and "release" in output:
@@ -92,26 +91,39 @@ def check_cuda() -> CheckResult:
 
 
 def check_ffmpeg() -> CheckResult:
-    exe = shutil.which("ffmpeg")
-    if not exe:
-        env_ffmpeg = _gpt_sovits_env_path("Library", "bin", "ffmpeg.exe")
-        exe = str(env_ffmpeg) if env_ffmpeg.exists() else None
-    if not exe:
-        return CheckResult("FFmpeg available", "FAIL", "ffmpeg was not found on PATH")
+    exe = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+    if not exe.exists():
+        return CheckResult("Project FFmpeg available", "FAIL", "tools/ffmpeg/bin/ffmpeg.exe")
 
-    code, output = run_command([exe, "-version"], timeout=4)
+    code, output = run_command([str(exe), "-version"], timeout=4)
     if code == 0:
-        first_line = output.splitlines()[0] if output else exe
-        return CheckResult("FFmpeg available", "OK", first_line)
-    return CheckResult("FFmpeg available", "FAIL", output or exe)
+        first_line = output.splitlines()[0] if output else str(exe)
+        return CheckResult("Project FFmpeg available", "OK", first_line)
+    return CheckResult("Project FFmpeg available", "FAIL", output or str(exe))
 
 
-def _gpt_sovits_env_path(*parts: str) -> Path:
-    conda_root = os.environ.get("CONDA_ROOT")
-    if conda_root:
-        return Path(conda_root) / "envs" / "GPTSoVits" / Path(*parts)
-    return Path.home() / "miniconda3" / "envs" / "GPTSoVits" / Path(*parts)
+def check_llama_server() -> CheckResult:
+    tool_root = PROJECT_ROOT / "tools" / "llama.cpp"
+    candidates = list(tool_root.rglob("llama-server.exe")) if tool_root.exists() else []
+    if not candidates:
+        return CheckResult("Project llama-server available", "FAIL", "tools/llama.cpp/**/llama-server.exe")
+    return CheckResult("Project llama-server available", "OK", str(candidates[0].relative_to(PROJECT_ROOT)))
 
+
+def _runtime_env_path(*parts: str) -> Path:
+    project_runtime = PROJECT_ROOT / "runtime_env" / Path(*parts)
+    project_candidates = [project_runtime]
+    if parts == ("python.exe",):
+        project_candidates.append(PROJECT_ROOT / "runtime_env" / "Scripts" / "python.exe")
+    for candidate in project_candidates:
+        if candidate.exists():
+            return candidate
+
+    for env_var in ("ALYSIA_PYTHON", "GPT_SOVITS_PYTHON"):
+        value = os.environ.get(env_var)
+        if value:
+            return Path(value).parent / Path(*parts)
+    return project_runtime
 
 def _sounddevice():
     try:
@@ -119,7 +131,7 @@ def _sounddevice():
     except ImportError as exc:
         raise RuntimeError(
             "Missing dependency 'sounddevice'. Install with "
-            "'.venv\\Scripts\\python.exe -m pip install -r runtime/audio/requirements.txt'."
+            "'powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1'."
         ) from exc
     return sd
 
@@ -233,6 +245,7 @@ def collect_checks() -> list[CheckResult]:
         check_gpu(),
         check_cuda(),
         check_ffmpeg(),
+        check_llama_server(),
         check_third_party_manifest(),
     ]
     results.extend(check_audio_devices())

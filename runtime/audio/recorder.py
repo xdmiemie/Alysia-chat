@@ -83,7 +83,7 @@ def _sounddevice():
     except ImportError as exc:
         raise RuntimeError(
             "Missing dependency 'sounddevice'. Install stage 1 requirements with "
-            "'python -m pip install -r runtime/audio/requirements.txt'."
+            "'powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1'."
         ) from exc
     return sd
 
@@ -94,6 +94,6 @@ def _numpy():
     except ImportError as exc:
         raise RuntimeError(
             "Missing dependency 'numpy'. Install stage 1 requirements with "
-            "'python -m pip install -r runtime/audio/requirements.txt'."
+            "'powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1'."
         ) from exc
     return np
