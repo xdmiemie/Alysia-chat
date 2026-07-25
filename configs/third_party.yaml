@@ -1,9 +1,4 @@
 dependencies:
-  sensevoice:
-    repo: https://github.com/FunAudioLLM/SenseVoice
-    path: third_party/SenseVoice
-    pinned_commit: null
-    install_status: pending
   llama_cpp:
     repo: https://github.com/ggml-org/llama.cpp
     path: tools/llama.cpp

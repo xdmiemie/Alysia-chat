@@ -25,6 +25,12 @@ PORTS = {
     "gpt-sovits-wrapper": 5002,
 }
 
+LLAMA_CUDA_RUNTIME_DLLS = (
+    "cublas64_12.dll",
+    "cublasLt64_12.dll",
+    "cudart64_12.dll",
+)
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -108,6 +114,18 @@ def check_llama_server() -> CheckResult:
     if not candidates:
         return CheckResult("Project llama-server available", "FAIL", "tools/llama.cpp/**/llama-server.exe")
     return CheckResult("Project llama-server available", "OK", str(candidates[0].relative_to(PROJECT_ROOT)))
+
+
+def check_llama_cuda_runtime() -> CheckResult:
+    tool_root = PROJECT_ROOT / "tools" / "llama.cpp"
+    missing = [dll for dll in LLAMA_CUDA_RUNTIME_DLLS if not (tool_root / dll).exists()]
+    if missing:
+        return CheckResult(
+            "llama.cpp CUDA runtime DLLs",
+            "FAIL",
+            "missing " + ", ".join(missing),
+        )
+    return CheckResult("llama.cpp CUDA runtime DLLs", "OK", "CUDA 12 runtime DLLs found")
 
 
 def _runtime_env_path(*parts: str) -> Path:
@@ -246,6 +264,7 @@ def collect_checks() -> list[CheckResult]:
         check_cuda(),
         check_ffmpeg(),
         check_llama_server(),
+        check_llama_cuda_runtime(),
         check_third_party_manifest(),
     ]
     results.extend(check_audio_devices())

@@ -109,8 +109,8 @@ ports, or missing model files:
 & $Python scripts/doctor.py --strict
 ```
 
-The third-party source locations are reserved under `third_party/`, and their
-upstream repositories are tracked in `configs/third_party.yaml`.
+Third-party source checkouts and project-local binary tool locations are tracked
+in `configs/third_party.yaml`.
 
 ## Runtime Scripts
 

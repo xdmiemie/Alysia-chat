@@ -16,6 +16,11 @@ $BundledPythonUrl = "https://www.python.org/ftp/python/$BundledPythonVersion/pyt
 $FfmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 $LlamaReleaseApiUrl = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 $GptSoVitsRepoUrl = "https://github.com/RVC-Boss/GPT-SoVITS.git"
+$LlamaCudaRuntimeDlls = @(
+    "cublas64_12.dll",
+    "cublasLt64_12.dll",
+    "cudart64_12.dll"
+)
 
 function Test-Python310 {
     param([string]$Command, [string[]]$Arguments = @())
@@ -302,12 +307,25 @@ function Get-LlamaAsset {
     return $null
 }
 
+function Test-LlamaCudaRuntime {
+    param([string]$ToolRoot)
+    foreach ($Dll in $LlamaCudaRuntimeDlls) {
+        if (-not (Test-Path -LiteralPath (Join-Path $ToolRoot $Dll))) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Install-ProjectLlamaCpp {
     $ToolRoot = Join-Path $ProjectRoot "tools\llama.cpp"
     $LlamaServer = Get-ChildItem -LiteralPath $ToolRoot -Recurse -Filter "llama-server.exe" -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
     if ($LlamaServer) {
-        return $LlamaServer
+        if (Test-LlamaCudaRuntime -ToolRoot $ToolRoot) {
+            return $LlamaServer
+        }
+        Write-Host "Project llama-server exists, but CUDA runtime DLLs are missing. Reinstalling llama.cpp CUDA bundle..."
     }
 
     Write-Host "Resolving latest llama.cpp Windows CUDA release assets..."
@@ -330,6 +348,8 @@ function Install-ProjectLlamaCpp {
     }
 
     $RuntimeAsset = Get-LlamaAsset -Release $Release -Patterns @(
+        '^cudart-llama-bin-win-cuda-12\..*-x64\.zip$',
+        '^cudart-llama-bin-win-cuda.*-x64\.zip$',
         '^cudart-llama-.*-bin-win-cuda-12\..*-x64\.zip$',
         '^cudart-llama-.*-bin-win-cuda.*-x64\.zip$'
     )
@@ -363,6 +383,9 @@ function Install-ProjectLlamaCpp {
         Select-Object -First 1 -ExpandProperty FullName
     if (-not $LlamaServer) {
         throw "Downloaded llama.cpp archive did not contain llama-server.exe."
+    }
+    if (-not (Test-LlamaCudaRuntime -ToolRoot $ToolRoot)) {
+        throw "Downloaded llama.cpp archive did not contain required CUDA runtime DLLs: $($LlamaCudaRuntimeDlls -join ', ')."
     }
     return $LlamaServer
 }
