@@ -16,6 +16,8 @@ $BundledPythonVersion = "3.10.11"
 $BundledPythonUrl = "https://www.python.org/ftp/python/$BundledPythonVersion/python-$BundledPythonVersion-amd64.exe"
 $FfmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 $LlamaReleaseApiUrl = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+$LlamaFallbackReleaseTag = "b10099"
+$LlamaFallbackAssetBaseUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$LlamaFallbackReleaseTag"
 $GptSoVitsRepoUrl = "https://github.com/RVC-Boss/GPT-SoVITS.git"
 $GptSoVitsPretrainedUrl = "https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/pretrained_models.zip"
 $GptSoVitsG2PwUrl = "https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/G2PWModel.zip"
@@ -147,11 +149,28 @@ function Install-Requirements {
     }
 }
 
+function Test-CudaTorch {
+    param([string]$Python)
+    $Probe = @"
+try:
+    import torch
+    raise SystemExit(0 if torch.cuda.is_available() else 1)
+except Exception:
+    raise SystemExit(1)
+"@
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $Python -c $Probe *> $null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+}
+
 function Install-CudaTorch {
     param([string]$Python)
-    $Probe = "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)"
-    & $Python -c $Probe 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-CudaTorch -Python $Python) {
         Write-Host "CUDA PyTorch runtime is already available."
         return
     }
@@ -166,8 +185,7 @@ function Install-CudaTorch {
         "torchaudio"
     )
 
-    & $Python -c $Probe 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Test-CudaTorch -Python $Python)) {
         throw "CUDA PyTorch installation completed, but torch.cuda.is_available() is still false."
     }
 }
@@ -434,6 +452,42 @@ function Get-LlamaAsset {
     return $null
 }
 
+function New-LlamaFallbackAsset {
+    param([string]$Name)
+    return [pscustomobject]@{
+        name = $Name
+        browser_download_url = "$LlamaFallbackAssetBaseUrl/$Name"
+    }
+}
+
+function New-LlamaFallbackRelease {
+    return [pscustomobject]@{
+        tag_name = $LlamaFallbackReleaseTag
+        assets = @(
+            New-LlamaFallbackAsset -Name "llama-b10099-bin-win-cuda-12.4-x64.zip"
+            New-LlamaFallbackAsset -Name "cudart-llama-bin-win-cuda-12.4-x64.zip"
+        )
+    }
+}
+
+function Resolve-LlamaRelease {
+    Write-Host "Resolving latest llama.cpp Windows CUDA release assets..."
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        return Invoke-RestMethod `
+            -Uri $LlamaReleaseApiUrl `
+            -Headers @{
+                "Accept" = "application/vnd.github+json"
+                "User-Agent" = "Alysia-chat-bootstrap"
+                "X-GitHub-Api-Version" = "2022-11-28"
+            }
+    } catch {
+        Write-Host "Could not query llama.cpp latest release from GitHub API: $($_.Exception.Message)"
+        Write-Host "Falling back to llama.cpp $LlamaFallbackReleaseTag CUDA 12.4 release assets."
+        return New-LlamaFallbackRelease
+    }
+}
+
 function Test-LlamaCudaRuntime {
     param([string]$ToolRoot)
     foreach ($Dll in $LlamaCudaRuntimeDlls) {
@@ -455,13 +509,7 @@ function Install-ProjectLlamaCpp {
         Write-Host "Project llama-server exists, but CUDA runtime DLLs are missing. Reinstalling llama.cpp CUDA bundle..."
     }
 
-    Write-Host "Resolving latest llama.cpp Windows CUDA release assets..."
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $Release = Invoke-RestMethod -Uri $LlamaReleaseApiUrl
-    } catch {
-        throw "Could not query llama.cpp latest release from $LlamaReleaseApiUrl. Error: $($_.Exception.Message)"
-    }
+    $Release = Resolve-LlamaRelease
 
     $BinAsset = Get-LlamaAsset -Release $Release -Patterns @(
         '^llama-.*-bin-win-cuda-12\..*-x64\.zip$',
@@ -470,6 +518,13 @@ function Install-ProjectLlamaCpp {
         '^llama-.*-bin-win-vulkan-x64\.zip$',
         '^llama-.*-bin-win-avx2-x64\.zip$'
     )
+    if (-not $BinAsset) {
+        $Release = New-LlamaFallbackRelease
+        $BinAsset = Get-LlamaAsset -Release $Release -Patterns @(
+            '^llama-.*-bin-win-cuda-12\..*-x64\.zip$',
+            '^llama-.*-bin-win-cuda.*-x64\.zip$'
+        )
+    }
     if (-not $BinAsset) {
         throw "Could not find a Windows x64 llama.cpp release archive containing llama-server.exe."
     }
@@ -480,6 +535,12 @@ function Install-ProjectLlamaCpp {
         '^cudart-llama-.*-bin-win-cuda-12\..*-x64\.zip$',
         '^cudart-llama-.*-bin-win-cuda.*-x64\.zip$'
     )
+    if (-not $RuntimeAsset) {
+        $RuntimeAsset = Get-LlamaAsset -Release (New-LlamaFallbackRelease) -Patterns @(
+            '^cudart-llama-bin-win-cuda-12\..*-x64\.zip$',
+            '^cudart-llama-bin-win-cuda.*-x64\.zip$'
+        )
+    }
 
     $DownloadRoot = Join-Path $ProjectRoot "storage\temporary\llama.cpp"
     $ExtractRoot = Join-Path $ProjectRoot "storage\temporary\llama.cpp-extract"

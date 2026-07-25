@@ -73,6 +73,8 @@ if ([string]::IsNullOrWhiteSpace($Config)) {
 
 $Repo = Resolve-ProjectPath -PathValue $Repo -BasePath $ProjectRoot
 $Config = Resolve-ProjectPath -PathValue $Config -BasePath $ProjectRoot
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\patch_gpt_sovits_windows.ps1") -Repo $Repo
+
 $ResolvedConfig = Join-Path $ProjectRoot "storage\temporary\gpt_sovits_tts_infer_elysia.resolved.yaml"
 Convert-TtsConfigToResolvedPaths -SourceConfig $Config -OutputConfig $ResolvedConfig -ProjectRoot $ProjectRoot -GptSoVitsRepo $Repo
 
