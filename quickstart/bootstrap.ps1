@@ -10,12 +10,16 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
+. (Join-Path $ProjectRoot "scripts\gpt_sovits_requirements.ps1")
 
 $BundledPythonVersion = "3.10.11"
 $BundledPythonUrl = "https://www.python.org/ftp/python/$BundledPythonVersion/python-$BundledPythonVersion-amd64.exe"
 $FfmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 $LlamaReleaseApiUrl = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 $GptSoVitsRepoUrl = "https://github.com/RVC-Boss/GPT-SoVITS.git"
+$GptSoVitsPretrainedUrl = "https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/pretrained_models.zip"
+$GptSoVitsG2PwUrl = "https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/G2PWModel.zip"
+$PytorchCudaIndexUrl = "https://download.pytorch.org/whl/cu128"
 $LlamaCudaRuntimeDlls = @(
     "cublas64_12.dll",
     "cublasLt64_12.dll",
@@ -73,13 +77,7 @@ function Install-ProjectPython310 {
     $Installer = Join-Path $DownloadDir "python-$BundledPythonVersion-amd64.exe"
 
     if (-not (Test-Path -LiteralPath $Installer)) {
-        Write-Host "Downloading Python $BundledPythonVersion from python.org..."
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $BundledPythonUrl -OutFile $Installer
-        } catch {
-            throw "Could not download Python $BundledPythonVersion from $BundledPythonUrl. Install Python 3.10 manually, add it to PATH or the Windows py launcher, then rerun quickstart/bootstrap.ps1. Error: $($_.Exception.Message)"
-        }
+        Invoke-DownloadFile -Url $BundledPythonUrl -Destination $Installer -MinBytes 10000000
     }
 
     Write-Host "Installing project-local Python $BundledPythonVersion at '$InstallPath'"
@@ -146,6 +144,31 @@ function Install-Requirements {
         }
         Write-Host "Installing $Requirement"
         Invoke-Pip -Python $Python -Arguments @("install", "-r", $Path)
+    }
+}
+
+function Install-CudaTorch {
+    param([string]$Python)
+    $Probe = "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)"
+    & $Python -c $Probe 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "CUDA PyTorch runtime is already available."
+        return
+    }
+
+    Write-Host "Installing CUDA PyTorch runtime from $PytorchCudaIndexUrl"
+    Invoke-Pip -Python $Python -Arguments @(
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "--index-url", $PytorchCudaIndexUrl,
+        "torch",
+        "torchaudio"
+    )
+
+    & $Python -c $Probe 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "CUDA PyTorch installation completed, but torch.cuda.is_available() is still false."
     }
 }
 
@@ -226,31 +249,86 @@ function Install-GptSoVitsRepo {
 }
 
 function Invoke-DownloadFile {
-    param([string]$Url, [string]$Destination, [int64]$MinBytes = 1)
+    param(
+        [string]$Url,
+        [string]$Destination,
+        [int64]$MinBytes = 1,
+        [switch]$ValidateZip
+    )
 
     if (Test-Path -LiteralPath $Destination) {
         $Existing = Get-Item -LiteralPath $Destination
-        if ($Existing.Length -ge $MinBytes) {
+        $ValidExisting = $Existing.Length -ge $MinBytes
+        if ($ValidExisting -and $ValidateZip) {
+            $ValidExisting = Test-ZipArchive -Path $Destination
+        }
+        if ($ValidExisting) {
             return
         }
+        Write-Host "Discarding incomplete or invalid download: $Destination"
         Remove-Item -LiteralPath $Destination -Force
     }
 
     New-Item -ItemType Directory -Force -Path (Split-Path $Destination) | Out-Null
     Write-Host "Downloading $Url"
+    $PartialDestination = "$Destination.part"
+    $Curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if (-not $Curl) {
+        throw "Could not download $Url because curl.exe was not found."
+    }
+    $CurlArgs = @(
+        "--location",
+        "--fail",
+        "--retry", "10",
+        "--retry-delay", "2",
+        "--retry-all-errors",
+        "--continue-at", "-",
+        "--output", $PartialDestination,
+        $Url
+    )
+    & $Curl.Source @CurlArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not download $Url with curl.exe. Exit code: $LASTEXITCODE. Partial file kept for resume: $PartialDestination"
+    }
+
+    $Downloaded = Get-Item -LiteralPath $PartialDestination
+    if ($Downloaded.Length -lt $MinBytes) {
+        Remove-Item -LiteralPath $PartialDestination -Force
+        throw "Downloaded file is too small: $Url ($($Downloaded.Length) bytes, expected at least $MinBytes)."
+    }
+    if ($ValidateZip -and -not (Test-ZipArchive -Path $PartialDestination)) {
+        Remove-Item -LiteralPath $PartialDestination -Force
+        throw "Downloaded zip archive is invalid or incomplete: $Url"
+    }
+    Move-Item -LiteralPath $PartialDestination -Destination $Destination -Force
+}
+
+function Test-ZipArchive {
+    param([string]$Path)
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $Url -OutFile $Destination
+        Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue
+        $Stream = [System.IO.File]::Open(
+            $Path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read
+        )
+        try {
+            $Archive = [System.IO.Compression.ZipArchive]::new(
+                $Stream,
+                [System.IO.Compression.ZipArchiveMode]::Read
+            )
+            try {
+                $null = $Archive.Entries.Count
+                return $true
+            } finally {
+                $Archive.Dispose()
+            }
+        } finally {
+            $Stream.Dispose()
+        }
     } catch {
-        $Curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-        if (-not $Curl) {
-            throw "Could not download $Url. Error: $($_.Exception.Message)"
-        }
-        Write-Host "Invoke-WebRequest failed; retrying with curl.exe..."
-        & $Curl.Source --location --fail --retry 3 --output $Destination $Url
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not download $Url with curl.exe. Exit code: $LASTEXITCODE"
-        }
+        return $false
     }
 }
 
@@ -269,7 +347,7 @@ function Install-ProjectFfmpeg {
 
     $ZipPath = Join-Path $ProjectRoot "storage\temporary\ffmpeg-release-essentials.zip"
     $ExtractRoot = Join-Path $ProjectRoot "storage\temporary\ffmpeg-extract"
-    Invoke-DownloadFile -Url $FfmpegUrl -Destination $ZipPath -MinBytes 80000000
+    Invoke-DownloadFile -Url $FfmpegUrl -Destination $ZipPath -MinBytes 80000000 -ValidateZip
     if (Test-Path -LiteralPath $ExtractRoot) {
         Remove-Item -LiteralPath $ExtractRoot -Recurse -Force
     }
@@ -292,6 +370,55 @@ function Install-ProjectFfmpeg {
         throw "Could not prepare project FFmpeg at $FfmpegExe."
     }
     return $FfmpegExe
+}
+
+function Test-GptSoVitsPretrainedAssets {
+    param([string]$RepoPath)
+
+    $PretrainedRoot = Join-Path $RepoPath "GPT_SoVITS\pretrained_models"
+    $TextRoot = Join-Path $RepoPath "GPT_SoVITS\text"
+    return (
+        (Test-Path -LiteralPath (Join-Path $PretrainedRoot "chinese-roberta-wwm-ext-large")) -and
+        (Test-Path -LiteralPath (Join-Path $PretrainedRoot "chinese-hubert-base")) -and
+        (Test-Path -LiteralPath (Join-Path $TextRoot "G2PWModel"))
+    )
+}
+
+function Install-GptSoVitsPretrainedAssets {
+    $RepoPath = Join-Path $ProjectRoot "third_party\GPT-SoVITS"
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoPath "api_v2.py"))) {
+        throw "GPT-SoVITS repo is missing. Run bootstrap without -SkipThirdParty first."
+    }
+
+    if (Test-GptSoVitsPretrainedAssets -RepoPath $RepoPath) {
+        Write-Host "GPT-SoVITS pretrained assets already exist."
+        return
+    }
+
+    $DownloadRoot = Join-Path $ProjectRoot "storage\temporary\gpt_sovits"
+    $PretrainedZip = Join-Path $DownloadRoot "pretrained_models.zip"
+    $G2PwZip = Join-Path $DownloadRoot "G2PWModel.zip"
+
+    $PretrainedRoot = Join-Path $RepoPath "GPT_SoVITS\pretrained_models"
+    if (-not (
+        (Test-Path -LiteralPath (Join-Path $PretrainedRoot "chinese-roberta-wwm-ext-large")) -and
+        (Test-Path -LiteralPath (Join-Path $PretrainedRoot "chinese-hubert-base"))
+    )) {
+        Write-Host "Preparing GPT-SoVITS pretrained models..."
+        Invoke-DownloadFile -Url $GptSoVitsPretrainedUrl -Destination $PretrainedZip -MinBytes 10000000 -ValidateZip
+        Expand-ZipToDirectory -ZipPath $PretrainedZip -Destination (Join-Path $RepoPath "GPT_SoVITS")
+    }
+
+    $G2PwRoot = Join-Path $RepoPath "GPT_SoVITS\text\G2PWModel"
+    if (-not (Test-Path -LiteralPath $G2PwRoot)) {
+        Write-Host "Preparing GPT-SoVITS G2PWModel..."
+        Invoke-DownloadFile -Url $GptSoVitsG2PwUrl -Destination $G2PwZip -MinBytes 1000000 -ValidateZip
+        Expand-ZipToDirectory -ZipPath $G2PwZip -Destination (Join-Path $RepoPath "GPT_SoVITS\text")
+    }
+
+    if (-not (Test-GptSoVitsPretrainedAssets -RepoPath $RepoPath)) {
+        throw "Downloaded GPT-SoVITS pretrained assets, but required directories are still missing."
+    }
 }
 
 function Get-LlamaAsset {
@@ -362,12 +489,12 @@ function Install-ProjectLlamaCpp {
     New-Item -ItemType Directory -Force -Path $ExtractRoot | Out-Null
 
     $BinZip = Join-Path $DownloadRoot $BinAsset.name
-    Invoke-DownloadFile -Url $BinAsset.browser_download_url -Destination $BinZip -MinBytes 1000000
+    Invoke-DownloadFile -Url $BinAsset.browser_download_url -Destination $BinZip -MinBytes 1000000 -ValidateZip
     Expand-ZipToDirectory -ZipPath $BinZip -Destination $ExtractRoot
 
     if ($RuntimeAsset) {
         $RuntimeZip = Join-Path $DownloadRoot $RuntimeAsset.name
-        Invoke-DownloadFile -Url $RuntimeAsset.browser_download_url -Destination $RuntimeZip -MinBytes 1000000
+        Invoke-DownloadFile -Url $RuntimeAsset.browser_download_url -Destination $RuntimeZip -MinBytes 1000000 -ValidateZip
         Expand-ZipToDirectory -ZipPath $RuntimeZip -Destination $ExtractRoot
     }
 
@@ -418,6 +545,7 @@ try {
     } else {
         Install-GptSoVitsRepo
     }
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\patch_gpt_sovits_windows.ps1")
 
     $FfmpegExe = Install-ProjectFfmpeg
     Write-Host "Using project FFmpeg: $FfmpegExe"
@@ -427,6 +555,9 @@ try {
     $RuntimePython = Resolve-OrCreateRuntimePython -PythonOverride $Python
     Write-Host "Using unified runtime Python: $RuntimePython"
     Invoke-Pip -Python $RuntimePython -Arguments @("install", "--upgrade", "pip", "wheel", "setuptools<82")
+    if (-not $Lightweight) {
+        Install-CudaTorch -Python $RuntimePython
+    }
 
     $RequirementFiles = @(
         "runtime/audio/requirements.txt",
@@ -440,11 +571,23 @@ try {
         $RequirementFiles += "runtime/sensevoice/requirements-model.txt"
     }
     Install-Requirements -Python $RuntimePython -RequirementFiles $RequirementFiles
+
+    $GptSoVitsRequirements = Join-Path $ProjectRoot "third_party\GPT-SoVITS\requirements.txt"
+    if (Test-Path -LiteralPath $GptSoVitsRequirements) {
+        $PlatformGptSoVitsRequirements = New-GptSoVitsPlatformRequirements `
+            -Source $GptSoVitsRequirements `
+            -Destination (Join-Path $ProjectRoot "storage\temporary\gpt_sovits_requirements.resolved.txt")
+        Write-Host "Installing GPT-SoVITS third-party requirements from $PlatformGptSoVitsRequirements"
+        Invoke-Pip -Python $RuntimePython -Arguments @("install", "-r", $PlatformGptSoVitsRequirements)
+    }
+
     Invoke-Pip -Python $RuntimePython -Arguments @("install", "pytest", "torchcodec", "opencc-python-reimplemented")
 
     if ($SkipModelDownloads) {
-        Write-Host "Skipping Qwen3 and SenseVoice model downloads."
+        Write-Host "Skipping Qwen3, SenseVoice, and GPT-SoVITS pretrained model downloads."
     } else {
+        Install-GptSoVitsPretrainedAssets
+
         Write-Host "Preparing Qwen3 model files..."
         Invoke-RuntimePython -Python $RuntimePython -Arguments @("scripts\download_qwen3_model.py")
 
@@ -476,6 +619,10 @@ try {
         -Name "Qwen3 model files" `
         -Probe { Test-Path (Join-Path $ProjectRoot "model_store\registry\qwen3\qwen3-8b\q4-k-m-base-v1\Qwen3-8B-Q4_K_M.gguf") } `
         -Hint "Run quickstart/bootstrap.ps1 to download Qwen3."
+    Write-OptionalToolStatus `
+        -Name "GPT-SoVITS pretrained assets" `
+        -Probe { Test-GptSoVitsPretrainedAssets -RepoPath (Join-Path $ProjectRoot "third_party\GPT-SoVITS") } `
+        -Hint "Run quickstart/bootstrap.ps1 to download GPT-SoVITS upstream pretrained assets."
     if ($Lightweight) {
         Write-Host "[SKIP] SenseVoice model files - lightweight bootstrap"
     } else {

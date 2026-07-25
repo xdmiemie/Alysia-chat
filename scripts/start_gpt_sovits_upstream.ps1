@@ -51,6 +51,13 @@ function Convert-TtsConfigToResolvedPaths {
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
+. (Join-Path $ProjectRoot "scripts\gpt_sovits_requirements.ps1")
+$CompatPath = Join-Path $ProjectRoot "runtime\compat"
+if ([string]::IsNullOrWhiteSpace($env:PYTHONPATH)) {
+    $env:PYTHONPATH = $CompatPath
+} else {
+    $env:PYTHONPATH = "$CompatPath;$env:PYTHONPATH"
+}
 $ProjectFfmpegBin = Join-Path $ProjectRoot "tools\ffmpeg\bin"
 $ProjectFfmpeg = Join-Path $ProjectFfmpegBin "ffmpeg.exe"
 if (-not (Test-Path -LiteralPath $ProjectFfmpeg)) {
@@ -75,4 +82,21 @@ Set-Location $Repo
 Write-Host "Using GPT-SoVITS Python: $ResolvedPython"
 Write-Host "Using project FFmpeg: $ProjectFfmpeg"
 Write-Host "Using GPT-SoVITS config: $ResolvedConfig"
+
+$GptSoVitsRequirements = Join-Path $Repo "requirements.txt"
+if (Test-Path -LiteralPath $GptSoVitsRequirements) {
+    Write-Host "Ensuring GPT-SoVITS Python requirements are installed..."
+    $PlatformGptSoVitsRequirements = New-GptSoVitsPlatformRequirements `
+        -Source $GptSoVitsRequirements `
+        -Destination (Join-Path $ProjectRoot "storage\temporary\gpt_sovits_requirements.resolved.txt")
+    & $ResolvedPython -m pip install -r $PlatformGptSoVitsRequirements
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip command failed: $ResolvedPython -m pip install -r $PlatformGptSoVitsRequirements"
+    }
+    & $ResolvedPython -m pip install opencc-python-reimplemented
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip command failed: $ResolvedPython -m pip install opencc-python-reimplemented"
+    }
+}
+
 & $ResolvedPython -u api_v2.py -a $BindAddr -p $Port -c $ResolvedConfig

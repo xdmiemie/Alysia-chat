@@ -258,6 +258,19 @@ def check_third_party_manifest() -> CheckResult:
     return CheckResult("Third-party dependency manifest found", "MISSING", "configs/third_party.yaml")
 
 
+def check_gpt_sovits_pretrained_assets() -> CheckResult:
+    required = [
+        PROJECT_ROOT / "third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large",
+        PROJECT_ROOT / "third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models/chinese-hubert-base",
+        PROJECT_ROOT / "third_party/GPT-SoVITS/GPT_SoVITS/text/G2PWModel",
+    ]
+    missing = [path for path in required if not path.exists()]
+    if missing:
+        detail = "; ".join(str(path.relative_to(PROJECT_ROOT)) for path in missing)
+        return CheckResult("GPT-SoVITS pretrained assets", "MISSING", detail)
+    return CheckResult("GPT-SoVITS pretrained assets", "OK", "upstream pretrained models and G2PWModel found")
+
+
 def collect_checks() -> list[CheckResult]:
     results = [
         check_gpu(),
@@ -266,6 +279,7 @@ def collect_checks() -> list[CheckResult]:
         check_llama_server(),
         check_llama_cuda_runtime(),
         check_third_party_manifest(),
+        check_gpt_sovits_pretrained_assets(),
     ]
     results.extend(check_audio_devices())
     results.extend(check_port_free(name, port) for name, port in PORTS.items())
