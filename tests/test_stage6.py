@@ -4,9 +4,13 @@ from array import array
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from runtime.app.orchestrator import RealtimeDialogueRunner
 from runtime.audio.audio_format import WaveMetrics, inspect_wav, write_pcm16_wav
-from runtime.audio.vad_recorder import EnergyVad, UtteranceSegmenter, VadConfig
+from runtime.audio import vad_recorder
+from runtime.audio.vad_recorder import EnergyVad, RealtimeVadRecorder, UtteranceSegmenter, VadConfig
+from runtime.audio.devices import AudioDevice
 from runtime.gpt_sovits.types import ReferenceAudio, SpeechRequest, SpeechResult
 from runtime.qwen3.types import CharacterReply
 from runtime.sensevoice.types import TranscriptionResult
@@ -49,6 +53,52 @@ def test_stage6_vad_discards_short_noise():
     assert utterance.discarded is True
     assert utterance.pcm_bytes == b""
     assert utterance.reason == "too_short"
+
+
+class InterruptingQueue:
+    def put(self, _frame):
+        pass
+
+    def get(self, timeout=None):
+        assert timeout == 0.2
+        raise KeyboardInterrupt
+
+
+class FakeRawInputStream:
+    def __init__(self, **_kwargs) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        return False
+
+
+class FakeSoundDevice:
+    RawInputStream = FakeRawInputStream
+
+
+def test_stage6_realtime_recorder_allows_ctrl_c_while_waiting_for_audio(monkeypatch, tmp_path):
+    monkeypatch.setattr(vad_recorder.queue, "Queue", InterruptingQueue)
+    monkeypatch.setattr(vad_recorder, "_sounddevice", lambda: FakeSoundDevice)
+    monkeypatch.setattr(
+        vad_recorder,
+        "select_input_device",
+        lambda _device: AudioDevice(
+            index=0,
+            name="fake mic",
+            hostapi=0,
+            max_input_channels=1,
+            max_output_channels=0,
+            default_sample_rate=16000.0,
+        ),
+    )
+
+    recorder = RealtimeVadRecorder(config=VadConfig())
+
+    with pytest.raises(KeyboardInterrupt):
+        recorder.listen_once(tmp_path)
 
 
 @dataclass(frozen=True)

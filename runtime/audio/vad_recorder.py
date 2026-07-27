@@ -258,7 +258,10 @@ class RealtimeVadRecorder:
             callback=callback,
         ):
             while True:
-                frame = frames.get()
+                try:
+                    frame = frames.get(timeout=0.2)
+                except queue.Empty:
+                    continue
                 utterance = segmenter.feed(frame, frame_index)
                 frame_index += 1
                 if utterance is None:

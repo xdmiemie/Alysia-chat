@@ -9,9 +9,12 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-8 are complete. The remaining plan is:
+Stages 0-10 are complete. The remaining plan starts with the WeChat adapter
+stages:
 
-- Stage 9: selectable character/model loading from the Stage 6 app entry.
+- Stage 11: WeChat text message receive/send.
+- Stage 12: WeChat voice receive and SenseVoice transcription.
+- Stage 13: WeChat audio file/native voice replies.
 
 ## Clone-To-Code Quickstart
 
