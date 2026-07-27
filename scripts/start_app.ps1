@@ -1,9 +1,11 @@
 param(
     [string]$Character = "",
     [string]$Qwen3Model = "",
+    [string]$GPTSoVITSModel = "",
     [int]$MaxTurns = 0,
     [string]$Python = "",
     [switch]$Qwen3Interactive,
+    [switch]$GPTSoVITSInteractive,
     [switch]$SkipHealth
 )
 
@@ -12,6 +14,7 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $PidFile = Join-Path $ProjectRoot "storage\temporary\stage6-started-pids.json"
 $QwenPidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
 $GptCharacterFile = Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.character"
+$GptModelFile = Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.model"
 $GptStdoutLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.out.log"
 $GptStderrLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.err.log"
 
@@ -113,18 +116,43 @@ try {
         }
     }
 
+    $ResolveGptArgs = @((Join-Path $ProjectRoot "scripts\gpt_sovits_models.py"), "resolve", "--json", "--activate", "--character", $Character)
+    if ($GPTSoVITSInteractive -or [string]::IsNullOrWhiteSpace($GPTSoVITSModel)) {
+        $ResolveGptArgs += "--interactive"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GPTSoVITSModel)) {
+        $ResolveGptArgs += @("--model", $GPTSoVITSModel)
+    }
+    $ResolvedGptJson = & $RuntimePython @ResolveGptArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not resolve GPT-SoVITS model selection."
+    }
+    $ResolvedGpt = $ResolvedGptJson | ConvertFrom-Json
+    $GPTSoVITSModel = [string]$ResolvedGpt.model_id
+    Write-Host "Using GPT-SoVITS model: $Character/$GPTSoVITSModel"
+
     if (Test-TcpPort -HostName "127.0.0.1" -Port 9880) {
         if (Test-Path -LiteralPath $GptCharacterFile) {
             $RunningGptCharacter = (Get-Content -LiteralPath $GptCharacterFile -Raw).Trim()
             if ($RunningGptCharacter -and $RunningGptCharacter -ne $Character) {
                 throw "GPT-SoVITS upstream is already running for '$RunningGptCharacter', but selected character is '$Character'. Stop it first with scripts/stop_runtime.ps1, then start again."
             }
+        } else {
+            throw "GPT-SoVITS upstream is already running, but its character marker is missing. Stop it first with scripts/stop_runtime.ps1, then start again."
+        }
+        if (Test-Path -LiteralPath $GptModelFile) {
+            $RunningGptModel = (Get-Content -LiteralPath $GptModelFile -Raw).Trim()
+            if ($RunningGptModel -and $RunningGptModel -ne $GPTSoVITSModel) {
+                throw "GPT-SoVITS upstream is already running with model '$RunningGptModel', but selected model is '$GPTSoVITSModel'. Stop it first with scripts/stop_runtime.ps1, then start again."
+            }
+        } else {
+            throw "GPT-SoVITS upstream is already running, but its model marker is missing. Stop it first with scripts/stop_runtime.ps1, then start again."
         }
         Write-Host "Reusing existing GPT-SoVITS upstream at 127.0.0.1:9880."
     } else {
         Write-Host "Starting GPT-SoVITS upstream API..."
         $GptScript = Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1"
-        $GptArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $GptScript, "-Python", $RuntimePython, "-BindAddr", "127.0.0.1", "-Port", "9880", "-Character", $Character)
+        $GptArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $GptScript, "-Python", $RuntimePython, "-BindAddr", "127.0.0.1", "-Port", "9880", "-Character", $Character, "-Model", $GPTSoVITSModel)
         $GptProcess = Start-Process `
             -FilePath "powershell" `
             -ArgumentList $GptArgs `
@@ -163,5 +191,6 @@ try {
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
     if (-not (Test-TcpPort -HostName "127.0.0.1" -Port 9880)) {
         Remove-Item -LiteralPath $GptCharacterFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $GptModelFile -Force -ErrorAction SilentlyContinue
     }
 }

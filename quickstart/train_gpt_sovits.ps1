@@ -9,7 +9,9 @@ param(
     [switch]$ForcePrepare,
     [switch]$SkipS1,
     [switch]$SkipS2,
-    [switch]$SkipReferences
+    [switch]$SkipReferences,
+    [switch]$SkipRegister,
+    [switch]$Activate
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,8 +39,10 @@ if (-not [string]::IsNullOrWhiteSpace($Character)) {
 Write-Host "Using unified runtime Python: $RuntimePython"
 Write-Host "Using GPT-SoVITS training config: $Config"
 
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\patch_gpt_sovits_windows.ps1")
+
 Write-Host ""
-Write-Host "Step 1/4: prepare and validate GPT-SoVITS dataset"
+Write-Host "Step 1/5: prepare and validate GPT-SoVITS dataset"
 $ValidateArgs = @(
     (Join-Path $ProjectRoot "training\gpt_sovits\preprocess\dataset_manifest.py"),
     "--config", $Config,
@@ -51,11 +55,24 @@ if ($ForcePrepare) {
 & $RuntimePython @ValidateArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
-    Write-Host "Dataset is not ready yet. Put Stage 8 WAV files here:"
     if (-not [string]::IsNullOrWhiteSpace($Character)) {
-        Write-Host "training/gpt_sovits/datasets/$Character/raw/"
+        $RawDir = Join-Path $ProjectRoot "training\gpt_sovits\datasets\$Character\raw"
+        $ReportPath = Join-Path $ProjectRoot "training\gpt_sovits\datasets\$Character\work\validation_report.json"
     } else {
-        Write-Host "training/gpt_sovits/datasets/elysia/raw/"
+        $RawDir = Join-Path $ProjectRoot "training\gpt_sovits\datasets\elysia\raw"
+        $ReportPath = Join-Path $ProjectRoot "training\gpt_sovits\datasets\elysia\work\validation_report.json"
+    }
+    $WavCount = 0
+    if (Test-Path -LiteralPath $RawDir) {
+        $WavCount = @(Get-ChildItem -LiteralPath $RawDir -Recurse -File -Filter *.wav -ErrorAction SilentlyContinue).Count
+    }
+    if ($WavCount -eq 0) {
+        Write-Host "Dataset is not ready yet. Put Stage 8 WAV files here:"
+        Write-Host $RawDir
+    } else {
+        Write-Host "Dataset validation failed after finding $WavCount WAV file(s)."
+        Write-Host "See report:"
+        Write-Host $ReportPath
     }
     throw "GPT-SoVITS dataset validation failed."
 }
@@ -68,7 +85,7 @@ if ($ValidateOnly) {
 
 if (-not $SkipS1) {
     Write-Host ""
-    Write-Host "Step 2/4: train GPT-SoVITS S1"
+    Write-Host "Step 2/5: train GPT-SoVITS S1"
     $S1Args = @(
         (Join-Path $ProjectRoot "training\gpt_sovits\train\train_s1.py"),
         "--config", $Config,
@@ -88,7 +105,7 @@ if (-not $SkipS1) {
 
 if (-not $SkipS2) {
     Write-Host ""
-    Write-Host "Step 3/4: train GPT-SoVITS S2"
+    Write-Host "Step 3/5: train GPT-SoVITS S2"
     $S2Args = @(
         (Join-Path $ProjectRoot "training\gpt_sovits\train\train_s2.py"),
         "--config", $Config,
@@ -108,12 +125,28 @@ if (-not $SkipS2) {
 
 if ((-not $SkipReferences) -and (-not $DryRun)) {
     Write-Host ""
-    Write-Host "Step 4/4: select reference clips"
+    Write-Host "Step 4/5: select reference clips"
     Invoke-TrainingPython -Arguments @(
         (Join-Path $ProjectRoot "training\gpt_sovits\export\select_references.py"),
         "--config", $Config
     )
 } else {
     Write-Host ""
-    Write-Host "Step 4/4: reference selection skipped"
+    Write-Host "Step 4/5: reference selection skipped"
+}
+
+if ((-not $SkipRegister) -and (-not $DryRun)) {
+    Write-Host ""
+    Write-Host "Step 5/5: collect and register GPT-SoVITS model"
+    $CollectArgs = @(
+        (Join-Path $ProjectRoot "training\gpt_sovits\export\collect_weights.py"),
+        "--config", $Config
+    )
+    if ($Activate) {
+        $CollectArgs += "--activate"
+    }
+    Invoke-TrainingPython -Arguments $CollectArgs
+} else {
+    Write-Host ""
+    Write-Host "Step 5/5: model registration skipped"
 }

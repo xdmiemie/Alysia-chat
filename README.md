@@ -318,7 +318,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_tr
 Qwen3 HF training requires `transformers>=4.51.0`; older versions fail with
 `KeyError: 'qwen3'`.
 
-Create a new Qwen3 role scaffold:
+Create a new role scaffold. This creates the Qwen3 text-training files and the
+matching GPT-SoVITS voice-training config/directories:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/add_qwen3_character.ps1 -Character fish -DisplayName Fish
@@ -330,14 +331,23 @@ Then put role data at the path printed by the script, train with:
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -Character fish
 ```
 
+Put voice WAV clips under the printed GPT-SoVITS `raw/` directory, then prepare
+or train with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character fish -ValidateOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character fish
+```
+
 After training/exporting, run and select the character/model:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character fish -Qwen3Interactive
 ```
 
-This scaffolds Qwen3 text/model assets. GPT-SoVITS voice assets for new
-characters remain separate until the later TTS training stage.
+The run wrapper selects the Qwen3 role/model first, then selects the
+GPT-SoVITS voice model for the same character. Pass `-GPTSoVITSModel <model-id>`
+to skip the voice-model prompt.
 
 `hf_path` points at the Hugging Face safetensors base model used for training:
 
@@ -435,7 +445,13 @@ ALYSIA_GPT_SOVITS_DATASET
 ALYSIA_GPT_SOVITS_RESUME
 ```
 
-After real training, collect and register weights:
+After real training, the wrapper automatically selects reference clips and
+registers the latest S1 `.ckpt` plus S2 `.pth` from the run directory into
+`model_store/registry/gpt_sovits/<character>/`. Use `-Activate` to immediately
+switch the character to the newly registered model, or `-SkipRegister` to leave
+the produced weights only under the training run directory.
+
+Manual collection is still available for a custom weight pair:
 
 ```powershell
 python training/gpt_sovits/export/collect_weights.py --config training/gpt_sovits/configs/characters/elysia.yaml --gpt-weight path/to/model.ckpt --sovits-weight path/to/model.pth --references-dir training/gpt_sovits/outputs/elysia/elysia-gpt-sovits/references

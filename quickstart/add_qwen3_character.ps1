@@ -54,9 +54,16 @@ $RawDatasetPath = Join-Path $RawDatasetDir $DatasetFileName
 $RegistryDir = Join-Path $ProjectRoot "model_store\registry\qwen3\$Character"
 $ModelOutputDir = Join-Path $RegistryDir "trained-models"
 $ModelsManifestPath = Join-Path $RegistryDir "models.json"
+$VoiceTrainingEntryPath = Join-Path $ProjectRoot "configs\training\gpt_sovits\$Character.yaml"
+$VoiceTrainingConfigPath = Join-Path $ProjectRoot "training\gpt_sovits\configs\characters\$Character.yaml"
+$VoiceDatasetDir = Join-Path $ProjectRoot "training\gpt_sovits\datasets\$Character"
+$VoiceRawDatasetDir = Join-Path $VoiceDatasetDir "raw"
+$VoiceWorkDir = Join-Path $VoiceDatasetDir "work"
+$VoiceOutputDir = Join-Path $ProjectRoot "training\gpt_sovits\outputs\$Character"
+$VoiceRegistryDir = Join-Path $ProjectRoot "model_store\registry\gpt_sovits\$Character"
 
 if (-not $Force) {
-    foreach ($Path in @($CharacterConfigDir, $TrainingConfigPath, $DatasetDir, $RegistryDir)) {
+    foreach ($Path in @($CharacterConfigDir, $TrainingConfigPath, $DatasetDir, $RegistryDir, $VoiceTrainingEntryPath, $VoiceTrainingConfigPath, $VoiceDatasetDir, $VoiceOutputDir, $VoiceRegistryDir)) {
         if (Test-Path -LiteralPath $Path) {
             throw "Target already exists: $Path. Use -Force if you intentionally want to refresh generated files."
         }
@@ -67,6 +74,10 @@ New-Item -ItemType Directory -Force -Path $CharacterConfigDir | Out-Null
 New-Item -ItemType Directory -Force -Path $RawDatasetDir | Out-Null
 New-Item -ItemType Directory -Force -Path $RegistryDir | Out-Null
 New-Item -ItemType Directory -Force -Path $ModelOutputDir | Out-Null
+New-Item -ItemType Directory -Force -Path $VoiceRawDatasetDir | Out-Null
+New-Item -ItemType Directory -Force -Path $VoiceWorkDir | Out-Null
+New-Item -ItemType Directory -Force -Path $VoiceOutputDir | Out-Null
+New-Item -ItemType Directory -Force -Path $VoiceRegistryDir | Out-Null
 
 $CharacterYaml = @"
 character_id: $Character
@@ -167,17 +178,92 @@ $ModelsManifest = [ordered]@{
 $ModelsJson = $ModelsManifest | ConvertTo-Json -Depth 8
 Write-TextFile -Path $ModelsManifestPath -Content $ModelsJson
 
+$VoiceTrainingEntryYaml = @"
+enabled: true
+stage: 8
+character_config: training/gpt_sovits/configs/characters/$Character.yaml
+note: "$DisplayName GPT-SoVITS Stage 8 training entry."
+"@
+Write-TextFile -Path $VoiceTrainingEntryPath -Content $VoiceTrainingEntryYaml
+
+$VoiceTrainingYaml = @"
+character_id: $Character
+run_name: $Character-gpt-sovits
+speaker: $Character
+language: zh
+outputs_dir: training/gpt_sovits/outputs
+resume_from: auto
+seed: 20260727
+
+base_model:
+  model_id: gpt-sovits-pretrained-v2
+  pretrained_root: third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models
+  s1_checkpoint: third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt
+  s2_checkpoint: third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models/s2G488k.pth
+
+dataset:
+  root: training/gpt_sovits/datasets/$Character
+  raw_audio_dir: training/gpt_sovits/datasets/$Character/raw
+  raw_manifest: training/gpt_sovits/datasets/$Character/work/manifest.jsonl
+  normalized_manifest: training/gpt_sovits/datasets/$Character/work/manifest.normalized.jsonl
+  validation_report: training/gpt_sovits/datasets/$Character/work/validation_report.json
+  min_duration_seconds: 1.0
+  max_duration_seconds: 12.0
+  target_sample_rate: 32000
+  allowed_extensions: .wav,.flac,.mp3,.m4a
+
+s1:
+  enabled: true
+  command: "{python} -m training.gpt_sovits.train.run_recipe --stage s1 --config {config}"
+  max_steps: 1000
+  save_steps: 200
+  save_total_limit: 5
+  best_checkpoint_name: best
+
+s2:
+  enabled: true
+  command: "{python} -m training.gpt_sovits.train.run_recipe --stage s2 --config {config}"
+  max_steps: 1000
+  save_steps: 200
+  save_total_limit: 5
+  best_checkpoint_name: best
+
+export:
+  registry_root: model_store/registry/gpt_sovits
+  model_id_template: "{character}-gpt-sovits-{timestamp}"
+  references_emotion: neutral
+"@
+Write-TextFile -Path $VoiceTrainingConfigPath -Content $VoiceTrainingYaml
+
+$VoiceDatasetReadme = @"
+Put $DisplayName GPT-SoVITS voice WAV clips here:
+
+$($VoiceRawDatasetDir.Substring($ProjectRoot.Length + 1))
+
+File names are not fixed. The Stage 8 pipeline recursively reads every .wav
+under this raw directory, uses the project SenseVoice recognizer to generate
+transcripts, then writes processed manifests under:
+
+$($VoiceWorkDir.Substring($ProjectRoot.Length + 1))
+"@
+Write-TextFile -Path (Join-Path $VoiceRawDatasetDir "README.txt") -Content $VoiceDatasetReadme
+
 Write-Host ""
-Write-Host "Qwen3 character scaffold created: $Character"
+Write-Host "Character scaffold created: $Character"
 Write-Host ""
-Write-Host "1. Put training data here:"
+Write-Host "1. Put Qwen3 role training data here:"
 Write-Host "   $RawDatasetPath"
 Write-Host ""
-Write-Host "2. Prepare or train:"
+Write-Host "2. Prepare or train Qwen3:"
 Write-Host "   powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -Character $Character -PrepareOnly"
 Write-Host "   powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -Character $Character"
 Write-Host ""
-Write-Host "3. Run and select the role/model:"
-Write-Host "   powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character $Character -Qwen3Interactive"
+Write-Host "3. Put GPT-SoVITS voice WAV files here:"
+Write-Host "   $VoiceRawDatasetDir"
 Write-Host ""
-Write-Host "Note: this scaffolds Qwen3 text/model assets only. Runtime TTS still uses the default elysia GPT-SoVITS model."
+Write-Host "4. Prepare or train GPT-SoVITS:"
+Write-Host "   powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character $Character -ValidateOnly"
+Write-Host "   powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character $Character"
+Write-Host ""
+Write-Host "5. Run and select the role/model:"
+Write-Host "   powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character $Character -Qwen3Interactive"

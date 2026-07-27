@@ -26,17 +26,22 @@ dataset:
 s1:
   enabled: true
   command: "{python} -m training.gpt_sovits.train.run_recipe --stage s1 --config {config}"
-  max_steps: 1000
-  save_steps: 200
-  save_total_limit: 5
+
+  batch_size: 8
+  max_steps: 4500
+  save_steps: 250
+  save_total_limit: 10
   best_checkpoint_name: best
+
 
 s2:
   enabled: true
   command: "{python} -m training.gpt_sovits.train.run_recipe --stage s2 --config {config}"
-  max_steps: 1000
-  save_steps: 200
-  save_total_limit: 5
+
+  batch_size: 8
+  max_steps: 2500
+  save_steps: 250
+  save_total_limit: 10
   best_checkpoint_name: best
 
 export:

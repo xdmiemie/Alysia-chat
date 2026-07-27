@@ -48,7 +48,8 @@ function Get-MissingStage8Modules {
         [pscustomobject]@{ Module = "soundfile"; Label = "soundfile" },
         [pscustomobject]@{ Module = "torch"; Label = "torch" },
         [pscustomobject]@{ Module = "torchaudio"; Label = "torchaudio" },
-        [pscustomobject]@{ Module = "tensorboard"; Label = "tensorboard" }
+        [pscustomobject]@{ Module = "tensorboard"; Label = "tensorboard" },
+        [pscustomobject]@{ Module = "pyopenjtalk"; Label = "pyopenjtalk" }
     )
     $Missing = @()
     foreach ($Module in $Modules) {
@@ -71,7 +72,7 @@ New-Item -ItemType Directory -Force -Path $PipCachePath | Out-Null
 $MissingModules = @(Get-MissingStage8Modules -PythonExe $RuntimePython)
 $NeedUpstreamInstall = $false
 if ((-not $SkipUpstream) -and (Test-Path -LiteralPath $UpstreamRequirementFile)) {
-    $NeedUpstreamInstall = -not (Test-PythonImport -PythonExe $RuntimePython -ModuleName "librosa")
+    $NeedUpstreamInstall = (-not (Test-PythonImport -PythonExe $RuntimePython -ModuleName "librosa")) -or ($MissingModules -contains "pyopenjtalk")
 }
 
 if (($MissingModules.Count -eq 0) -and (-not $NeedUpstreamInstall)) {
@@ -102,7 +103,8 @@ if ($MissingModules.Count -gt 0) {
 if ($NeedUpstreamInstall) {
     $Resolved = New-GptSoVitsPlatformRequirements `
         -Source $UpstreamRequirementFile `
-        -Destination $ResolvedUpstreamRequirementFile
+        -Destination $ResolvedUpstreamRequirementFile `
+        -UsePyOpenJTalkPrebuilt
     Write-Host "Installing GPT-SoVITS upstream training requirements from $Resolved"
     Invoke-PipInstall -PythonExe $RuntimePython -Arguments @("-r", $Resolved)
 }

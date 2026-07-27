@@ -21,9 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="training/gpt_sovits/configs/characters/elysia.yaml")
     parser.add_argument("--model-id", default="")
     parser.add_argument("--display-name", default="")
-    parser.add_argument("--gpt-weight", required=True, help="Path to trained S1/GPT .ckpt")
-    parser.add_argument("--sovits-weight", required=True, help="Path to trained S2/SoVITS .pth")
-    parser.add_argument("--references-dir", required=True, help="Directory containing reference audio and .txt sidecars")
+    parser.add_argument("--gpt-weight", default="", help="Path to trained S1/GPT .ckpt")
+    parser.add_argument("--sovits-weight", default="", help="Path to trained S2/SoVITS .pth")
+    parser.add_argument("--references-dir", default="", help="Directory containing reference audio and .txt sidecars")
     parser.add_argument("--activate", action="store_true")
     return parser
 
@@ -47,9 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     registry_dir.mkdir(parents=True, exist_ok=True)
     references_target.mkdir(parents=True, exist_ok=True)
 
-    gpt_weight = _project_path(args.gpt_weight)
-    sovits_weight = _project_path(args.sovits_weight)
-    references_dir = _project_path(args.references_dir)
+    gpt_weight = _project_path(args.gpt_weight) if args.gpt_weight else discover_latest_gpt_weight(config.run_dir)
+    sovits_weight = _project_path(args.sovits_weight) if args.sovits_weight else discover_latest_sovits_weight(config.run_dir)
+    references_dir = _project_path(args.references_dir) if args.references_dir else config.run_dir / "references"
     if gpt_weight.suffix.lower() != ".ckpt":
         raise ValueError(f"--gpt-weight must be a .ckpt file: {gpt_weight}")
     if sovits_weight.suffix.lower() != ".pth":
@@ -88,6 +88,28 @@ def main(argv: list[str] | None = None) -> int:
     export_log.write_text(json.dumps(entry.to_manifest(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(entry.to_manifest(), ensure_ascii=False, indent=2))
     return 0
+
+
+def discover_latest_gpt_weight(run_dir: Path) -> Path:
+    candidates = [
+        *run_dir.glob("weights/GPT_weights*/*.ckpt"),
+        *run_dir.glob("s1/ckpt/*.ckpt"),
+    ]
+    return _latest_file(candidates, "trained GPT/S1 .ckpt")
+
+
+def discover_latest_sovits_weight(run_dir: Path) -> Path:
+    candidates = [
+        *run_dir.glob("weights/SoVITS_weights*/*.pth"),
+    ]
+    return _latest_file(candidates, "trained SoVITS/S2 .pth")
+
+
+def _latest_file(candidates: list[Path], label: str) -> Path:
+    files = [path for path in candidates if path.is_file()]
+    if not files:
+        raise FileNotFoundError(f"could not auto-discover {label}")
+    return max(files, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
 def _project_path(path: str | Path) -> Path:

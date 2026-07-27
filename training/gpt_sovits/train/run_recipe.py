@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -9,6 +10,8 @@ import sys
 from math import ceil
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
@@ -51,9 +54,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"recipe filelist: {_relative(recipe.input_text)}")
         print(f"s1 config: {_relative(s1_config_path)}")
         print(f"s2 config: {_relative(s2_config_path)}")
+        print(f"s2 prepare config: {_relative(recipe.s2_prepare_config)}")
         return 0
 
-    ensure_upstream_prepared(config, recipe, s2_config_path, include_semantic=args.stage == "s1")
+    ensure_language_dependencies(validation)
+    ensure_upstream_prepared(config, recipe, recipe.s2_prepare_config, include_semantic=args.stage == "s1")
     if args.stage == "s1":
         run_upstream(["GPT_SoVITS/s1_train.py", "--config_file", str(s1_config_path)])
     else:
@@ -201,6 +206,9 @@ def write_s1_config(config: TrainingConfig, validation: DatasetValidation, recip
     data["train"]["if_save_every_weights"] = True
     data["train"]["if_save_latest"] = False
     data["train"]["if_dpo"] = False
+    data.setdefault("data", {})
+    default_num_workers = 0 if os.name == "nt" else int(data["data"].get("num_workers", 4))
+    data["data"]["num_workers"] = _env_int_allow_zero("ALYSIA_GPT_SOVITS_S1_NUM_WORKERS", default_num_workers)
     half_weights_save_dir = config.run_dir / "weights" / _gpt_weight_dir(version)
     output_dir = config.run_dir / "s1"
     half_weights_save_dir.mkdir(parents=True, exist_ok=True)
@@ -210,7 +218,7 @@ def write_s1_config(config: TrainingConfig, validation: DatasetValidation, recip
     data["train_semantic_path"] = str(recipe.semantic_path)
     data["train_phoneme_path"] = str(recipe.text_path)
     data["output_dir"] = str(output_dir)
-    recipe.s1_config.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    recipe.s1_config.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return recipe.s1_config
 
 
@@ -233,7 +241,7 @@ def write_s2_config(config: TrainingConfig, validation: DatasetValidation, recip
     data["train"]["gpu_numbers"] = os.environ.get("ALYSIA_GPT_SOVITS_GPUS", "0")
     data["train"]["grad_ckpt"] = os.environ.get("ALYSIA_GPT_SOVITS_GRAD_CKPT", "false").lower() == "true"
     data["model"]["version"] = version
-    s2_exp_dir = config.run_dir / "s2"
+    s2_exp_dir = recipe.root
     s2_ckpt_dir = s2_exp_dir / f"logs_s2_{version}"
     save_weight_dir = config.run_dir / "weights" / _sovits_weight_dir(version)
     s2_ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -243,8 +251,10 @@ def write_s2_config(config: TrainingConfig, validation: DatasetValidation, recip
     data["save_weight_dir"] = str(save_weight_dir)
     data["name"] = config.run_name
     data["version"] = version
+    prepare_data = json.loads(json.dumps(data))
+    prepare_data.get("model", {}).pop("version", None)
     recipe.s2_config.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    recipe.s2_prepare_config.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    recipe.s2_prepare_config.write_text(json.dumps(prepare_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return recipe.s2_config
 
 
@@ -261,6 +271,24 @@ def run_upstream(args: list[str], extra_env: dict[str, str] | None = None) -> No
     )
     if completed.returncode != 0:
         raise RuntimeError(f"GPT-SoVITS upstream command failed with exit code {completed.returncode}: {' '.join(args)}")
+
+
+def ensure_language_dependencies(validation: DatasetValidation) -> None:
+    languages = {_gpt_sovits_language(item.language) for item in validation.items}
+    required_modules = {
+        "ja": ("pyopenjtalk", "Japanese text cleaning"),
+    }
+    missing = [
+        f"{module} ({reason})"
+        for language, (module, reason) in required_modules.items()
+        if language in languages and importlib.util.find_spec(module) is None
+    ]
+    if missing:
+        raise RuntimeError(
+            "GPT-SoVITS training data uses language(s) that need missing Python module(s): "
+            + ", ".join(missing)
+            + ". Install them with: powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_gpt_sovits_training_deps.ps1"
+        )
 
 
 def detect_version(config: TrainingConfig) -> str:
@@ -335,6 +363,13 @@ def _epochs_from_steps(max_steps: int, steps_per_epoch: int) -> int:
 def _env_int(name: str, default: int) -> int:
     try:
         return max(1, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+def _env_int_allow_zero(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, default)))
     except ValueError:
         return default
 

@@ -1,7 +1,9 @@
 function New-GptSoVitsPlatformRequirements {
     param(
         [string]$Source,
-        [string]$Destination
+        [string]$Destination,
+        [switch]$IncludePyOpenJTalk,
+        [switch]$UsePyOpenJTalkPrebuilt
     )
 
     if (-not (Test-Path -LiteralPath $Source)) {
@@ -13,8 +15,15 @@ function New-GptSoVitsPlatformRequirements {
     $Filtered = foreach ($Line in Get-Content -LiteralPath $Source) {
         $Trimmed = $Line.Trim()
         if ($IsWindowsPlatform -and $Trimmed -match '^(?i:pyopenjtalk)(?:[<>=!~ ].*)?$') {
-            $Skipped += $Trimmed
-            continue
+            if ($UsePyOpenJTalkPrebuilt) {
+                $Skipped += "$Trimmed -> pyopenjtalk-prebuilt==0.3.0"
+                "pyopenjtalk-prebuilt==0.3.0"
+                continue
+            }
+            if (-not $IncludePyOpenJTalk) {
+                $Skipped += $Trimmed
+                continue
+            }
         }
         if ($IsWindowsPlatform -and $Trimmed -match '^(?i:--no-binary\s*=\s*opencc|opencc)(?:[<>=!~ ].*)?$') {
             $Skipped += $Trimmed
@@ -32,7 +41,7 @@ function New-GptSoVitsPlatformRequirements {
 
     if ($Skipped.Count -gt 0) {
         Write-Host "Skipping Windows build-hostile GPT-SoVITS requirement(s): $($Skipped -join ', ')"
-        Write-Host "Japanese TTS requires pyopenjtalk; install Visual Studio Build Tools if you need it."
+        Write-Host "Japanese TTS/training requires pyopenjtalk; run quickstart/install_gpt_sovits_training_deps.ps1 if your data uses ja."
         Write-Host "jieba_fast is replaced by the project jieba compatibility shim on Windows."
     }
 

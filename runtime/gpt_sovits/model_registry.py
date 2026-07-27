@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -100,7 +101,22 @@ def save_character_manifest(character_id: str, data: dict[str, Any]) -> None:
     _atomic_write_json(character_manifest_path(character_id), data)
 
 
+def list_characters() -> list[str]:
+    ids: set[str] = set()
+    character_config_root = PROJECT_ROOT / "configs" / "characters"
+    if character_config_root.exists():
+        ids.update(path.name for path in character_config_root.iterdir() if path.is_dir())
+    if REGISTRY_ROOT.exists():
+        ids.update(path.name for path in REGISTRY_ROOT.iterdir() if path.is_dir())
+    if ACTIVE_ROOT.exists():
+        prefix = "gpt_sovits_"
+        ids.update(path.stem[len(prefix) :] for path in ACTIVE_ROOT.glob(f"{prefix}*.json"))
+    return sorted(ids)
+
+
 def list_models(character_id: str) -> list[GPTSoVITSModelEntry]:
+    ensure_base_model_registered(character_id)
+    ensure_active_model_registered(character_id)
     data = load_character_manifest(character_id)
     return [_entry_from_raw(character_id, raw) for raw in data.get("models", [])]
 
@@ -115,6 +131,89 @@ def find_model(character_id: str, model_id: str | None) -> GPTSoVITSModelEntry:
             return model
     available = ", ".join(model.model_id for model in models) or "<none>"
     raise ValueError(f"GPT-SoVITS model '{model_id}' for character '{character_id}' was not found. Available: {available}")
+
+
+def resolve_model(character_id: str, model_id: str | None = None) -> GPTSoVITSModelEntry:
+    return find_model(character_id, model_id)
+
+
+def choose_interactively(character_id: str) -> GPTSoVITSModelEntry:
+    character_id = character_id.strip()
+    if not character_id:
+        raise ValueError("GPT-SoVITS character id is required; it follows the selected Qwen3 character.")
+    models = list_models(character_id)
+    if not models:
+        raise ValueError(f"No GPT-SoVITS models are registered for character '{character_id}'.")
+    model_id = _prompt_choice(
+        "GPT-SoVITS Model",
+        [model.model_id for model in models],
+        [_model_choice_label(model) for model in models],
+    )
+    return find_model(character_id, model_id)
+
+
+def ensure_active_model_registered(character_id: str) -> None:
+    manifest = load_character_manifest(character_id)
+    if manifest.get("models"):
+        return
+    active_path = active_manifest_path(character_id)
+    if not active_path.exists():
+        return
+    active = json.loads(active_path.read_text(encoding="utf-8-sig"))
+    required_files = active.get("required_files", [])
+    if not isinstance(required_files, list) or not required_files:
+        return
+    model_id = str(active.get("model_id") or active.get("version") or "base-v1")
+    display_name = str(active.get("display_name") or f"{character_id} GPT-SoVITS {model_id}")
+    try:
+        register_model(
+            character_id=character_id,
+            model_id=model_id,
+            display_name=display_name,
+            kind=str(active.get("kind") or "base"),
+            required_files=required_files,
+        )
+    except Exception:
+        return
+
+
+def ensure_base_model_registered(character_id: str) -> None:
+    data = load_character_manifest(character_id)
+    if any(raw.get("kind") == "base" for raw in data.get("models", [])):
+        return
+
+    base_dir = REGISTRY_ROOT / character_id / "base-v1"
+    if not base_dir.exists():
+        return
+    ckpts = sorted(path for path in base_dir.glob("*.ckpt") if path.is_file())
+    pths = sorted(path for path in base_dir.glob("*.pth") if path.is_file())
+    if not ckpts or not pths:
+        return
+
+    references_dir = base_dir / "references"
+    references = []
+    if references_dir.exists():
+        references = sorted(
+            path
+            for path in references_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".wav", ".flac", ".mp3", ".m4a"}
+        )
+    required_files = [ckpts[0], pths[0], *references]
+    raw_entry = {
+        "id": "base-v1",
+        "display_name": f"{character_id} GPT-SoVITS base",
+        "kind": "base",
+        "required_files": [_relative_path(path) for path in required_files],
+        "created_at": utc_now(),
+    }
+    data["models"] = [raw_entry, *data.get("models", [])]
+    data["models"] = sorted(
+        data["models"],
+        key=lambda item: (str(item.get("kind")) != "base", str(item.get("created_at", ""))),
+    )
+    if not data.get("active_model_id"):
+        data["active_model_id"] = "base-v1"
+    save_character_manifest(character_id, data)
 
 
 def register_model(
@@ -230,6 +329,25 @@ def _entry_from_raw(character_id: str, raw: dict[str, Any]) -> GPTSoVITSModelEnt
         source_run=str(raw["source_run"]) if raw.get("source_run") else None,
         export_log=str(raw["export_log"]) if raw.get("export_log") else None,
     )
+
+
+def _prompt_choice(label: str, choices: list[str], display_choices: list[str] | None = None) -> str:
+    display_choices = display_choices or choices
+    print(f"选择{label}:", file=sys.stderr)
+    for index, choice in enumerate(display_choices, start=1):
+        print(f"  {index}. {choice}", file=sys.stderr)
+    while True:
+        print(f"{label} [1-{len(choices)}]> ", end="", file=sys.stderr, flush=True)
+        raw = input().strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(choices):
+            return choices[int(raw) - 1]
+        if raw in choices:
+            return raw
+        print("输入无效，请输入编号。", file=sys.stderr)
+
+
+def _model_choice_label(model: GPTSoVITSModelEntry) -> str:
+    return f"{model.kind} - {model.display_name} ({model.model_id})"
 
 
 def _project_path(path: str | Path) -> Path:

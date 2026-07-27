@@ -3,6 +3,7 @@ Param(
     [string]$Repo = "",
     [string]$Config = "",
     [string]$Character = "",
+    [string]$Model = "",
     [string]$BindAddr = "127.0.0.1",
     [int]$Port = 9880
 )
@@ -72,7 +73,21 @@ if ([string]::IsNullOrWhiteSpace($Character)) {
     $Character = "elysia"
 }
 if ([string]::IsNullOrWhiteSpace($Config)) {
-    $Config = Join-Path $ProjectRoot "configs\runtime\gpt_sovits_tts_infer_$Character.yaml"
+    $GeneratedConfig = Join-Path $ProjectRoot "storage\temporary\gpt_sovits_tts_infer_$Character.active.yaml"
+    $InferConfigArgs = @(
+        (Join-Path $ProjectRoot "scripts\gpt_sovits_models.py"),
+        "write-infer-config",
+        "--character", $Character,
+        "--output", $GeneratedConfig
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Model)) {
+        $InferConfigArgs += @("--model", $Model)
+    }
+    & (Resolve-AlysiaRuntimePython -PythonOverride $Python) @InferConfigArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not generate GPT-SoVITS upstream infer config from active model."
+    }
+    $Config = $GeneratedConfig
 }
 
 $Repo = Resolve-ProjectPath -PathValue $Repo -BasePath $ProjectRoot
@@ -88,8 +103,12 @@ Set-Location $Repo
 Write-Host "Using GPT-SoVITS Python: $ResolvedPython"
 Write-Host "Using project FFmpeg: $ProjectFfmpeg"
 Write-Host "Using GPT-SoVITS character: $Character"
+if (-not [string]::IsNullOrWhiteSpace($Model)) {
+    Write-Host "Using GPT-SoVITS model: $Model"
+}
 Write-Host "Using GPT-SoVITS config: $ResolvedConfig"
 Set-Content -LiteralPath (Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.character") -Value $Character -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.model") -Value $Model -Encoding UTF8
 
 $GptSoVitsRequirements = Join-Path $Repo "requirements.txt"
 if (Test-Path -LiteralPath $GptSoVitsRequirements) {

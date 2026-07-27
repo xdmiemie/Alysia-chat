@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 import wave
+from collections import Counter
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     validation = validate_dataset(config, write_normalized=args.write_normalized)
     if args.json:
-        print(json.dumps(validation.to_report(), ensure_ascii=False, indent=2))
+        print(json.dumps(_cli_report(validation), ensure_ascii=False, indent=2))
     else:
         _print_human_report(validation)
     return 0 if validation.ready else 1
@@ -127,6 +128,11 @@ def prepare_dataset(
         if isinstance(record, dict) and record.get("audio_hash")
     }
     if not force and _manifest_current(existing, audio_index):
+        language, changed = _apply_majority_language(existing, config.language)
+        if changed:
+            _write_manifest_records(config.dataset.raw_manifest, existing)
+            print(f"Normalized GPT-SoVITS dataset manifest language to '{language}': {_relative(config.dataset.raw_manifest)}")
+            return True
         print(f"GPT-SoVITS dataset already processed: {_relative(config.dataset.raw_manifest)}")
         return False
 
@@ -167,12 +173,10 @@ def prepare_dataset(
             }
         )
 
-    config.dataset.raw_manifest.parent.mkdir(parents=True, exist_ok=True)
-    config.dataset.raw_manifest.write_text(
-        "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",
-        encoding="utf-8",
-    )
+    language, _changed = _apply_majority_language(records, config.language)
+    _write_manifest_records(config.dataset.raw_manifest, records)
     print(f"Prepared GPT-SoVITS dataset manifest: {_relative(config.dataset.raw_manifest)}")
+    print(f"Unified GPT-SoVITS dataset manifest language to '{language}'")
     return True
 
 
@@ -240,9 +244,17 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
                 f"line {line_number}: declared duration {declared_duration:.3f}s differs from measured {duration:.3f}s"
             )
         if duration < config.dataset.min_duration_seconds:
-            errors.append(f"line {line_number}: audio is too short: {duration:.3f}s")
+            warnings.append(
+                f"line {line_number}: skipped audio shorter than {config.dataset.min_duration_seconds:.3f}s: "
+                f"{duration:.3f}s"
+            )
+            continue
         if duration > config.dataset.max_duration_seconds:
-            errors.append(f"line {line_number}: audio is too long: {duration:.3f}s")
+            warnings.append(
+                f"line {line_number}: skipped audio longer than {config.dataset.max_duration_seconds:.3f}s: "
+                f"{duration:.3f}s"
+            )
+            continue
         if sample_rate is not None and sample_rate != config.dataset.target_sample_rate:
             warnings.append(
                 f"line {line_number}: sample rate is {sample_rate}, target is {config.dataset.target_sample_rate}; "
@@ -377,6 +389,35 @@ def _manifest_current(existing: list[dict[str, object]], audio_index: list[dict[
     return all(str(record.get("text", "")).strip() for record in existing)
 
 
+def _apply_majority_language(records: list[dict[str, object]], fallback_language: str) -> tuple[str, bool]:
+    fallback = _normalize_language(fallback_language) or "zh"
+    languages = [_normalize_language(record.get("language")) for record in records]
+    counts = Counter(language for language in languages if language and language != "unknown")
+    majority = fallback
+    if counts:
+        max_count = max(counts.values())
+        candidates = sorted(language for language, count in counts.items() if count == max_count)
+        majority = fallback if fallback in candidates else candidates[0]
+    changed = False
+    for record in records:
+        if _normalize_language(record.get("language")) != majority:
+            record["language"] = majority
+            changed = True
+    return majority, changed
+
+
+def _normalize_language(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _write_manifest_records(path: Path, records: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _map_sensevoice_emotion(emotion: str) -> str:
     normalized = emotion.strip().lower()
     if normalized == "surprise":
@@ -396,6 +437,24 @@ def _print_human_report(validation: DatasetValidation) -> None:
         print(f"- error: {error}", file=sys.stderr)
     for warning in validation.warnings:
         print(f"- warning: {warning}")
+
+
+def _cli_report(validation: DatasetValidation) -> dict[str, object]:
+    report = validation.to_report()
+    errors = list(validation.errors)
+    warnings = list(validation.warnings)
+    report["error_count"] = len(errors)
+    report["warning_count"] = len(warnings)
+    report["errors"] = _truncate_messages(errors)
+    report["warnings"] = _truncate_messages(warnings)
+    return report
+
+
+def _truncate_messages(messages: list[str], limit: int = 20) -> list[str]:
+    if len(messages) <= limit:
+        return messages
+    remaining = len(messages) - limit
+    return [*messages[:limit], f"... {remaining} more; see validation_report.json"]
 
 
 def _optional_float(value: Any) -> float | None:

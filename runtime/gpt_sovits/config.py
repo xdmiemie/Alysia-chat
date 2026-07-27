@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -60,6 +61,10 @@ def gpt_sovits_config_for_character(
         raise RuntimeError(f"GPT-SoVITS character config directory not found: {character_root}")
     if not model_manifest.exists():
         raise RuntimeError(f"GPT-SoVITS model manifest not found for character '{character_id}': {model_manifest}")
+    active_manifest = json.loads(model_manifest.read_text(encoding="utf-8-sig"))
+    runtime = active_manifest.get("runtime", {})
+    if isinstance(runtime, dict) and runtime.get("reference_dir"):
+        reference_dir = Path(str(runtime["reference_dir"]))
     if not reference_dir.exists():
         raise RuntimeError(f"GPT-SoVITS reference directory not found for character '{character_id}': {reference_dir}")
 

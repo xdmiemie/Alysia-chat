@@ -110,6 +110,26 @@ def test_gpt_sovits_config_for_character_aligns_manifest_and_references(tmp_path
     assert config.reference_dir == Path("model_store/registry/gpt_sovits/fish/base-v1/references")
 
 
+def test_gpt_sovits_config_for_character_uses_active_model_reference_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    character_root = tmp_path / "configs" / "characters" / "fish"
+    reference_dir = tmp_path / "model_store" / "registry" / "gpt_sovits" / "fish" / "trained-1" / "references"
+    manifest_dir = tmp_path / "model_store" / "active"
+    character_root.mkdir(parents=True)
+    reference_dir.mkdir(parents=True)
+    manifest_dir.mkdir(parents=True)
+    (character_root / "emotion_map.yaml").write_text("neutral: neutral.wav\n", encoding="utf-8")
+    (character_root / "reference_texts.yaml").write_text("neutral: \n", encoding="utf-8")
+    (manifest_dir / "gpt_sovits_fish.json").write_text(
+        '{"required_files": ["dummy"], "runtime": {"reference_dir": "model_store/registry/gpt_sovits/fish/trained-1/references"}}',
+        encoding="utf-8",
+    )
+
+    config = gpt_sovits_config_for_character(GPTSoVITSConfig(), "fish")
+
+    assert config.reference_dir == Path("model_store/registry/gpt_sovits/fish/trained-1/references")
+
+
 def test_synthesizer_returns_non_empty_wav_and_backend_metadata(tmp_path):
     config = _config(tmp_path)
     backend = FakeSpeechBackend()
