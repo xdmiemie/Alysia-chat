@@ -1,4 +1,4 @@
-character_id: elysia
-dataset_root: datasets/gpt_sovits/elysia
-runs_dir: training/gpt_sovits/runs
-seed: 20260722
+enabled: true
+stage: 8
+character_config: training/gpt_sovits/configs/characters/elysia.yaml
+note: "GPT-SoVITS voice training pipeline with dataset validation, resume, export, activation, and registry support."

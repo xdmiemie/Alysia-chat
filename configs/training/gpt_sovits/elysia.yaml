@@ -1,6 +1,4 @@
-character_id: elysia
-dataset_root: datasets/gpt_sovits/elysia
-runs_dir: training/gpt_sovits/runs
-language: zh
-speaker: elysia
-seed: 20260722
+enabled: true
+stage: 8
+character_config: training/gpt_sovits/configs/characters/elysia.yaml
+note: "Elysia GPT-SoVITS Stage 8 training entry."

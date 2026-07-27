@@ -9,10 +9,8 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-7 are complete. The remaining plan is:
+Stages 0-8 are complete. The remaining plan is:
 
-- Stage 8: TTS training pipeline with the same dataset, resume, and checkpoint
-  controls.
 - Stage 9: selectable character/model loading from the Stage 6 app entry.
 
 ## Clone-To-Code Quickstart
@@ -380,6 +378,73 @@ Or choose non-interactively:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/start_qwen3_server.ps1 -Character elysia -ModelVersion qwen3-8b-q4-k-m-base-v1
+```
+
+## Stage 8 GPT-SoVITS Voice Training
+
+Stage 8 adds the GPT-SoVITS training pipeline scaffold: raw WAV discovery,
+SenseVoice transcript generation, dataset validation, normalized manifest
+generation, S1/S2 resume metadata, checkpoint retention, reference selection,
+model registration, and activation.
+
+Voice data is private local input and is ignored by Git. Put Elysia data here:
+
+```text
+training/gpt_sovits/datasets/elysia/raw/
+```
+
+File names are not fixed. The pipeline recursively reads every `.wav` under
+that directory, uses the project SenseVoice model to generate transcripts, and
+writes the generated training manifests under `training/gpt_sovits/datasets/elysia/work/`.
+
+Install Stage 8 training-only dependencies when bootstrap was run in a light
+mode or when the training checks report missing modules:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_gpt_sovits_training_deps.ps1
+```
+
+Prepare and validate the dataset:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -ValidateOnly
+```
+
+Run the combined prepare-and-train pipeline in dry-run mode:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -DryRun
+```
+
+For real training, run the same wrapper without `-DryRun`. The checked-in
+`s1.command` and `s2.command` entries call Alysia's recipe runner, which
+generates the upstream GPT-SoVITS filelist/configs from the processed raw WAV
+dataset at runtime:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1
+```
+
+The fixed recipe commands receive these environment variables:
+
+```text
+ALYSIA_PROJECT_ROOT
+ALYSIA_GPT_SOVITS_CONFIG
+ALYSIA_GPT_SOVITS_RUN_DIR
+ALYSIA_GPT_SOVITS_DATASET
+ALYSIA_GPT_SOVITS_RESUME
+```
+
+After real training, collect and register weights:
+
+```powershell
+python training/gpt_sovits/export/collect_weights.py --config training/gpt_sovits/configs/characters/elysia.yaml --gpt-weight path/to/model.ckpt --sovits-weight path/to/model.pth --references-dir training/gpt_sovits/outputs/elysia/elysia-gpt-sovits/references
+```
+
+Activate a registered candidate only after smoke validation:
+
+```powershell
+python training/gpt_sovits/export/activate_model.py --character elysia --model <model-id>
 ```
 
 ## Stage 4 GPT-SoVITS Speech

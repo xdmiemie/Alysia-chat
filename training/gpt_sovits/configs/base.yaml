@@ -1,0 +1,36 @@
+outputs_dir: training/gpt_sovits/outputs
+resume_from: auto
+seed: 20260727
+
+base_model:
+  model_id: gpt-sovits-pretrained-v2
+  pretrained_root: third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models
+  s1_checkpoint: third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt
+  s2_checkpoint: third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models/s2G488k.pth
+
+dataset:
+  min_duration_seconds: 1.0
+  max_duration_seconds: 12.0
+  target_sample_rate: 32000
+  allowed_extensions: .wav,.flac,.mp3,.m4a
+
+s1:
+  enabled: true
+  command: "{python} -m training.gpt_sovits.train.run_recipe --stage s1 --config {config}"
+  max_steps: 1000
+  save_steps: 200
+  save_total_limit: 5
+  best_checkpoint_name: best
+
+s2:
+  enabled: true
+  command: "{python} -m training.gpt_sovits.train.run_recipe --stage s2 --config {config}"
+  max_steps: 1000
+  save_steps: 200
+  save_total_limit: 5
+  best_checkpoint_name: best
+
+export:
+  registry_root: model_store/registry/gpt_sovits
+  model_id_template: "{character}-gpt-sovits-{timestamp}"
+  references_emotion: neutral

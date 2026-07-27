@@ -1,0 +1,2 @@
+-r ../../runtime/sensevoice/requirements-model.txt
+tensorboard>=2.14

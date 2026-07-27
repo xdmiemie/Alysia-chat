@@ -26,6 +26,8 @@ datasets/**/test/
 
 training/**/runs/
 training/**/outputs/
+training/gpt_sovits/datasets/*/raw/
+training/gpt_sovits/datasets/*/work/
 
 model_store/registry/*
 model_store/staging/
