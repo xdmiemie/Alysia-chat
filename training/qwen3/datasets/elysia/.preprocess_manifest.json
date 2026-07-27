@@ -1,0 +1,9 @@
+{
+  "config_hash": "93dfa0c81b92df8711749a4679b3eebcc77e7d3df88dfbd87dbd70cd3c9f6768",
+  "raw_hash": "8763b56addaf5db5624c3293a85cc35b04035528d201e901c0d859cc855c7872",
+  "normalized_hash": "45ae7a83cf92bd82055e0f4902336377fbaed9e07a4ab2f52456ab5e3bcaba0d",
+  "validation_ratio": 0.1,
+  "normalized": "training/qwen3/datasets/elysia/normalized.jsonl",
+  "train": "training/qwen3/datasets/elysia/train.jsonl",
+  "validation": "training/qwen3/datasets/elysia/validation.jsonl"
+}

@@ -93,6 +93,7 @@ class Stage5DialogueRunner:
         input_dir: str | Path = "storage/generated_audio/dialogue_questions_20",
         output_dir: str | Path = "storage/generated_audio/stage5_dialogue",
         character_id: str = "elysia",
+        tts_character_id: str | None = None,
         asr_fallback_text: str = DEFAULT_ASR_FALLBACK_TEXT,
         llm_fallback_text: str = DEFAULT_LLM_FALLBACK_TEXT,
     ) -> None:
@@ -102,6 +103,7 @@ class Stage5DialogueRunner:
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.character_id = character_id
+        self.tts_character_id = tts_character_id or character_id
         self.asr_fallback_text = asr_fallback_text
         self.llm_fallback_text = llm_fallback_text
 
@@ -204,7 +206,7 @@ class Stage5DialogueRunner:
             speech = self.synthesizer.synthesize(
                 SpeechRequest(
                     text=reply.reply,
-                    character_id=self.character_id,
+                    character_id=self.tts_character_id,
                     emotion=reply.emotion,
                     speed=reply.speed,
                     format="wav",
@@ -259,6 +261,7 @@ class RealtimeDialogueRunner:
         recordings_dir: str | Path = "storage/recordings/stage6",
         output_dir: str | Path = "storage/generated_audio/stage6_dialogue",
         character_id: str = "elysia",
+        tts_character_id: str | None = None,
         asr_fallback_text: str = DEFAULT_ASR_FALLBACK_TEXT,
         llm_fallback_text: str = DEFAULT_LLM_FALLBACK_TEXT,
     ) -> None:
@@ -270,6 +273,7 @@ class RealtimeDialogueRunner:
         self.recordings_dir = Path(recordings_dir)
         self.output_dir = Path(output_dir)
         self.character_id = character_id
+        self.tts_character_id = tts_character_id or character_id
         self.asr_fallback_text = asr_fallback_text
         self.llm_fallback_text = llm_fallback_text
 
@@ -362,7 +366,7 @@ class RealtimeDialogueRunner:
             speech = self.synthesizer.synthesize(
                 SpeechRequest(
                     text=reply.reply,
-                    character_id=self.character_id,
+                    character_id=self.tts_character_id,
                     emotion=reply.emotion,
                     speed=reply.speed,
                     format="wav",

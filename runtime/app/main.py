@@ -4,6 +4,7 @@ import argparse
 import json
 import socket
 import sys
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -13,7 +14,7 @@ from runtime.audio.devices import select_input_device, select_output_device
 from runtime.audio.player import play_wav
 from runtime.audio.vad_recorder import RealtimeVadRecorder, VadConfig
 from runtime.common.config import load_audio_config
-from runtime.gpt_sovits.config import load_gpt_sovits_config
+from runtime.gpt_sovits.config import GPTSoVITSConfig, gpt_sovits_config_for_character, load_gpt_sovits_config
 from runtime.gpt_sovits.references import validate_model_manifest
 from runtime.gpt_sovits.service import GPTSoVITSSynthesizer
 from runtime.qwen3.config import load_qwen3_config
@@ -55,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         audio = load_audio_config(args.audio_config)
+        gpt_sovits_config = gpt_sovits_config_for_character(args.gpt_sovits_config, args.character_id)
         output_dir = Path(args.output_dir) if args.output_dir else default_stage6_output_dir()
         recordings_dir = Path(args.recordings_dir) if args.recordings_dir else audio.recordings_dir / "stage6"
 
@@ -63,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
                 audio_config_path=args.audio_config,
                 sensevoice_config=args.sensevoice_config,
                 qwen3_config=args.qwen3_config,
-                gpt_sovits_config=args.gpt_sovits_config,
+                gpt_sovits_config=gpt_sovits_config,
             )
             if health_errors:
                 for error in health_errors:
@@ -72,8 +74,8 @@ def main(argv: list[str] | None = None) -> int:
 
         runner = RealtimeDialogueRunner(
             transcriber=SenseVoiceRecognizer.from_config(args.sensevoice_config),
-            chat_session=Qwen3ChatSession.from_config(args.qwen3_config),
-            synthesizer=GPTSoVITSSynthesizer.from_config(args.gpt_sovits_config),
+            chat_session=Qwen3ChatSession.from_config(_qwen3_config_for_character(args.qwen3_config, args.character_id)),
+            synthesizer=GPTSoVITSSynthesizer.from_config(gpt_sovits_config),
             recorder=RealtimeVadRecorder(
                 config=VadConfig(sample_rate=audio.sample_rate, channels=audio.channels),
                 input_device=audio.input_device,
@@ -82,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             recordings_dir=recordings_dir,
             output_dir=output_dir,
             character_id=args.character_id,
+            tts_character_id=args.character_id,
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -111,7 +114,7 @@ def check_stage6_health(
     audio_config_path: str | Path,
     sensevoice_config: str | Path,
     qwen3_config: str | Path,
-    gpt_sovits_config: str | Path,
+    gpt_sovits_config: str | Path | GPTSoVITSConfig,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -135,7 +138,11 @@ def check_stage6_health(
         errors.append(str(exc))
 
     try:
-        gpt_sovits = load_gpt_sovits_config(gpt_sovits_config)
+        gpt_sovits = (
+            gpt_sovits_config
+            if isinstance(gpt_sovits_config, GPTSoVITSConfig)
+            else load_gpt_sovits_config(gpt_sovits_config)
+        )
         validate_model_manifest(gpt_sovits.model_manifest)
         parsed = urlparse(gpt_sovits.upstream_url)
         host = parsed.hostname or "127.0.0.1"
@@ -145,6 +152,19 @@ def check_stage6_health(
         errors.append(str(exc))
 
     return errors
+
+
+def _qwen3_config_for_character(config_path: str | Path, character_id: str):
+    config = load_qwen3_config(config_path)
+    character_root = Path("configs") / "characters" / character_id
+    if not character_root.exists():
+        raise RuntimeError(f"Qwen3 character config directory not found: {character_root}")
+    return replace(
+        config,
+        character_config=character_root / "character.yaml",
+        system_prompt=character_root / "system_prompt.txt",
+        examples_path=character_root / "examples.jsonl",
+    )
 
 
 def _validate_audio_devices(input_device: int | None, output_device: int | None) -> None:
@@ -157,7 +177,7 @@ def _validate_manifest_files(manifest_path: str | Path, label: str) -> None:
     manifest = Path(manifest_path)
     if not manifest.exists():
         raise RuntimeError(f"{label} model manifest not found: {manifest}")
-    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data = json.loads(manifest.read_text(encoding="utf-8-sig"))
     required_files = data.get("required_files", [])
     if not isinstance(required_files, list) or not required_files:
         raise RuntimeError(f"{label} manifest has no required_files: {manifest}")

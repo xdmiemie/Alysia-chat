@@ -1,7 +1,9 @@
 param(
-    [string]$Character = "elysia",
+    [string]$Character = "",
+    [string]$Qwen3Model = "",
     [int]$MaxTurns = 0,
     [string]$Python = "",
+    [switch]$Qwen3Interactive,
     [switch]$SkipHealth
 )
 
@@ -9,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $PidFile = Join-Path $ProjectRoot "storage\temporary\stage6-started-pids.json"
 $QwenPidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
+$GptCharacterFile = Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.character"
 $GptStdoutLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.out.log"
 $GptStderrLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.err.log"
 
@@ -61,11 +64,48 @@ New-Item -ItemType Directory -Force -Path (Split-Path $GptStdoutLog) | Out-Null
 $Started = @()
 
 try {
-    if (Test-TcpPort -HostName "127.0.0.1" -Port 8080) {
+    $QwenRunning = Test-TcpPort -HostName "127.0.0.1" -Port 8080
+    if ($QwenRunning) {
+        $ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json")
+        if (-not [string]::IsNullOrWhiteSpace($Character)) {
+            $ResolveArgs += @("--character", $Character)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+            $ResolveArgs += @("--model", $Qwen3Model)
+        }
+        $ResolvedJson = & $RuntimePython @ResolveArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not resolve current Qwen3 model selection."
+        }
+        $ResolvedQwen3 = $ResolvedJson | ConvertFrom-Json
+        $Character = [string]$ResolvedQwen3.character_id
+        $Qwen3Model = [string]$ResolvedQwen3.model_id
         Write-Host "Reusing existing Qwen3 llama-server at 127.0.0.1:8080."
     } else {
+        $ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json", "--activate")
+        if ($Qwen3Interactive -or [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+            $ResolveArgs += "--interactive"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Character)) {
+            $ResolveArgs += @("--character", $Character)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+            $ResolveArgs += @("--model", $Qwen3Model)
+        }
+        $ResolvedJson = & $RuntimePython @ResolveArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not resolve Qwen3 model selection."
+        }
+        $ResolvedQwen3 = $ResolvedJson | ConvertFrom-Json
+        $Character = [string]$ResolvedQwen3.character_id
+        $Qwen3Model = [string]$ResolvedQwen3.model_id
+
         Write-Host "Starting Qwen3 llama-server..."
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\start_qwen3_server.ps1") -Background
+        $QwenArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $ProjectRoot "scripts\start_qwen3_server.ps1"), "-Background", "-Character", $Character)
+        if (-not [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+            $QwenArgs += @("-ModelVersion", $Qwen3Model)
+        }
+        & powershell @QwenArgs
         Wait-TcpPort -HostName "127.0.0.1" -Port 8080 -Name "Qwen3 llama-server"
         if (Test-Path $QwenPidFile) {
             $QwenPid = [int](Get-Content -LiteralPath $QwenPidFile)
@@ -74,11 +114,17 @@ try {
     }
 
     if (Test-TcpPort -HostName "127.0.0.1" -Port 9880) {
+        if (Test-Path -LiteralPath $GptCharacterFile) {
+            $RunningGptCharacter = (Get-Content -LiteralPath $GptCharacterFile -Raw).Trim()
+            if ($RunningGptCharacter -and $RunningGptCharacter -ne $Character) {
+                throw "GPT-SoVITS upstream is already running for '$RunningGptCharacter', but selected character is '$Character'. Stop it first with scripts/stop_runtime.ps1, then start again."
+            }
+        }
         Write-Host "Reusing existing GPT-SoVITS upstream at 127.0.0.1:9880."
     } else {
         Write-Host "Starting GPT-SoVITS upstream API..."
         $GptScript = Join-Path $ProjectRoot "scripts\start_gpt_sovits_upstream.ps1"
-        $GptArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $GptScript, "-Python", $RuntimePython, "-BindAddr", "127.0.0.1", "-Port", "9880")
+        $GptArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $GptScript, "-Python", $RuntimePython, "-BindAddr", "127.0.0.1", "-Port", "9880", "-Character", $Character)
         $GptProcess = Start-Process `
             -FilePath "powershell" `
             -ArgumentList $GptArgs `
@@ -115,4 +161,7 @@ try {
         }
     }
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+    if (-not (Test-TcpPort -HostName "127.0.0.1" -Port 9880)) {
+        Remove-Item -LiteralPath $GptCharacterFile -Force -ErrorAction SilentlyContinue
+    }
 }

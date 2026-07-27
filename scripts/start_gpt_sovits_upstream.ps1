@@ -2,6 +2,7 @@ Param(
     [string]$Python = "",
     [string]$Repo = "",
     [string]$Config = "",
+    [string]$Character = "",
     [string]$BindAddr = "127.0.0.1",
     [int]$Port = 9880
 )
@@ -67,15 +68,18 @@ $env:Path = "$ProjectFfmpegBin;$env:Path"
 if ([string]::IsNullOrWhiteSpace($Repo)) {
     $Repo = Join-Path $ProjectRoot "third_party\GPT-SoVITS"
 }
+if ([string]::IsNullOrWhiteSpace($Character)) {
+    $Character = "elysia"
+}
 if ([string]::IsNullOrWhiteSpace($Config)) {
-    $Config = Join-Path $ProjectRoot "configs\runtime\gpt_sovits_tts_infer_elysia.yaml"
+    $Config = Join-Path $ProjectRoot "configs\runtime\gpt_sovits_tts_infer_$Character.yaml"
 }
 
 $Repo = Resolve-ProjectPath -PathValue $Repo -BasePath $ProjectRoot
 $Config = Resolve-ProjectPath -PathValue $Config -BasePath $ProjectRoot
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\patch_gpt_sovits_windows.ps1") -Repo $Repo
 
-$ResolvedConfig = Join-Path $ProjectRoot "storage\temporary\gpt_sovits_tts_infer_elysia.resolved.yaml"
+$ResolvedConfig = Join-Path $ProjectRoot "storage\temporary\gpt_sovits_tts_infer_$Character.resolved.yaml"
 Convert-TtsConfigToResolvedPaths -SourceConfig $Config -OutputConfig $ResolvedConfig -ProjectRoot $ProjectRoot -GptSoVitsRepo $Repo
 
 $ResolvedPython = Resolve-AlysiaRuntimePython -PythonOverride $Python
@@ -83,7 +87,9 @@ $ResolvedPython = Resolve-AlysiaRuntimePython -PythonOverride $Python
 Set-Location $Repo
 Write-Host "Using GPT-SoVITS Python: $ResolvedPython"
 Write-Host "Using project FFmpeg: $ProjectFfmpeg"
+Write-Host "Using GPT-SoVITS character: $Character"
 Write-Host "Using GPT-SoVITS config: $ResolvedConfig"
+Set-Content -LiteralPath (Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.character") -Value $Character -Encoding UTF8
 
 $GptSoVitsRequirements = Join-Path $Repo "requirements.txt"
 if (Test-Path -LiteralPath $GptSoVitsRequirements) {

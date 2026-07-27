@@ -1,0 +1,10 @@
+{
+  "config_hash": "8b886fdde0114784eaebdf50f4d9344df5d7362fcb1aefbb921cc42693825485",
+  "raw_hash": "6f3edbb33d409d76f960ee4b588ccba9375b24d05a6e9ee159e273dde0b4108f",
+  "system_prompt_hash": "4a6615f45251991688e3fde0ad7665586722e6bd716bb16cd400db03952e9612",
+  "normalized_hash": "30c39a1d48eaaf184dc7666807978bc830958f293debe87544b93d0002886ea8",
+  "validation_ratio": 0.1,
+  "normalized": "training/qwen3/datasets/fish/normalized.jsonl",
+  "train": "training/qwen3/datasets/fish/train.jsonl",
+  "validation": "training/qwen3/datasets/fish/validation.jsonl"
+}

@@ -34,8 +34,8 @@ class Qwen3ChatSession:
         self.turns: list[ChatTurn] = []
 
     @classmethod
-    def from_config(cls, config_path: str | Path = "configs/runtime/qwen3.yaml") -> "Qwen3ChatSession":
-        config = load_qwen3_config(config_path)
+    def from_config(cls, config_path: str | Path | Qwen3Config = "configs/runtime/qwen3.yaml") -> "Qwen3ChatSession":
+        config = config_path if isinstance(config_path, Qwen3Config) else load_qwen3_config(config_path)
         profile = load_character_profile(config.character_config)
         system_prompt = build_system_prompt(profile, config.system_prompt)
         examples = load_examples(config.examples_path)

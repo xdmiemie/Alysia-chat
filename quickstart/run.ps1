@@ -1,7 +1,9 @@
 param(
-    [string]$Character = "elysia",
+    [string]$Character = "",
+    [string]$Qwen3Model = "",
     [int]$MaxTurns = 0,
     [string]$Python = "",
+    [switch]$Qwen3Interactive,
     [switch]$SkipBootstrap,
     [switch]$LightweightBootstrap,
     [switch]$SkipLfsPull,
@@ -33,7 +35,16 @@ if (-not $SkipBootstrap) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "quickstart\bootstrap.ps1") @BootstrapArgs
 }
 
-$StartArgs = @("-Character", $Character)
+$StartArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($Character)) {
+    $StartArgs += @("-Character", $Character)
+}
+if (-not [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+    $StartArgs += @("-Qwen3Model", $Qwen3Model)
+}
+if ($Qwen3Interactive -or [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+    $StartArgs += "-Qwen3Interactive"
+}
 if (-not [string]::IsNullOrWhiteSpace($Python)) {
     $StartArgs += @("-Python", $Python)
 }

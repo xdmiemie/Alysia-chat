@@ -678,7 +678,7 @@ try {
         -Hint "Prepare third_party/GPT-SoVITS before starting TTS."
     Write-OptionalToolStatus `
         -Name "Qwen3 model files" `
-        -Probe { Test-Path (Join-Path $ProjectRoot "model_store\registry\qwen3\qwen3-8b\q4-k-m-base-v1\Qwen3-8B-Q4_K_M.gguf") } `
+        -Probe { Test-Path (Join-Path $ProjectRoot "model_store\registry\qwen3\elysia\qwen3-8b-q4-k-m-base-v1\Qwen3-8B-Q4_K_M.gguf") } `
         -Hint "Run quickstart/bootstrap.ps1 to download Qwen3."
     Write-OptionalToolStatus `
         -Name "GPT-SoVITS pretrained assets" `
@@ -700,7 +700,11 @@ try {
 
     Write-Host ""
     Write-Host "Bootstrap complete. Start with:"
-    Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia"
+    Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1"
+    Write-Host ""
+    Write-Host "For Qwen3 training, run after bootstrap:"
+    Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1"
+    Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1"
 } finally {
     Pop-Location
 }

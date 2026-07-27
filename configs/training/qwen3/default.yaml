@@ -1,2 +1,4 @@
-enabled: false
-note: "Reserved for prompts, examples, evaluation, and possible later LoRA training."
+enabled: true
+stage: 7
+character_config: training/qwen3/configs/characters/elysia.yaml
+note: "Qwen3 role LoRA/QLoRA training pipeline with resume, retention, export, and activation."

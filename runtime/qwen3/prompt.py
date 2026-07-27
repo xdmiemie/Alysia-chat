@@ -27,7 +27,7 @@ def build_system_prompt(profile: CharacterProfile, prompt_path: str | Path) -> s
     base_prompt = ""
     path = Path(prompt_path)
     if path.exists():
-        base_prompt = path.read_text(encoding="utf-8").strip()
+        base_prompt = path.read_text(encoding="utf-8-sig").strip()
 
     personality = ", ".join(profile.personality) or "warm, concise"
     forbidden = ", ".join(profile.forbidden) or "chain-of-thought, markdown"

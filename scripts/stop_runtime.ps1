@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $PidFile = Join-Path $ProjectRoot "storage\temporary\runtime-pids.json"
 $Qwen3PidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
-$Qwen3ModelPath = Join-Path $ProjectRoot "model_store\registry\qwen3\qwen3-8b\q4-k-m-base-v1\Qwen3-8B-Q4_K_M.gguf"
+$Qwen3ModelRoot = Join-Path $ProjectRoot "model_store\registry\qwen3"
 
 if (Test-Path $Qwen3PidFile) {
     $Qwen3Pid = [int](Get-Content -LiteralPath $Qwen3PidFile)
@@ -23,7 +23,7 @@ if (Test-Path $Qwen3PidFile) {
 }
 
 $Qwen3Processes = Get-CimInstance Win32_Process -Filter "name = 'llama-server.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -like "*$Qwen3ModelPath*" }
+    Where-Object { $_.CommandLine -like "*$Qwen3ModelRoot*" }
 
 foreach ($Process in $Qwen3Processes) {
     try {

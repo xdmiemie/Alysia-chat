@@ -21,7 +21,7 @@ def resolve_model_path(manifest_path: str | Path, project_root: str | Path | Non
     if not manifest.exists():
         raise RuntimeError(f"SenseVoice model manifest not found: {manifest}")
 
-    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data = json.loads(manifest.read_text(encoding="utf-8-sig"))
     required_files = data.get("required_files", [])
     if not required_files:
         raise RuntimeError(f"SenseVoice manifest has no required_files: {manifest}")

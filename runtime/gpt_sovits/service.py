@@ -15,8 +15,11 @@ class GPTSoVITSSynthesizer:
         self.backend = backend
 
     @classmethod
-    def from_config(cls, config_path: str | Path = "configs/runtime/gpt_sovits.yaml") -> "GPTSoVITSSynthesizer":
-        config = load_gpt_sovits_config(config_path)
+    def from_config(
+        cls,
+        config_path: str | Path | GPTSoVITSConfig = "configs/runtime/gpt_sovits.yaml",
+    ) -> "GPTSoVITSSynthesizer":
+        config = config_path if isinstance(config_path, GPTSoVITSConfig) else load_gpt_sovits_config(config_path)
         validate_model_manifest(config.model_manifest)
         return cls(config=config, backend=GPTSoVITSHttpBackend(config))
 

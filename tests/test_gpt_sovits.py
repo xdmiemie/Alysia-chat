@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from array import array
+from pathlib import Path
 
 import pytest
 
 from runtime.audio.audio_format import inspect_wav, write_pcm16_wav
-from runtime.gpt_sovits.config import GPTSoVITSConfig
+from runtime.gpt_sovits.config import GPTSoVITSConfig, gpt_sovits_config_for_character
 from runtime.gpt_sovits.references import resolve_reference_audio
 from runtime.gpt_sovits.service import GPTSoVITSSynthesizer
 from runtime.gpt_sovits.text import normalize_tts_text, split_tts_sentences
@@ -87,6 +88,26 @@ def test_resolve_reference_audio_uses_emotion_and_falls_back_to_neutral(tmp_path
     assert happy.prompt_text == "同名文本优先"
     assert unknown.path.name == "neutral.wav"
     assert unknown.emotion == "neutral"
+
+
+def test_gpt_sovits_config_for_character_aligns_manifest_and_references(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    character_root = tmp_path / "configs" / "characters" / "fish"
+    reference_dir = tmp_path / "model_store" / "registry" / "gpt_sovits" / "fish" / "base-v1" / "references"
+    manifest_dir = tmp_path / "model_store" / "active"
+    character_root.mkdir(parents=True)
+    reference_dir.mkdir(parents=True)
+    manifest_dir.mkdir(parents=True)
+    (character_root / "emotion_map.yaml").write_text("neutral: neutral.wav\n", encoding="utf-8")
+    (character_root / "reference_texts.yaml").write_text("neutral: \n", encoding="utf-8")
+    (manifest_dir / "gpt_sovits_fish.json").write_text('{"required_files": ["dummy"]}', encoding="utf-8")
+
+    config = gpt_sovits_config_for_character(GPTSoVITSConfig(), "fish")
+
+    assert config.character_id == "fish"
+    assert config.model_manifest == Path("model_store/active/gpt_sovits_fish.json")
+    assert config.emotion_map == Path("configs/characters/fish/emotion_map.yaml")
+    assert config.reference_dir == Path("model_store/registry/gpt_sovits/fish/base-v1/references")
 
 
 def test_synthesizer_returns_non_empty_wav_and_backend_metadata(tmp_path):

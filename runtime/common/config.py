@@ -35,7 +35,7 @@ def load_flat_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return data
 
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if not line or ":" not in line:
             continue

@@ -125,7 +125,7 @@ def _validate_manifest_files(manifest_path: str | Path, label: str) -> None:
     manifest = Path(manifest_path)
     if not manifest.exists():
         raise RuntimeError(f"{label} model manifest not found: {manifest}")
-    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data = json.loads(manifest.read_text(encoding="utf-8-sig"))
     required_files = data.get("required_files", [])
     if not isinstance(required_files, list) or not required_files:
         raise RuntimeError(f"{label} manifest has no required_files: {manifest}")

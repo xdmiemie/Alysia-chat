@@ -166,6 +166,29 @@ def test_stage5_llm_failure_generates_fallback_wav_and_continues(tmp_path, monke
     assert synth.calls[0].text == "我这里稍微卡了一下，但我还在听你说。"
 
 
+def test_stage5_can_keep_tts_on_default_character(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    input_dir = tmp_path / "dialogue_questions_20"
+    output_dir = tmp_path / "stage5_output"
+    input_dir.mkdir()
+    _write_input(input_dir / "01-question.wav")
+    synth = FakeSynthesizer()
+
+    runner = Stage5DialogueRunner(
+        transcriber=FakeTranscriber([_speech_result("hello")]),
+        chat_session=FakeChatSession([CharacterReply("reply", "neutral", 0.5, 1.0)]),
+        synthesizer=synth,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        character_id="fish",
+        tts_character_id="elysia",
+    )
+
+    runner.run_all()
+
+    assert synth.calls[0].character_id == "elysia"
+
+
 def test_stage5_bad_input_file_does_not_stop_later_turns(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     input_dir = tmp_path / "dialogue_questions_20"

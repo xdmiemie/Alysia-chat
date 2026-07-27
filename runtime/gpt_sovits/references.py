@@ -31,7 +31,7 @@ def validate_model_manifest(manifest_path: str | Path, project_root: str | Path 
     manifest = (root / manifest_path).resolve()
     if not manifest.exists():
         raise RuntimeError(f"GPT-SoVITS model manifest not found: {manifest}")
-    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data = json.loads(manifest.read_text(encoding="utf-8-sig"))
     required_files = data.get("required_files", [])
     if not isinstance(required_files, list) or not required_files:
         raise RuntimeError(f"GPT-SoVITS manifest has no required_files: {manifest}")
@@ -45,7 +45,7 @@ def validate_model_manifest(manifest_path: str | Path, project_root: str | Path 
 def _load_prompt_text(reference_path: Path, emotion: str, prompt_texts: dict[str, object]) -> str:
     sidecar = reference_path.with_suffix(".txt")
     if sidecar.exists():
-        text = sidecar.read_text(encoding="utf-8").strip()
+        text = sidecar.read_text(encoding="utf-8-sig").strip()
         if text:
             return text
     return str(prompt_texts.get(emotion) or prompt_texts.get("neutral") or "")

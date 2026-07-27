@@ -1,17 +1,58 @@
 param(
     [string]$LlamaExecutable = "",
+    [string]$Character = "",
+    [string]$ModelVersion = "",
+    [switch]$Interactive,
     [switch]$Background
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$ModelPath = Join-Path $ProjectRoot "model_store\registry\qwen3\qwen3-8b\q4-k-m-base-v1\Qwen3-8B-Q4_K_M.gguf"
 $PidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
 $StdoutLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.out.log"
 $StderrLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.err.log"
 
-if (-not (Test-Path $ModelPath)) {
+. (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
+$Python = Resolve-AlysiaRuntimePython
+
+$ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json")
+$PromptForModel = $Interactive -or ((-not $Background) -and [string]::IsNullOrWhiteSpace($Character) -and [string]::IsNullOrWhiteSpace($ModelVersion))
+if ($PromptForModel) {
+    $ResolveArgs += @("--interactive", "--activate")
+    if (-not [string]::IsNullOrWhiteSpace($Character)) {
+        $ResolveArgs += @("--character", $Character)
+    }
+} else {
+    if (-not [string]::IsNullOrWhiteSpace($Character)) {
+        $ResolveArgs += @("--character", $Character)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ModelVersion)) {
+        $ResolveArgs += @("--model", $ModelVersion)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Character) -or -not [string]::IsNullOrWhiteSpace($ModelVersion)) {
+        $ResolveArgs += "--activate"
+    }
+}
+
+$ResolvedJson = & $Python @ResolveArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not resolve Qwen3 model selection."
+}
+$Resolved = $ResolvedJson | ConvertFrom-Json
+$ModelPath = Join-Path $ProjectRoot $Resolved.runtime.model_file
+$LoraAdapter = $null
+if ($Resolved.runtime.PSObject.Properties.Name -contains "lora_adapter") {
+    $LoraAdapter = Join-Path $ProjectRoot $Resolved.runtime.lora_adapter
+}
+
+if (-not (Test-Path -LiteralPath $ModelPath)) {
     throw "Qwen3 GGUF model not found: $ModelPath"
+}
+if ($LoraAdapter -and -not (Test-Path -LiteralPath $LoraAdapter)) {
+    throw "Qwen3 LoRA adapter not found: $LoraAdapter"
+}
+if ($LoraAdapter -and ([IO.Path]::GetExtension($LoraAdapter).ToLowerInvariant() -ne ".gguf")) {
+    throw "Qwen3 LoRA adapter must be GGUF for llama.cpp: $LoraAdapter. Run quickstart/convert_qwen3_lora_to_gguf.ps1 first."
 }
 
 if ([string]::IsNullOrWhiteSpace($LlamaExecutable)) {
@@ -35,6 +76,9 @@ $ServerArgs = @(
     "--ctx-size", "8192",
     "--n-gpu-layers", "99"
 )
+if ($LoraAdapter) {
+    $ServerArgs += @("--lora", $LoraAdapter)
+}
 
 if ($Background) {
     New-Item -ItemType Directory -Force -Path (Split-Path $PidFile) | Out-Null
@@ -60,8 +104,10 @@ if ($Background) {
     Set-Content -LiteralPath $PidFile -Value $Process.Id
     Write-Host "Started Qwen3 llama-server with PID $($Process.Id)."
     Write-Host "Using project llama-server: $LlamaExecutable"
+    Write-Host "Using Qwen3 model: $($Resolved.character_id)/$($Resolved.model_id)"
     Write-Host "Logs: $StderrLog"
 } else {
     Write-Host "Using project llama-server: $LlamaExecutable"
+    Write-Host "Using Qwen3 model: $($Resolved.character_id)/$($Resolved.model_id)"
     & $LlamaExecutable @ServerArgs
 }

@@ -3,6 +3,9 @@ param(
     [switch]$SenseVoice,
     [switch]$Qwen3,
     [switch]$LlamaServer,
+    [string]$Character = "",
+    [string]$Qwen3Model = "",
+    [switch]$Qwen3Interactive,
     [switch]$GPTSoVITS,
     [switch]$GPTSoVITSWrapper,
     [switch]$Doctor
@@ -26,11 +29,25 @@ if ($SenseVoice) {
 }
 
 if ($LlamaServer) {
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\start_qwen3_server.ps1") -Background
+    $QwenArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $ProjectRoot "scripts\start_qwen3_server.ps1"), "-Background")
+    if (-not [string]::IsNullOrWhiteSpace($Character)) {
+        $QwenArgs += @("-Character", $Character)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+        $QwenArgs += @("-ModelVersion", $Qwen3Model)
+    }
+    if ($Qwen3Interactive) {
+        $QwenArgs += "-Interactive"
+    }
+    & powershell @QwenArgs
 }
 
 if ($Qwen3) {
-    & $Python (Join-Path $ProjectRoot "scripts\qwen3_chat.py")
+    $ChatArgs = @((Join-Path $ProjectRoot "scripts\qwen3_chat.py"))
+    if (-not [string]::IsNullOrWhiteSpace($Character)) {
+        $ChatArgs += @("--character", $Character)
+    }
+    & $Python @ChatArgs
 }
 
 if ($GPTSoVITS) {

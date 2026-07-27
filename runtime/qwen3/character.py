@@ -34,8 +34,8 @@ def load_examples(path: str | Path) -> list[tuple[str, CharacterReply]]:
         return []
 
     examples = []
-    for line in examples_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
+    for line in examples_path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip().lstrip("\ufeff")
         if not stripped:
             continue
         data = json.loads(stripped)
@@ -61,9 +61,9 @@ def _load_yaml_subset(path: Path) -> dict[str, object]:
     try:
         import yaml
     except ImportError:
-        return _parse_yaml_subset(path.read_text(encoding="utf-8"))
+        return _parse_yaml_subset(path.read_text(encoding="utf-8-sig"))
 
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
     if not isinstance(data, dict):
         return {}
     return data

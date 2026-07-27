@@ -25,6 +25,7 @@ datasets/**/validation/
 datasets/**/test/
 
 training/**/runs/
+training/**/outputs/
 
 model_store/registry/*
 model_store/staging/
@@ -41,6 +42,12 @@ model_store/cache/
 
 !model_store/active/
 !model_store/active/*.json
+
+!model_store/registry/qwen3/
+model_store/registry/qwen3/*
+!model_store/registry/qwen3/*/
+model_store/registry/qwen3/*/*
+!model_store/registry/qwen3/*/models.json
 
 # Track only the current TTS base model in Git/LFS. Future registry versions
 # remain ignored unless explicitly allowlisted here.

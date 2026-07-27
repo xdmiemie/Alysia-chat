@@ -1,0 +1,29 @@
+﻿character_id: fish
+run_name: fish-qwen3-lora
+outputs_dir: training/qwen3/outputs
+
+base_model:
+  model_id: qwen3-8b-q4-k-m-base-v1
+  gguf_path: model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf
+  hf_path: model_store/cache/qwen3/hf/Qwen3-8B
+
+dataset:
+  raw: training/qwen3/datasets/fish/raw/fish.jsonl
+  normalized: training/qwen3/datasets/fish/normalized.jsonl
+  train: training/qwen3/datasets/fish/train.jsonl
+  validation: training/qwen3/datasets/fish/validation.jsonl
+  validation_ratio: 0.1
+
+training:
+  method: qlora
+  resume_from: auto
+  save_steps: 200
+  save_total_limit: 5
+  best_checkpoint_name: best
+  max_steps: 1000
+  learning_rate: 0.0002
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05

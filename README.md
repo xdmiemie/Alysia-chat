@@ -9,10 +9,8 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-6 are complete. The remaining plan is:
+Stages 0-7 are complete. The remaining plan is:
 
-- Stage 7: Qwen3 role-training pipeline with dataset-swappable configs,
-  resume support, and checkpoint retention.
 - Stage 8: TTS training pipeline with the same dataset, resume, and checkpoint
   controls.
 - Stage 9: selectable character/model loading from the Stage 6 app entry.
@@ -43,6 +41,43 @@ Initialize if needed and run the realtime app:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia
 ```
+
+Choose a Qwen3 model during quickstart startup:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -Qwen3Interactive
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -Qwen3Model qwen3-8b-q4-k-m-base-v1
+```
+
+Qwen3 training dependencies are intentionally separate from normal runtime
+bootstrap. The HF-format training base model is separate too. Run bootstrap
+first, then install only the training extras and download the training base:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1
+```
+
+The training dependency script is idempotent: if bootstrap or a previous run
+already installed CUDA torch and the Qwen3 training packages, it exits without
+reinstalling them. It also keeps downloaded wheels under
+`model_store/cache/qwen3_training_wheels/` and pip cache under
+`model_store/cache/pip/`, so rerunning after an interrupted download reuses
+completed files. Use `-CheckOnly` to inspect the training environment, or
+`-DownloadOnly` to prefetch wheels without installing.
+
+The HF training model download also uses a project-local cache:
+
+```text
+model_store/cache/huggingface/
+model_store/cache/qwen3/hf/Qwen3-8B/
+```
+
+Rerun `quickstart/download_qwen3_training_model.ps1` after an interrupted
+download; completed files and Hugging Face cache entries are reused. Use
+`-VerifyOnly` to check missing shards without downloading, and use
+`-ForceDownload` only when you intentionally want to refresh the model files.
 
 For a lighter setup that skips the heavy SenseVoice model dependency install:
 
@@ -270,6 +305,82 @@ storage/logs/qwen3-llama-server.out.log
 
 The chat client sends `/no_think`, keeps the last 8 turns, requires structured
 JSON, and retries once when the model returns invalid JSON or `<think>`.
+
+## Stage 7 Qwen3 Role Training
+
+Elysia training data lives under `training/qwen3/datasets/elysia/raw/Elysia.jsonl`.
+Normal quickstart runtime does not install every training package. Install the
+training extras after bootstrap before a real QLoRA run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1
+```
+
+Qwen3 HF training requires `transformers>=4.51.0`; older versions fail with
+`KeyError: 'qwen3'`.
+
+Create a new Qwen3 role scaffold:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/add_qwen3_character.ps1 -Character fish -DisplayName Fish
+```
+
+Then put role data at the path printed by the script, train with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -Character fish
+```
+
+After training/exporting, run and select the character/model:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character fish -Qwen3Interactive
+```
+
+This scaffolds Qwen3 text/model assets. GPT-SoVITS voice assets for new
+characters remain separate until the later TTS training stage.
+
+`hf_path` points at the Hugging Face safetensors base model used for training:
+
+```text
+model_store/cache/qwen3/hf/Qwen3-8B
+```
+
+The runtime GGUF stays under `model_store/registry/qwen3/...`; GGUF is for
+llama.cpp inference and cannot be fine-tuned directly.
+
+Prepare the dataset and run training through the wrapper script:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -FromScratch
+```
+
+Only prepare the dataset:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -PrepareOnly
+```
+
+The wrapper skips normalize/split when the raw dataset and training config have
+not changed. Use `-ForcePrepare` to regenerate dataset outputs.
+
+The role model list is `model_store/registry/qwen3/elysia/models.json`.
+Training exports register into that list and keep only the latest five trained
+models for the role; the base model is retained. Start Qwen3 with interactive
+role/model selection:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_qwen3_server.ps1
+```
+
+Or choose non-interactively:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_qwen3_server.ps1 -Character elysia -ModelVersion qwen3-8b-q4-k-m-base-v1
+```
 
 ## Stage 4 GPT-SoVITS Speech
 
