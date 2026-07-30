@@ -9,13 +9,16 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-13 are complete. The remaining plan continues with the Windows WeChat
-desktop adapter stages:
+Stages 0-13 and the Stage 15 scheduling foundation are complete. The remaining
+plan continues with the Windows WeChat desktop adapter stages:
 
 - Stage 11: Windows WeChat environment, text monitoring, and text sending.
 - Stage 12: contact identity, whitelist, session, and memory isolation.
 - Stage 13: WeChat voice bubbles, audio capture transaction, 16 kHz WAV
   normalization, and SenseVoice transcription.
+- Stage 15: one global GPU inference queue, one shared WeChat UI queue,
+  per-contact send ordering, queue metrics, bounded backpressure, and restart
+  storm protection helpers.
 
 ## Clone-To-Code Quickstart
 
@@ -290,7 +293,7 @@ Stage 13 accepts bound incoming WeChat voice bubbles from allowlisted private
 contacts. The adapter relocates the original bubble, starts audio capture before
 clicking playback, validates the captured WAV, normalizes it to 16 kHz mono
 PCM16, runs SenseVoice through `AlysiaCore`, and sends a text fallback reply.
-Native WeChat voice-bubble replies are Stage 14.
+Native WeChat voice-bubble replies are no longer part of the project plan.
 
 Relevant config lives under `voice:` in `configs/runtime/wechat.yaml`:
 
@@ -351,6 +354,45 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/wechat_voice_capture
 
 After the manual audio path works, run the normal WeChat bridge to validate
 automatic bubble binding, click playback, de-duplication, and reply routing.
+
+## Stage 15 Scheduler And Recovery
+
+Stage 15 serializes the expensive and focus-sensitive parts of the runtime:
+
+- `SingleGPUQueue` wraps `AlysiaCore.process(...)` so SenseVoice, Qwen3, and
+  GPT-SoVITS work does not overlap by default.
+- `SingleUIQueue` is shared by text sending and voice-bubble capture so only one
+  WeChat focus-changing transaction runs at a time.
+- The UI queue supports pause/resume for manual takeover, bounded pending work,
+  per-operation timeout, and queue metrics.
+- The GPU queue supports bounded pending work, deterministic priority/FIFO
+  order, total message timeout, and cancellation of pending older requests from
+  the same session.
+- `runtime.scheduler.recovery` provides health-check/restart primitives with
+  restart storm protection for model subprocess supervisors.
+
+The relevant WeChat bridge config is under `scheduler:` and `ui:` in
+`configs/runtime/wechat.yaml`:
+
+```yaml
+scheduler:
+  gpu_max_pending: 16
+  ui_max_pending: 32
+  ui_pause_max_pending: 8
+  total_message_seconds: 240
+  call_turn_seconds: 180
+  cancel_pending_same_session: true
+
+ui:
+  operation_timeout_seconds: 15
+```
+
+Queue events are logged as redacted JSONL entries in the configured
+`storage/logs/wechat_desktop/` log path. Run the focused scheduler tests with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_stage15_scheduler.py
+```
 
 ## Stage 6 Realtime App
 

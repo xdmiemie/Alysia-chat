@@ -14,7 +14,7 @@ from runtime.adapters.wechat_desktop.client import WeChatDesktopClient
 from runtime.adapters.wechat_desktop.config import UIConfig, VoiceConfig
 from runtime.adapters.wechat_desktop.models import DesktopMessage
 from runtime.adapters.wechat_desktop.process_locator import find_wechat_processes
-from runtime.adapters.wechat_desktop.ui_queue import SingleUIQueue
+from runtime.adapters.wechat_desktop.ui_queue import SingleUIQueue, get_global_ui_queue
 from runtime.audio.audio_format import WaveMetrics, inspect_wav, save_metrics_json, write_pcm16_wav
 from runtime.audio.normalize import NormalizedAudio, normalize_wav_for_sensevoice
 from runtime.core.models import UnifiedMessage
@@ -218,7 +218,7 @@ class WeChatVoiceCaptureService:
         self.client = client
         self.voice = voice
         self.ui = ui
-        self.queue = queue or SingleUIQueue()
+        self.queue = queue
         self.backend = backend or _backend_from_config(voice, executable_names=executable_names)
         self._audio_lock = asyncio.Lock()
         self._contact_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -226,7 +226,14 @@ class WeChatVoiceCaptureService:
     async def capture(self, message: DesktopMessage, request_id: str) -> VoiceCaptureResult:
         async with self._audio_lock:
             async with self._contact_locks[message.contact_key]:
-                return await self.queue.run(lambda: self._capture_locked(message, request_id))
+                queue = self.queue or get_global_ui_queue()
+                return await queue.run(
+                    lambda: self._capture_locked(message, request_id),
+                    request_id=request_id,
+                    contact_key=message.contact_key,
+                    priority=60,
+                    timeout_seconds=self.voice.capture_timeout_seconds + self.ui.operation_timeout_seconds,
+                )
 
     def _capture_locked(self, message: DesktopMessage, request_id: str) -> VoiceCaptureResult:
         if message.message_type != "voice":

@@ -60,6 +60,17 @@ ui:
   restore_window_after_operation: true
   max_send_retries: 2
 
+scheduler:
+  gpu_max_pending: 16
+  ui_max_pending: 32
+  ui_pause_max_pending: 8
+  total_message_seconds: 240
+  call_turn_seconds: 180
+  cancel_pending_same_session: true
+  restart_max_attempts: 2
+  restart_window_seconds: 300
+  restart_cooldown_seconds: 10
+
 contacts:
   default_policy: deny
   allow_contact_keys: []

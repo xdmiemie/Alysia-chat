@@ -6,14 +6,14 @@ from collections import defaultdict
 from runtime.adapters.wechat_desktop.client import WeChatDesktopClient
 from runtime.adapters.wechat_desktop.config import UIConfig
 from runtime.adapters.wechat_desktop.models import SendResult
-from runtime.adapters.wechat_desktop.ui_queue import SingleUIQueue
+from runtime.adapters.wechat_desktop.ui_queue import SingleUIQueue, get_global_ui_queue
 
 
 class WeChatDesktopSender:
     def __init__(self, *, client: WeChatDesktopClient, ui: UIConfig, queue: SingleUIQueue | None = None) -> None:
         self.client = client
         self.ui = ui
-        self.queue = queue or SingleUIQueue()
+        self.queue = queue
         self._contact_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def send_text(self, contact_key: str, text: str, request_id: str) -> SendResult:
@@ -24,7 +24,14 @@ class WeChatDesktopSender:
             return SendResult(ok=False, request_id=request_id, contact_key=contact_key, error="text is empty")
 
         async with self._contact_locks[contact_key]:
-            return await self.queue.run(lambda: self._send_text_locked(contact_key, cleaned, request_id))
+            queue = self.queue or get_global_ui_queue()
+            return await queue.run(
+                lambda: self._send_text_locked(contact_key, cleaned, request_id),
+                request_id=request_id,
+                contact_key=contact_key,
+                priority=40,
+                timeout_seconds=self.ui.operation_timeout_seconds,
+            )
 
     def _send_text_locked(self, contact_key: str, text: str, request_id: str) -> SendResult:
         last_error = ""

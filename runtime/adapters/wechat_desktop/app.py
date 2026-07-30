@@ -14,12 +14,15 @@ from runtime.adapters.wechat_desktop.health import check_wechat_desktop_health
 from runtime.adapters.wechat_desktop.message_monitor import MessageMonitor
 from runtime.adapters.wechat_desktop.models import BufferedDesktopBatch, DesktopMessage, SendResult
 from runtime.adapters.wechat_desktop.text_sender import WeChatDesktopSender
+from runtime.adapters.wechat_desktop.ui_queue import SingleUIQueue
 from runtime.adapters.wechat_desktop.voice_capture import WeChatVoiceCaptureService
 from runtime.core.models import UnifiedMessage, new_request_id
 from runtime.core.service import AlysiaCore
 from runtime.gpt_sovits.types import SpeechRequest, SpeechResult
 from runtime.qwen3.config import load_qwen3_config
 from runtime.qwen3.service import Qwen3ChatSession
+from runtime.scheduler.inference_queue import SingleGPUQueue
+from runtime.scheduler.serial_queue import QueueEvent
 from runtime.sensevoice.service import SenseVoiceRecognizer
 
 
@@ -70,11 +73,24 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
         synthesize_replies=False,
     )
     monitor = MessageMonitor(config=config, client=client)
-    sender = WeChatDesktopSender(client=client, ui=config.ui)
+    shared_ui_queue = SingleUIQueue(
+        max_pending=config.scheduler.ui_max_pending,
+        operation_timeout_seconds=config.ui.operation_timeout_seconds,
+        pause_max_pending=config.scheduler.ui_pause_max_pending,
+        event_sink=lambda event: _bridge_queue_event(config.log_path, event),
+    )
+    gpu_queue = SingleGPUQueue(
+        max_pending=config.scheduler.gpu_max_pending,
+        total_timeout_seconds=config.scheduler.total_message_seconds,
+        cancel_pending_same_session=config.scheduler.cancel_pending_same_session,
+        event_sink=lambda event: _bridge_queue_event(config.log_path, event),
+    )
+    sender = WeChatDesktopSender(client=client, ui=config.ui, queue=shared_ui_queue)
     voice_capture = WeChatVoiceCaptureService(
         client=client,
         voice=config.voice,
         ui=config.ui,
+        queue=shared_ui_queue,
         executable_names=config.client.executable_names,
     )
     print("Stage 13 Windows WeChat adapter is polling. Keep the test WeChat logged in and visible.")
@@ -85,6 +101,7 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
                 core=core,
                 sender=sender,
                 voice_capture=voice_capture,
+                gpu_queue=gpu_queue,
                 character_id=args.character_id,
                 log_path=config.log_path,
             )
@@ -99,9 +116,10 @@ async def _reply_to_batch(
     *,
     core: AlysiaCore,
     sender: WeChatDesktopSender,
-    voice_capture: WeChatVoiceCaptureService | None = None,
     character_id: str,
     log_path: Path,
+    voice_capture: WeChatVoiceCaptureService | None = None,
+    gpu_queue: SingleGPUQueue | None = None,
 ) -> SendResult:
     request_id = new_request_id()
     voice_message = _single_voice_message(batch)
@@ -165,7 +183,14 @@ async def _reply_to_batch(
                     "message_fingerprints": list(batch.fingerprints),
                 },
             )
-        reply = core.process(core_message)
+        if gpu_queue is None:
+            reply = core.process(core_message)
+        else:
+            reply = await gpu_queue.run_inference(
+                core_message,
+                lambda: core.process(core_message),
+                priority=30 if voice_message is not None else 50,
+            )
     except Exception as exc:
         _bridge_event(
             log_path,
@@ -251,6 +276,10 @@ def _bridge_event(log_path: Path, event: str, **fields: object) -> None:
     payload = {"ts": int(time.time()), "event": event, **fields}
     with log_path.open("a", encoding="utf-8") as log:
         log.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _bridge_queue_event(log_path: Path, event: QueueEvent) -> None:
+    _bridge_event(log_path, "queue_" + event.event, **event.to_dict())
 
 
 if __name__ == "__main__":

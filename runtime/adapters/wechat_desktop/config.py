@@ -75,6 +75,19 @@ class UIConfig:
 
 
 @dataclass(frozen=True)
+class SchedulerConfig:
+    gpu_max_pending: int = 16
+    ui_max_pending: int = 32
+    ui_pause_max_pending: int = 8
+    total_message_seconds: float = 240.0
+    call_turn_seconds: float = 180.0
+    cancel_pending_same_session: bool = True
+    restart_max_attempts: int = 2
+    restart_window_seconds: float = 300.0
+    restart_cooldown_seconds: float = 10.0
+
+
+@dataclass(frozen=True)
 class ContactsConfig:
     default_policy: str = "deny"
     allow_contact_keys: tuple[str, ...] = ()
@@ -105,6 +118,7 @@ class WeChatDesktopConfig:
     reply: ReplyConfig = ReplyConfig()
     voice: VoiceConfig = VoiceConfig()
     ui: UIConfig = UIConfig()
+    scheduler: SchedulerConfig = SchedulerConfig()
     contacts: ContactsConfig = ContactsConfig()
 
 
@@ -116,6 +130,7 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
     reply = raw.get("reply", {})
     voice = raw.get("voice", {})
     ui = raw.get("ui", {})
+    scheduler = raw.get("scheduler", {})
     contacts = raw.get("contacts", {})
 
     return WeChatDesktopConfig(
@@ -208,6 +223,29 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
                 ui.get("restore_window_after_operation", UIConfig.restore_window_after_operation)
             ),
             max_send_retries=int(ui.get("max_send_retries", UIConfig.max_send_retries)),
+        ),
+        scheduler=SchedulerConfig(
+            gpu_max_pending=int(scheduler.get("gpu_max_pending", SchedulerConfig.gpu_max_pending)),
+            ui_max_pending=int(scheduler.get("ui_max_pending", SchedulerConfig.ui_max_pending)),
+            ui_pause_max_pending=int(
+                scheduler.get("ui_pause_max_pending", SchedulerConfig.ui_pause_max_pending)
+            ),
+            total_message_seconds=float(
+                scheduler.get("total_message_seconds", SchedulerConfig.total_message_seconds)
+            ),
+            call_turn_seconds=float(scheduler.get("call_turn_seconds", SchedulerConfig.call_turn_seconds)),
+            cancel_pending_same_session=bool(
+                scheduler.get("cancel_pending_same_session", SchedulerConfig.cancel_pending_same_session)
+            ),
+            restart_max_attempts=int(
+                scheduler.get("restart_max_attempts", SchedulerConfig.restart_max_attempts)
+            ),
+            restart_window_seconds=float(
+                scheduler.get("restart_window_seconds", SchedulerConfig.restart_window_seconds)
+            ),
+            restart_cooldown_seconds=float(
+                scheduler.get("restart_cooldown_seconds", SchedulerConfig.restart_cooldown_seconds)
+            ),
         ),
         contacts=ContactsConfig(
             default_policy=str(contacts.get("default_policy", ContactsConfig.default_policy)),
