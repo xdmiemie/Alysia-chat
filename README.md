@@ -9,12 +9,12 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-10 are complete. The remaining plan starts with the WeChat adapter
-stages:
+Stages 0-10 are complete. The remaining plan starts with the Windows WeChat
+desktop adapter stages:
 
-- Stage 11: WeChat text message receive/send.
-- Stage 12: WeChat voice receive and SenseVoice transcription.
-- Stage 13: WeChat audio file/native voice replies.
+- Stage 11: Windows WeChat environment, text monitoring, and text sending.
+- Stage 12: contact identity, whitelist, session, and memory isolation.
+- Stage 13: text stability, manual takeover, and safety rules.
 
 ## Clone-To-Code Quickstart
 
@@ -158,11 +158,66 @@ powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -Qwen3
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITS
 powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -GPTSoVITSWrapper
+powershell -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -WeChatDesktop -Character elysia
 powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
 ```
 
 `-GPTSoVITS` starts the official GPT-SoVITS upstream API on port `9880`.
 `-GPTSoVITSWrapper` starts this project's optional wrapper API on port `5002`.
+
+## Stage 11 Windows WeChat Text Adapter
+
+Stage 11 uses the normal Windows WeChat client plus a pinned local
+`pywechat/pyweixin` checkout. It does not use Tencent iLink, server-side message
+protocols, DLL injection, or WeChat process hooks.
+
+Prepare the local dependency manually:
+
+```text
+third_party/pywechat/
+```
+
+The checkout must provide an importable `pyweixin` module. After validating the
+real Windows WeChat version and selector profile, record those values in
+`configs/runtime/wechat.yaml`.
+
+Run the safe calibration checklist:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/calibrate_wechat_ui.ps1
+```
+
+Configure the allowed test contact in `configs/runtime/wechat.yaml`:
+
+```yaml
+contacts:
+  default_policy: deny
+  allow_contact_keys:
+    - stable-contact-key-from-pyweixin
+  allow_display_names:
+    - 测试好友昵称
+```
+
+Start Qwen3, then start the desktop adapter:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer -Character elysia
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -WeChatDesktop -Character elysia
+```
+
+What you need to do during Stage 11 testing:
+
+- Log in to Windows WeChat with the dedicated character account.
+- Keep the Windows desktop unlocked.
+- Keep the WeChat main window open, visible, and preferably in the foreground.
+- Pin or keep the allowed test contact visible in the recent chat list.
+- Do not manually switch chats while the adapter is sending.
+- Send only private text messages for Stage 11; voice, images, files, groups,
+  and calls are later stages.
+
+The adapter refuses automatic sending when required UI controls cannot be read.
+All desktop send operations run through one UI queue, and logs are written under
+`storage/logs/wechat_desktop/` with contact/text redaction by default.
 
 ## Stage 6 Realtime App
 

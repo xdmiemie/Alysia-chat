@@ -9,3 +9,9 @@ dependencies:
     path: third_party/GPT-SoVITS
     pinned_commit: null
     install_status: pending
+  pywechat:
+    repo: https://github.com/Hello-Mr-Crab/pywechat
+    path: third_party/pywechat
+    pinned_commit: 0e2f8663d0fbef768c12d702345c3b1156a98d8f
+    local_patch: third_party/pywechat_patches/config-none-compat.patch
+    install_status: manual

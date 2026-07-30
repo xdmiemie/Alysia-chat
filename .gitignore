@@ -12,6 +12,7 @@ storage/logs/*
 storage/temporary/*
 storage/recordings/
 storage/generated_audio/*
+storage/wechat_desktop/
 !storage/logs/.gitkeep
 !storage/temporary/.gitkeep
 !storage/generated_audio/.gitkeep
@@ -82,3 +83,6 @@ model_store/registry/gpt_sovits/elysia/base-v1/references/*
 .vscode/
 third_party/GPT-SoVITS/*
 !third_party/GPT-SoVITS/.gitkeep
+third_party/pywechat/
+third_party/pywechat/*
+!third_party/pywechat/.gitkeep

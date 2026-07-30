@@ -1,0 +1,51 @@
+enabled: false
+provider: pyweixin
+log_path: storage/logs/wechat_desktop/text.jsonl
+dedup_path: storage/wechat_desktop/state/dedup.jsonl
+
+account:
+  account_key: role_account_main
+  dedicated_account: true
+  expected_display_name: set-after-validation
+
+client:
+  executable_names:
+    - Weixin.exe
+    - WeChat.exe
+    - WeChatAppEx.exe
+    - wechat_starter_v1.0.0.exe
+  launch_if_missing: false
+  require_logged_in: true
+  require_unlocked_desktop: true
+  verified_version: set-after-validation
+  selector_profile: set-after-calibration
+  pywechat_root: third_party/pywechat
+
+monitor:
+  mode: pinned_contacts
+  poll_interval_ms: 100
+  buffer_seconds: 0
+  max_visible_sessions: 20
+  ignore_group_chats: true
+  ignore_system_messages: true
+
+reply:
+  default_mode: text
+  min_reply_interval_seconds: 3
+  fallback_to_text: true
+  max_text_chars: 1000
+
+ui:
+  operation_timeout_seconds: 15
+  verify_chat_title_before_send: true
+  verify_own_message_after_send: true
+  allow_coordinate_fallback: false
+  restore_window_after_operation: true
+  max_send_retries: 2
+
+contacts:
+  default_policy: deny
+  allow_contact_keys: []
+  allow_display_names:
+    - n
+  block_contact_keys: []

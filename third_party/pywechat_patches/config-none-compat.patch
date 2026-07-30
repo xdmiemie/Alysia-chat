@@ -1,0 +1,24 @@
+diff --git a/src/pyweixin/Config.py b/src/pyweixin/Config.py
+index c48caa1..2b01e06 100644
+--- a/src/pyweixin/Config.py
++++ b/src/pyweixin/Config.py
+@@ -163,6 +163,9 @@ class globalConfig:
+         if self._Version is None:
+             try:
+                 self._Version=self._get_weixin_version()
++                if self._Version is None:
++                    warn(f"获取微信版本失败,使用默认值'4.1.9.30'", RuntimeWarning)
++                    self._Version='4.1.9.30'
+             except Exception:
+                 warn(f"获取微信版本失败,使用默认值'4.1.9.30'", RuntimeWarning)
+                 self._Version='4.1.9.30'
+@@ -203,7 +206,8 @@ class globalConfig:
+         cmdlines=[]
+         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+             if proc.info['name'] and 'wechatappex' in proc.info['name'].lower():
+-                cmdlines.append(proc.info['cmdline'])#wechatappex.exr不止一个！所以把所有的exe命令行参数都保留
++                if proc.info['cmdline']:
++                    cmdlines.append(proc.info['cmdline'])#wechatappex.exr不止一个！所以把所有的exe命令行参数都保留
+         for cmdline in cmdlines:
+             cmd_str=' '.join(cmdline).lower()
+             if '--type=renderer' in cmd_str:
