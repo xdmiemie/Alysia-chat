@@ -65,6 +65,8 @@ class ContactsConfig:
             return False
         if contact_key in self.allow_contact_keys:
             return True
+        if contact_key in self.allow_display_names:
+            return True
         if display_name and display_name in self.allow_display_names:
             return True
         return self.default_policy == "allow"

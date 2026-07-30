@@ -48,4 +48,6 @@ contacts:
   allow_contact_keys: []
   allow_display_names:
     - n
+    - L
+    - 文件传输助手
   block_contact_keys: []

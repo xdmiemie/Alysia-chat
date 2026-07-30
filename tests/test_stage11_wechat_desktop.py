@@ -6,13 +6,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import runtime.adapters.wechat_desktop.client as wechat_client
+from runtime.adapters.wechat_desktop.app import _reply_to_batch
 from runtime.adapters.wechat_desktop.client import PyWeixinDesktopClient
 from runtime.adapters.wechat_desktop.config import WeChatDesktopConfig, load_wechat_desktop_config
 from runtime.adapters.wechat_desktop.deduplicator import MessageDeduplicator
 from runtime.adapters.wechat_desktop.message_buffer import MessageBuffer
 from runtime.adapters.wechat_desktop.message_monitor import MessageMonitor
 from runtime.adapters.wechat_desktop.message_parser import MessageParser
-from runtime.adapters.wechat_desktop.models import DesktopMessage
+from runtime.adapters.wechat_desktop.models import BufferedDesktopBatch, DesktopMessage, SendResult
 from runtime.adapters.wechat_desktop.process_locator import find_wechat_processes
 from runtime.adapters.wechat_desktop.health import check_wechat_desktop_health
 from runtime.adapters.wechat_desktop.text_sender import WeChatDesktopSender
@@ -23,6 +24,7 @@ from runtime.adapters.wechat_desktop.window_locator import WindowInfo
 class FakeWeChatDesktopClient:
     def __init__(self) -> None:
         self.current_contact = ""
+        self.opened: list[str] = []
         self.list_sessions_calls = 0
         self.sent: list[tuple[str, str]] = []
         self.sessions = [
@@ -70,6 +72,7 @@ class FakeWeChatDesktopClient:
         return tuple(self.sessions[:limit])
 
     def open_chat(self, contact_key: str):
+        self.opened.append(contact_key)
         self.current_contact = contact_key
 
     def current_chat_title(self):
@@ -102,6 +105,10 @@ def test_desktop_config_loads_stage11_defaults():
     assert config.monitor.poll_interval_ms == 100
     assert config.monitor.buffer_seconds == 0
     assert config.contacts.is_allowed("nobody") is False
+    assert config.contacts.allow_display_names == ("n", "L", "文件传输助手")
+    assert config.contacts.is_allowed("n") is True
+    assert config.contacts.is_allowed("L") is True
+    assert config.contacts.is_allowed("文件传输助手") is True
 
 
 def test_parser_accepts_only_reliable_incoming_text_shape():
@@ -152,6 +159,41 @@ def test_monitor_enforces_allowlist_deduplicates_and_buffers(tmp_path):
     assert "accepted_text" in (tmp_path / "wechat.jsonl").read_text(encoding="utf-8")
 
 
+def test_monitor_streams_ready_batch_before_polling_next_configured_contact(tmp_path):
+    client = FakeWeChatDesktopClient()
+    client.messages_by_contact["bob-key"] = [
+        ChatMessageSnapshot(
+            direction="incoming",
+            message_type="text",
+            text="hi from bob",
+            runtime_id="bob-1",
+            relative_order=1,
+            time_label="10:01",
+        )
+    ]
+    config = WeChatDesktopConfig(
+        log_path=tmp_path / "wechat.jsonl",
+        dedup_path=tmp_path / "dedup.jsonl",
+        contacts=WeChatDesktopConfig.contacts.__class__(
+            default_policy="deny",
+            allow_contact_keys=("alice-key", "bob-key"),
+        ),
+        monitor=WeChatDesktopConfig.monitor.__class__(buffer_seconds=0),
+    )
+    monitor = MessageMonitor(config=config, client=client)
+
+    batches = monitor.iter_ready_batches()
+    first = next(batches)
+
+    assert first.contact_key == "alice-key"
+    assert client.opened == ["alice-key"]
+
+    remaining = list(batches)
+
+    assert [batch.contact_key for batch in remaining] == ["bob-key"]
+    assert client.opened == ["alice-key", "bob-key"]
+
+
 def test_monitor_uses_latest_unseen_incoming_message(tmp_path):
     client = FakeWeChatDesktopClient()
     client.messages_by_contact["alice-key"] = [
@@ -186,6 +228,40 @@ def test_monitor_uses_latest_unseen_incoming_message(tmp_path):
 
     assert len(ready) == 1
     assert ready[0].text == "new"
+
+
+def test_monitor_does_not_reply_again_when_outgoing_is_newer_than_incoming(tmp_path):
+    client = FakeWeChatDesktopClient()
+    client.messages_by_contact["alice-key"] = [
+        ChatMessageSnapshot(
+            direction="incoming",
+            message_type="text",
+            text="remember blue",
+            runtime_id="incoming-1",
+            metadata={"fingerprint": "unstable-first"},
+        ),
+        ChatMessageSnapshot(
+            direction="outgoing",
+            message_type="text",
+            text="I remember blue",
+            runtime_id="reply-1",
+        ),
+    ]
+    config = WeChatDesktopConfig(
+        log_path=tmp_path / "wechat.jsonl",
+        dedup_path=tmp_path / "dedup.jsonl",
+        contacts=WeChatDesktopConfig.contacts.__class__(
+            default_policy="deny",
+            allow_contact_keys=("alice-key",),
+        ),
+        monitor=WeChatDesktopConfig.monitor.__class__(buffer_seconds=0),
+    )
+    monitor = MessageMonitor(config=config, client=client)
+
+    ready = monitor.poll_once()
+
+    assert ready == []
+    assert "ignored_already_replied_tail" in (tmp_path / "wechat.jsonl").read_text(encoding="utf-8")
 
 
 def test_monitor_deduplicates_uia_message_when_runtime_order_changes(tmp_path):
@@ -269,6 +345,95 @@ def test_sender_uses_single_ui_path_and_verifies_tail():
     assert result.ok is True
     assert result.verified is True
     assert client.sent == [("alice-key", "reply")]
+
+
+def test_sender_keeps_stage12_pending_tasks_per_contact():
+    client = FakeWeChatDesktopClient()
+    sender = WeChatDesktopSender(client=client, ui=WeChatDesktopConfig.ui)
+
+    first = asyncio.run(sender.send_text("n", "reply to n", "req-n"))
+    second = asyncio.run(sender.send_text("L", "reply to L", "req-l"))
+
+    assert first.ok is True
+    assert second.ok is True
+    assert client.sent == [("n", "reply to n"), ("L", "reply to L")]
+
+
+def test_stage12_reply_uses_isolated_wechat_session_id(tmp_path):
+    class FakeCore:
+        def __init__(self) -> None:
+            self.session_counts: dict[str, int] = {}
+            self.messages = []
+
+        def process(self, message):
+            self.messages.append(message)
+            count = self.session_counts.get(message.session_id, 0) + 1
+            self.session_counts[message.session_id] = count
+            return SimpleNamespace(
+                ok=True,
+                text=f"{message.session_id}:{count}",
+                state="COMPLETED",
+                error="",
+            )
+
+    class FakeSender:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send_text(self, contact_key, text, request_id):
+            self.sent.append((contact_key, text, request_id))
+            return SendResult(ok=True, request_id=request_id, contact_key=contact_key, verified=True)
+
+    def batch(contact_key: str, text: str) -> BufferedDesktopBatch:
+        return BufferedDesktopBatch(
+            account_key="role_account_main",
+            contact_key=contact_key,
+            contact_display_name=contact_key,
+            chat_title=contact_key,
+            messages=(
+                DesktopMessage(
+                    account_key="role_account_main",
+                    contact_key=contact_key,
+                    contact_display_name=contact_key,
+                    chat_title=contact_key,
+                    direction="incoming",
+                    message_type="text",
+                    text=text,
+                    runtime_id=f"{contact_key}-1",
+                ),
+            ),
+        )
+
+    core = FakeCore()
+    sender = FakeSender()
+
+    asyncio.run(
+        _reply_to_batch(
+            batch("n", "A says remember blue"),
+            core=core,
+            sender=sender,
+            character_id="elysia",
+            log_path=tmp_path / "wechat.jsonl",
+        )
+    )
+    asyncio.run(
+        _reply_to_batch(
+            batch("L", "B asks a fresh question"),
+            core=core,
+            sender=sender,
+            character_id="elysia",
+            log_path=tmp_path / "wechat.jsonl",
+        )
+    )
+
+    assert core.messages[0].session_id == "wechat_desktop:role_account_main:n"
+    assert core.messages[1].session_id == "wechat_desktop:role_account_main:L"
+    assert core.session_counts == {
+        "wechat_desktop:role_account_main:n": 1,
+        "wechat_desktop:role_account_main:L": 1,
+    }
+    assert sender.sent[0][0:2] == ("n", "wechat_desktop:role_account_main:n:1")
+    assert sender.sent[1][0:2] == ("L", "wechat_desktop:role_account_main:L:1")
 
 
 def test_deduplicator_persists_bounded_fingerprints(tmp_path):

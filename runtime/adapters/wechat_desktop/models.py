@@ -63,6 +63,10 @@ class BufferedDesktopBatch:
     messages: tuple[DesktopMessage, ...]
 
     @property
+    def session_id(self) -> str:
+        return f"wechat_desktop:{self.account_key}:{self.contact_key}"
+
+    @property
     def text(self) -> str:
         return "\n".join(message.text for message in self.messages if message.text.strip()).strip()
 

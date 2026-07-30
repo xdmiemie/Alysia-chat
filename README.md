@@ -219,6 +219,70 @@ The adapter refuses automatic sending when required UI controls cannot be read.
 All desktop send operations run through one UI queue, and logs are written under
 `storage/logs/wechat_desktop/` with contact/text redaction by default.
 
+## Stage 12 Contact Isolation Test
+
+Stage 12 assumes test contacts do not share the same WeChat display name by
+default. In that lowered test route, the WeChat display name is allowed to act as
+the configured contact key. The default local test allowlist contains:
+
+```yaml
+contacts:
+  default_policy: deny
+  allow_display_names:
+    - n
+    - L
+    - 文件传输助手
+```
+
+Use two separate WeChat friends as test user A and test user B. Suggested setup:
+
+- Test user A: display name `n`.
+- Test user B: display name `L`.
+- Optional local self-test contact: display name `文件传输助手`.
+- Keep both private chats visible in the recent chat list.
+- Alternate messages between A and B; do not use group chats for this stage.
+
+Stage 12 test flow commands:
+
+```powershell
+# 1. Optional: stop stale runtime/model processes before a clean test run.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
+
+# 2. Start Qwen3 llama-server in the background for the selected character.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer -Character elysia
+
+# 3. Confirm Qwen3 can answer before connecting WeChat.
+powershell -NoProfile -ExecutionPolicy Bypass -Command '. .\scripts\runtime_python.ps1; $Python = Resolve-AlysiaRuntimePython; & $Python scripts/qwen3_chat.py "你好，请用一句话回复我。" --character elysia --json'
+
+# 4. Dump the WeChat UI if the health check fails or after changing WeChat versions.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dump_wechat_ui.ps1
+
+# 5. Start the Stage 12 WeChat desktop bridge.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_wechat_desktop.ps1 -Character elysia
+
+# 6. Watch the WeChat desktop bridge log in another terminal.
+Get-Content storage\logs\wechat_desktop\text.jsonl -Tail 120 -Wait
+
+# 7. Stop Qwen3 after testing.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
+```
+
+Suggested questions for test user A:
+
+1. `请记住，我今天最喜欢的颜色是蓝色。`
+2. `你还记得我刚才说我喜欢什么颜色吗？`
+3. `我今天有点累，你能温柔地鼓励我一下吗？`
+
+Suggested questions for test user B:
+
+1. `请记住，我今天想吃草莓蛋糕。`
+2. `你还记得我刚才说我想吃什么吗？`
+3. `我准备睡觉了，和我说一句晚安吧。`
+
+Expected result: A's reply should only remember A's color, B's reply should only
+remember B's dessert, and replies must be sent back to the same contact that sent
+the message.
+
 ## Stage 6 Realtime App
 
 The main app entry starts Qwen3 `llama-server` on port `8080` and the official

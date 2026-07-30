@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from runtime.adapters.wechat_desktop.client import WeChatDesktopClient
@@ -32,18 +33,34 @@ class MessageMonitor:
         )
 
     def poll_once(self) -> list[BufferedDesktopBatch]:
-        started = time.perf_counter()
+        return list(self.iter_ready_batches())
+
+    def iter_ready_batches(self) -> Iterator[BufferedDesktopBatch]:
         sessions = self._configured_contact_sessions()
         if not sessions:
             sessions = self.client.list_sessions(limit=self.config.monitor.max_visible_sessions)
-        ready: list[BufferedDesktopBatch] = []
+        ready_count = 0
+        poll_elapsed_ms = 0
         for session in sessions:
-            ready.extend(self._poll_session(session))
-        ready.extend(self.buffer.flush_expired())
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        if elapsed_ms >= 1000:
-            self._log("slow_poll", elapsed_ms=elapsed_ms, session_count=len(sessions), ready_count=len(ready))
-        return ready
+            started = time.perf_counter()
+            ready = self._poll_session(session)
+            poll_elapsed_ms += int((time.perf_counter() - started) * 1000)
+            ready_count += len(ready)
+            yield from ready
+
+        started = time.perf_counter()
+        expired = self.buffer.flush_expired()
+        poll_elapsed_ms += int((time.perf_counter() - started) * 1000)
+        ready_count += len(expired)
+        yield from expired
+
+        if poll_elapsed_ms >= 1000:
+            self._log(
+                "slow_poll",
+                elapsed_ms=poll_elapsed_ms,
+                session_count=len(sessions),
+                ready_count=ready_count,
+            )
 
     def flush(self) -> list[BufferedDesktopBatch]:
         return self.buffer.flush_all()
@@ -95,6 +112,7 @@ class MessageMonitor:
             self._log("session_poll_failed", session=session, error=str(exc))
             return []
 
+        seen_newer_outgoing = False
         for snapshot in reversed(messages):
             message = self.parser.parse(
                 ChatSessionSnapshot(
@@ -108,8 +126,15 @@ class MessageMonitor:
                 ),
                 snapshot,
             )
+            if message.direction == "outgoing":
+                seen_newer_outgoing = True
+                self._log("ignored_not_incoming", message=message)
+                continue
             if not self._is_candidate(message):
                 continue
+            if seen_newer_outgoing:
+                self._log("ignored_already_replied_tail", message=message)
+                return []
             if self.deduplicator.is_seen(message):
                 self._log("ignored_duplicate", message=message)
                 self._log("no_unseen_text", session=session, latest_reason="duplicate")

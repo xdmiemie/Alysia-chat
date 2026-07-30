@@ -71,8 +71,7 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
     sender = WeChatDesktopSender(client=client, ui=config.ui)
     print("Stage 11 Windows WeChat adapter is polling. Keep the test WeChat logged in and visible.")
     while True:
-        batches = monitor.poll_once()
-        for batch in batches:
+        for batch in monitor.iter_ready_batches():
             result = await _reply_to_batch(
                 batch,
                 core=core,
@@ -111,7 +110,7 @@ async def _reply_to_batch(
             UnifiedMessage(
                 request_id=request_id,
                 channel="wechat_desktop",
-                session_id=f"wechat_desktop:{batch.account_key}:{batch.contact_key}",
+                session_id=batch.session_id,
                 sender_id=batch.contact_key,
                 sender_name=batch.contact_display_name,
                 message_type="text",
