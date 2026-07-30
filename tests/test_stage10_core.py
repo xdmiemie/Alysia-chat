@@ -83,6 +83,28 @@ def test_core_processes_text_message_and_preserves_session_context(tmp_path):
     assert Path(first.audio_path).exists()
 
 
+def test_core_can_return_text_without_synthesizing(tmp_path):
+    class FailingSynthesizer:
+        def synthesize(self, request):
+            raise AssertionError("text-only core should not call synthesizer")
+
+    core = AlysiaCore(
+        transcriber=FakeTranscriber(),
+        chat_session_factory=lambda session_id: StatefulChatSession(session_id),
+        synthesizer=FailingSynthesizer(),
+        output_dir=tmp_path / "out",
+        synthesize_replies=False,
+    )
+
+    result = core.process(UnifiedMessage.local_text("hello", session_id="wechat_ilink:main:user"))
+
+    assert result.ok is True
+    assert result.message_type == "text"
+    assert result.audio_path == ""
+    assert result.text.startswith("wechat_ilink:main:user:1:")
+    assert "TEXT_READY" in result.states
+
+
 def test_core_processes_audio_message_through_same_pipeline(tmp_path):
     wav_path = tmp_path / "input.wav"
     write_pcm16_wav(wav_path, array("h", [0, 1200, -1200, 600] * 1000).tobytes(), 16000, 1)

@@ -12,6 +12,8 @@ storage/logs/*
 storage/temporary/*
 storage/recordings/
 storage/generated_audio/*
+storage/secrets/
+storage/wechat/
 !storage/logs/.gitkeep
 !storage/temporary/.gitkeep
 !storage/generated_audio/.gitkeep

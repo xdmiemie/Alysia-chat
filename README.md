@@ -12,9 +12,9 @@ stops the required model services.
 Stages 0-10 are complete. The remaining plan starts with the WeChat adapter
 stages:
 
-- Stage 11: WeChat text message receive/send.
-- Stage 12: WeChat voice receive and SenseVoice transcription.
-- Stage 13: WeChat audio file/native voice replies.
+- Stage 11: Tencent iLink WeChat text message receive/send.
+- Stage 12: Tencent iLink WeChat voice receive and SenseVoice transcription.
+- Stage 13: WeChat WAV file replies.
 
 ## Clone-To-Code Quickstart
 
@@ -163,6 +163,52 @@ powershell -ExecutionPolicy Bypass -File scripts/stop_runtime.ps1
 
 `-GPTSoVITS` starts the official GPT-SoVITS upstream API on port `9880`.
 `-GPTSoVITSWrapper` starts this project's optional wrapper API on port `5002`.
+
+## Stage 11 iLink WeChat Text Bridge
+
+Create or refresh local iLink credentials:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ilink_login.ps1
+```
+
+The login script requests a Tencent iLink QR code, prints the QR image/login URL,
+polls until mobile WeChat confirms the login, then saves `bot_token`,
+`bot_user_id`, and `base_url` locally. Add `-OpenBrowser` to open the QR URL
+automatically:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ilink_login.ps1 -OpenBrowser
+```
+
+If you already have iLink credentials from another verified client, the manual
+fallback is still available:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ilink_login.ps1 -Manual
+```
+
+Allow test user IDs in `configs/runtime/wechat.yaml`, then start the text bridge:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -WeChatBridge -Character elysia
+```
+
+Or run the full Stage 11 quickstart flow, including bootstrap, Qwen3 startup,
+iLink credential setup, optional allowlist update, and bridge startup:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run_wechat.ps1 -Character elysia -AllowUserId your_user_id@im.wechat
+```
+
+By default, this quickstart stops the Qwen3 `llama-server` it started when the
+WeChat bridge exits. Add `-KeepQwen3` when you want to leave that server running
+for reuse.
+
+The Stage 11 bridge receives iLink text messages, routes them through
+`AlysiaCore` in text-only mode, and sends text replies with the latest inbound
+`context_token`. Local credentials and cursors are stored under ignored
+`storage/secrets/` and `storage/wechat/` paths.
 
 ## Stage 6 Realtime App
 

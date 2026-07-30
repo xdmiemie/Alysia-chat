@@ -8,6 +8,7 @@ param(
     [switch]$Qwen3Interactive,
     [switch]$GPTSoVITS,
     [switch]$GPTSoVITSWrapper,
+    [switch]$WeChatBridge,
     [switch]$Doctor
 )
 
@@ -16,7 +17,7 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
 $Python = Resolve-AlysiaRuntimePython
 
-if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer -and -not $GPTSoVITS -and -not $GPTSoVITSWrapper)) {
+if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer -and -not $GPTSoVITS -and -not $GPTSoVITSWrapper -and -not $WeChatBridge)) {
     & $Python (Join-Path $ProjectRoot "scripts\doctor.py")
 }
 
@@ -56,4 +57,12 @@ if ($GPTSoVITS) {
 
 if ($GPTSoVITSWrapper) {
     & $Python -m uvicorn runtime.gpt_sovits.api:app --host 127.0.0.1 --port 5002
+}
+
+if ($WeChatBridge) {
+    $BridgeArgs = @("-m", "runtime.adapters.wechat.app", "--provider", "ilink")
+    if (-not [string]::IsNullOrWhiteSpace($Character)) {
+        $BridgeArgs += @("--character-id", $Character)
+    }
+    & $Python @BridgeArgs
 }

@@ -1,0 +1,30 @@
+﻿enabled: false
+provider: ilink
+debug_raw_events: false
+log_path: storage/logs/wechat/ilink.jsonl
+
+ilink:
+  credentials_path: storage/secrets/ilink/account.json
+  cursor_path: storage/wechat/state/get_updates_buf.txt
+  bot_agent: Alysia-chat/0.1.0
+  channel_version: 2.1.7
+  request_timeout_seconds: 15
+  long_poll_extra_timeout_seconds: 10
+  reconnect_seconds: 5
+  max_reconnect_seconds: 60
+
+reply:
+  private_chat_enabled: true
+  buffer_seconds: 1.5
+  min_reply_interval_seconds: 3
+  default_reply_mode: text
+  fallback_to_text: true
+  max_text_length: 4096
+
+contacts:
+  default_policy: deny
+  allow_user_ids:
+    - example_user_id@im.wechat
+    - wxid_8yvi75h2ipyk22
+    - o9cq806UuufXqlw9RXuMvAe--emc@im.wechat
+  block_user_ids: []

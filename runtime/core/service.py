@@ -39,6 +39,7 @@ class AlysiaCore:
         tts_character_id: str | None = None,
         asr_fallback_text: str = DEFAULT_ASR_FALLBACK_TEXT,
         llm_fallback_text: str = DEFAULT_LLM_FALLBACK_TEXT,
+        synthesize_replies: bool = True,
     ) -> None:
         self.transcriber = transcriber
         self.sessions = ChatSessionManager(chat_session_factory)
@@ -47,6 +48,7 @@ class AlysiaCore:
         self.tts_character_id = tts_character_id
         self.asr_fallback_text = asr_fallback_text
         self.llm_fallback_text = llm_fallback_text
+        self.synthesize_replies = synthesize_replies
 
     def process(self, message: UnifiedMessage) -> AlysiaReply:
         states: list[str] = []
@@ -106,26 +108,29 @@ class AlysiaCore:
                         speed=0.95,
                     )
 
-            set_state("SYNTHESIZING")
-            tts_started = time.perf_counter()
-            try:
-                speech = self.synthesizer.synthesize(
-                    SpeechRequest(
-                        text=reply.reply,
-                        character_id=self.tts_character_id or message.character_id,
-                        emotion=reply.emotion,
-                        speed=reply.speed,
-                        format="wav",
+            if self.synthesize_replies:
+                set_state("SYNTHESIZING")
+                tts_started = time.perf_counter()
+                try:
+                    speech = self.synthesizer.synthesize(
+                        SpeechRequest(
+                            text=reply.reply,
+                            character_id=self.tts_character_id or message.character_id,
+                            emotion=reply.emotion,
+                            speed=reply.speed,
+                            format="wav",
+                        )
                     )
-                )
-            except Exception as exc:
-                error = error or f"GPT-SoVITS failed: {exc}"
-                error_code = ErrorCode.TTS_FAILED if error_code == ErrorCode.NONE else error_code
-                raise
-            timings["tts_ms"] = _elapsed_ms(tts_started)
-            timings["tts_backend_ms"] = speech.backend_ms
-            output_path = str(self._write_reply_audio(message, speech))
-            set_state("WAV_SAVED")
+                except Exception as exc:
+                    error = error or f"GPT-SoVITS failed: {exc}"
+                    error_code = ErrorCode.TTS_FAILED if error_code == ErrorCode.NONE else error_code
+                    raise
+                timings["tts_ms"] = _elapsed_ms(tts_started)
+                timings["tts_backend_ms"] = speech.backend_ms
+                output_path = str(self._write_reply_audio(message, speech))
+                set_state("WAV_SAVED")
+            else:
+                set_state("TEXT_READY")
             set_state("COMPLETED" if ok else "COMPLETED_WITH_FALLBACK")
         except Exception as exc:
             if not error:
@@ -144,7 +149,7 @@ class AlysiaCore:
             request_id=message.request_id,
             session_id=message.session_id,
             channel=message.channel,
-            ok=ok and bool(output_path),
+            ok=ok and (bool(output_path) or not self.synthesize_replies),
             text=reply.reply if reply else "",
             message_type="voice" if output_path else "text",
             audio_path=output_path,
