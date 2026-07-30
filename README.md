@@ -9,12 +9,13 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-10 are complete. The remaining plan starts with the Windows WeChat
+Stages 0-13 are complete. The remaining plan continues with the Windows WeChat
 desktop adapter stages:
 
 - Stage 11: Windows WeChat environment, text monitoring, and text sending.
 - Stage 12: contact identity, whitelist, session, and memory isolation.
-- Stage 13: text stability, manual takeover, and safety rules.
+- Stage 13: WeChat voice bubbles, audio capture transaction, 16 kHz WAV
+  normalization, and SenseVoice transcription.
 
 ## Clone-To-Code Quickstart
 
@@ -282,6 +283,74 @@ Suggested questions for test user B:
 Expected result: A's reply should only remember A's color, B's reply should only
 remember B's dessert, and replies must be sent back to the same contact that sent
 the message.
+
+## Stage 13 WeChat Voice Input
+
+Stage 13 accepts bound incoming WeChat voice bubbles from allowlisted private
+contacts. The adapter relocates the original bubble, starts audio capture before
+clicking playback, validates the captured WAV, normalizes it to 16 kHz mono
+PCM16, runs SenseVoice through `AlysiaCore`, and sends a text fallback reply.
+Native WeChat voice-bubble replies are Stage 14.
+
+Relevant config lives under `voice:` in `configs/runtime/wechat.yaml`:
+
+```yaml
+voice:
+  enabled: true
+  capture_backend: application_loopback
+  captured_dir: storage/wechat/incoming/captured
+  normalized_dir: storage/wechat/incoming/normalized
+  failed_dir: storage/wechat/failed
+  ffmpeg_path: tools/ffmpeg/bin/ffmpeg.exe
+```
+
+The code path is ready for process-level Application Loopback, but this local
+runtime builds the native helper locally. Build it once before live voice
+capture:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_application_loopback_capture.ps1
+```
+
+For manual fallback testing, set `capture_backend: wasapi_loopback` and route
+only WeChat audio to a dedicated loopback recording device via
+`loopback_input_device`; otherwise captured audio can include unrelated system
+sound.
+
+Start Qwen3 and the WeChat desktop bridge:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_runtime.ps1 -LlamaServer -Character elysia
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_wechat_desktop.ps1 -Character elysia
+```
+
+Voice capture writes transient files under `storage/wechat/incoming/`; successful
+runs keep normalized WAVs and delete raw captures by default. Logs redact contact
+fields and do not persist screenshots or raw UI dumps.
+
+For first-pass audio acceptance, run the manual capture script and play one
+WeChat voice bubble yourself after the script says capture has started:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/wechat_voice_capture_acceptance.ps1 -CaptureSeconds 12
+```
+
+This validates the audio path without relying on automatic UI bubble detection.
+Expected output includes:
+
+- `storage/wechat/incoming/captured/manual-<request_id>.wav`
+- `storage/wechat/incoming/normalized/manual-<request_id>.wav`
+- `storage/wechat/incoming/normalized/manual-<request_id>.json`
+- a SenseVoice text line, unless `-SkipTranscribe` is used
+
+To check only normalization and reporting with an already captured file:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/wechat_voice_capture_acceptance.ps1 -CapturedWav path\to\captured.wav -SkipTranscribe
+```
+
+After the manual audio path works, run the normal WeChat bridge to validate
+automatic bubble binding, click playback, de-duplication, and reply routing.
 
 ## Stage 6 Realtime App
 

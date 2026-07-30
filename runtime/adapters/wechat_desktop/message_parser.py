@@ -35,6 +35,7 @@ class MessageParser:
             time_label=snapshot.time_label,
             raw_fingerprint=str(snapshot.metadata.get("fingerprint", "")),
             metadata={
+                **snapshot.metadata,
                 "session_last_text": session.last_text,
             },
         )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -67,6 +68,9 @@ class WeChatDesktopClient(Protocol):
         ...
 
     def has_own_text_at_tail(self, text: str) -> bool:
+        ...
+
+    def play_voice_message(self, message) -> None:
         ...
 
 
@@ -281,6 +285,12 @@ class PyWeixinDesktopClient:
             return True
         messages = self.recent_messages(limit=5)
         return any(item.direction == "outgoing" and item.text.strip() == text.strip() for item in messages[-3:])
+
+    def play_voice_message(self, message) -> None:
+        if not self.current_contact:
+            raise RuntimeError("open_chat must be called before play_voice_message")
+        if not _click_current_chat_voice_message(message):
+            raise RuntimeError("could not click the bound WeChat voice bubble")
 
     def _safe_about_weixin(self) -> dict[str, Any]:
         try:
@@ -684,7 +694,12 @@ def _scrape_current_chat_messages(
             contact_key=contact_key,
             own_name=own_name,
         )
-        occurrence_key = (direction, sender, content)
+        message_type = _message_type_from_class_name(class_name, content)
+        duration_ms = _voice_duration_ms(content)
+        if duration_ms and message_type == "unknown":
+            message_type = "voice"
+        fingerprint_content = _fingerprint_content(content, message_type=message_type, duration_ms=duration_ms)
+        occurrence_key = (direction, sender, fingerprint_content)
         occurrence = visible_occurrences.get(occurrence_key, 0)
         visible_occurrences[occurrence_key] = occurrence + 1
         fingerprint = _stable_runtime_id(
@@ -692,29 +707,132 @@ def _scrape_current_chat_messages(
                 "uia",
                 contact_key,
                 direction,
-                content,
+                fingerprint_content,
                 _control_runtime_identity(item)
                 or f"visible:{occurrence}:{rectangle.left}:{rectangle.top}:{rectangle.right}:{rectangle.bottom}",
             )
         )
+        metadata = {
+            "fingerprint": fingerprint,
+            "sender": sender,
+            "raw_type": class_name,
+            "control_type": control_type,
+            "source": "uia.current_chat_scrape",
+            "raw_text": text[:200],
+        }
+        if duration_ms:
+            metadata["voice_duration_ms"] = duration_ms
         messages.append(
             ChatMessageSnapshot(
                 direction=direction,
-                message_type=_message_type_from_class_name(class_name, content),
+                message_type=message_type,
                 text=content,
-                runtime_id=_stable_runtime_id((contact_key, sender, content, class_name, str(len(messages)))),
+                runtime_id=_stable_runtime_id(
+                    (contact_key, sender, fingerprint_content, class_name, str(len(messages)))
+                ),
                 relative_order=len(messages),
-                metadata={
-                    "fingerprint": fingerprint,
-                    "sender": sender,
-                    "raw_type": class_name,
-                    "control_type": control_type,
-                    "source": "uia.current_chat_scrape",
-                    "raw_text": text[:200],
-                },
+                metadata=metadata,
             )
         )
     return tuple(messages[-limit:])
+
+
+def _click_current_chat_voice_message(message) -> bool:
+    window = _open_weixin_by_visible_window()
+    if window is None:
+        return False
+    try:
+        message_list = _find_current_message_list(window)
+        message_rect = message_list.rectangle() if message_list is not None else None
+        window_mid_x = message_rect.mid_point().x if message_rect is not None else window.rectangle().mid_point().x
+        if message_list is not None:
+            _move_message_list_to_tail(message_list)
+    except Exception:
+        message_list = None
+        message_rect = None
+        window_mid_x = 0
+
+    descendants = _message_descendants(message_list) if message_list is not None else _safe_descendants(window)
+    contact_key = str(getattr(message, "contact_key", ""))
+    own_name = ""
+    target_fingerprint = str(getattr(message, "raw_fingerprint", "") or getattr(message, "fingerprint", ""))
+    target_runtime_id = str(getattr(message, "runtime_id", ""))
+    target_order = int(getattr(message, "relative_order", -1))
+    target_text = str(getattr(message, "text", ""))
+
+    visible_occurrences: dict[tuple[str, str, str], int] = {}
+    index = 0
+    for item in descendants:
+        try:
+            class_name = str(item.class_name())
+            control_type = str(getattr(item.element_info, "control_type", ""))
+            text = _visible_text_from_control(item)
+            rectangle = item.rectangle()
+        except Exception:
+            continue
+        if message_rect is not None and not _rect_inside(rectangle, message_rect):
+            continue
+        if not _looks_like_message_control(class_name, control_type, text):
+            continue
+        sender, content = _split_visible_chat_text(text, contact_key=contact_key)
+        content = _strip_sender_lines(content, contact_key=contact_key, own_name=own_name)
+        message_type = _message_type_from_class_name(class_name, content)
+        if message_type != "voice":
+            index += 1
+            continue
+        direction = _direction_from_message_control(
+            item,
+            item_mid_x=rectangle.mid_point().x,
+            window_mid_x=window_mid_x,
+            sender=sender,
+            contact_key=contact_key,
+            own_name=own_name,
+        )
+        duration_ms = _voice_duration_ms(content)
+        fingerprint_content = _fingerprint_content(content, message_type=message_type, duration_ms=duration_ms)
+        occurrence_key = (direction, sender, fingerprint_content)
+        occurrence = visible_occurrences.get(occurrence_key, 0)
+        visible_occurrences[occurrence_key] = occurrence + 1
+        fingerprint = _stable_runtime_id(
+            (
+                "uia",
+                contact_key,
+                direction,
+                fingerprint_content,
+                _control_runtime_identity(item)
+                or f"visible:{occurrence}:{rectangle.left}:{rectangle.top}:{rectangle.right}:{rectangle.bottom}",
+            )
+        )
+        runtime_id = _stable_runtime_id((contact_key, sender, fingerprint_content, class_name, str(index)))
+        if (
+            (target_fingerprint and target_fingerprint == fingerprint)
+            or (target_runtime_id and target_runtime_id == runtime_id)
+            or (target_order == index and (not target_text or target_text == content))
+        ):
+            return _click_voice_play_hotspot(item, direction=direction)
+        index += 1
+    return False
+
+
+def _click_voice_play_hotspot(item, *, direction: str) -> bool:
+    try:
+        rectangle = item.rectangle()
+        width = max(1, rectangle.right - rectangle.left)
+        height = max(1, rectangle.bottom - rectangle.top)
+        y = rectangle.top + height // 2
+        if width >= 260:
+            offset = int(min(220, max(100, width * 0.18)))
+            x = rectangle.left + offset if direction == "incoming" else rectangle.right - offset
+        else:
+            x = rectangle.left + width // 2
+        item.click_input(coords=(int(x), int(y)), absolute=True)
+        return True
+    except Exception:
+        try:
+            item.click_input()
+            return True
+        except Exception:
+            return False
 
 
 def _control_runtime_identity(item) -> str:
@@ -884,7 +1002,9 @@ def _looks_like_message_control(class_name: str, control_type: str, text: str) -
         return True
     if class_name in {"mmui::ChatTextItemView", "mmui::ChatBubbleItemView", "mmui::ChatBubbleReferItemView"}:
         return True
-    if control_type in {"ListItem", "Text", "Custom"} and _looks_like_human_message_text(text):
+    if control_type in {"ListItem", "Text", "Custom", "Button"} and (
+        _looks_like_human_message_text(text) or _voice_duration_ms(text) > 0
+    ):
         return True
     return False
 
@@ -1037,6 +1157,8 @@ def _direction_from_exact_sender_text(text: str, *, contact_key: str, own_name: 
 def _message_type_from_class_name(class_name: str, content: str) -> str:
     if class_name == "mmui::ChatTextItemView":
         return "text"
+    if "Voice" in class_name or "Audio" in class_name or _voice_duration_ms(content) > 0:
+        return "voice"
     if not content.strip():
         return "unknown"
     non_text_markers = (
@@ -1052,6 +1174,41 @@ def _message_type_from_class_name(class_name: str, content: str) -> str:
     return "text"
 
 
+def _fingerprint_content(content: str, *, message_type: str, duration_ms: int = 0) -> str:
+    if message_type == "voice" or duration_ms > 0:
+        return f"voice:{duration_ms or _voice_duration_ms(content)}"
+    return content
+
+
+def _voice_duration_ms(text: str) -> int:
+    cleaned = _canonical_voice_text(text)
+    if not cleaned:
+        return 0
+    has_voice_unit = any(unit in cleaned for unit in ("秒", "''", '"', "s"))
+    if not has_voice_unit:
+        return 0
+    digits = ""
+    for char in cleaned:
+        if char.isdigit() or char == ".":
+            digits += char
+        elif digits:
+            break
+    if not digits:
+        return 0
+    try:
+        return int(float(digits) * 1000)
+    except ValueError:
+        return 0
+
+
+def _canonical_voice_text(text: str) -> str:
+    cleaned = text.strip().lower().replace(" ", "")
+    cleaned = cleaned.replace("未播放", "").replace("已播放", "")
+    cleaned = cleaned.replace("播放", "")
+    cleaned = re.sub(r"[,，;；:：]", "", cleaned)
+    return cleaned
+
+
 def _message_from_raw(
     value,
     index: int,
@@ -1065,17 +1222,24 @@ def _message_from_raw(
     raw_type = _first_string(value, ("message_type", "type", "\u6d88\u606f\u7c7b\u578b"))
     time_label = _first_string(value, ("time", "time_label", "timestamp", "\u6d88\u606f\u53d1\u9001\u65f6\u95f4"))
     runtime_id = _first_string(value, ("runtime_id", "id", "message_id"))
+    message_type = _message_type_from_raw(raw_type)
+    metadata = {"sender": sender, "raw_type": raw_type, "source": source}
+    duration_ms = _voice_duration_ms(text)
+    if duration_ms:
+        metadata["voice_duration_ms"] = duration_ms
+        if message_type == "unknown":
+            message_type = "voice"
     if not runtime_id:
         runtime_id = _stable_runtime_id((contact_key, sender, text, raw_type, time_label, str(index)))
 
     return ChatMessageSnapshot(
         direction=_direction_from_sender(sender, contact_key=contact_key, own_name=own_name),
-        message_type=_message_type_from_raw(raw_type),
+        message_type=message_type,
         text=text,
         runtime_id=runtime_id,
         relative_order=index,
         time_label=time_label,
-        metadata={"sender": sender, "raw_type": raw_type, "source": source},
+        metadata=metadata,
     )
 
 

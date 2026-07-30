@@ -33,7 +33,7 @@ class MessageBuffer:
 
     def add(self, message: DesktopMessage, now: float | None = None) -> list[BufferedDesktopBatch]:
         current = time.monotonic() if now is None else now
-        if self.buffer_seconds <= 0:
+        if self.buffer_seconds <= 0 or message.message_type == "voice":
             return [
                 _PendingBatch(
                     account_key=message.account_key,

@@ -45,12 +45,32 @@ class DesktopMessage:
             relative_order=self.relative_order,
         )
 
+    @property
+    def voice_duration_ms(self) -> int:
+        for key in ("voice_duration_ms", "duration_ms", "audio_duration_ms"):
+            value = self.metadata.get(key)
+            try:
+                duration_ms = int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if duration_ms > 0:
+                return duration_ms
+        return _parse_duration_ms(self.text)
+
+    @property
+    def is_bound_to_ui(self) -> bool:
+        return bool(self.raw_fingerprint or self.runtime_id or self.control_path)
+
     def to_log_dict(self) -> dict[str, object]:
         data = asdict(self)
         data["contact_key"] = redact_contact(self.contact_key)
         data["contact_display_name"] = redact_contact(self.contact_display_name)
         data["chat_title"] = redact_contact(self.chat_title)
         data["text"] = redact_text(self.text)
+        metadata = dict(data.get("metadata") or {})
+        for key in ("raw_text", "screenshot", "image", "ocr_text"):
+            metadata.pop(key, None)
+        data["metadata"] = metadata
         return data
 
 
@@ -141,3 +161,24 @@ def redact_text(value: str, max_chars: int = 24) -> str:
     if len(cleaned) <= max_chars:
         return cleaned
     return f"{cleaned[:max_chars]}..."
+
+
+def _parse_duration_ms(value: str) -> int:
+    cleaned = value.strip().lower().replace(" ", "")
+    if not cleaned:
+        return 0
+    digits = ""
+    for char in cleaned:
+        if char.isdigit() or char == ".":
+            digits += char
+        elif digits:
+            break
+    if not digits:
+        return 0
+    try:
+        number = float(digits)
+    except ValueError:
+        return 0
+    if "ms" in cleaned or "毫秒" in cleaned:
+        return int(number)
+    return int(number * 1000)

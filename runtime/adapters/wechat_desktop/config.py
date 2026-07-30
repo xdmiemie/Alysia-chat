@@ -44,6 +44,27 @@ class ReplyConfig:
 
 
 @dataclass(frozen=True)
+class VoiceConfig:
+    enabled: bool = True
+    capture_backend: str = "application_loopback"
+    captured_dir: Path = Path("storage/wechat/incoming/captured")
+    normalized_dir: Path = Path("storage/wechat/incoming/normalized")
+    failed_dir: Path = Path("storage/wechat/failed")
+    ffmpeg_path: Path = Path("tools/ffmpeg/bin/ffmpeg.exe")
+    application_loopback_helper_path: Path = Path(
+        "tools/application_loopback_capture/application_loopback_capture.exe"
+    )
+    loopback_input_device: int | None = None
+    capture_timeout_seconds: float = 20.0
+    min_capture_ms: int = 300
+    duration_tolerance_ms: int = 700
+    silence_peak_threshold: float = 0.002
+    max_capture_retries: int = 1
+    relocation_scan_limit: int = 8
+    delete_captured_after_success: bool = True
+
+
+@dataclass(frozen=True)
 class UIConfig:
     operation_timeout_seconds: float = 15.0
     verify_chat_title_before_send: bool = True
@@ -82,6 +103,7 @@ class WeChatDesktopConfig:
     client: ClientConfig = ClientConfig()
     monitor: MonitorConfig = MonitorConfig()
     reply: ReplyConfig = ReplyConfig()
+    voice: VoiceConfig = VoiceConfig()
     ui: UIConfig = UIConfig()
     contacts: ContactsConfig = ContactsConfig()
 
@@ -92,6 +114,7 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
     client = raw.get("client", {})
     monitor = raw.get("monitor", {})
     reply = raw.get("reply", {})
+    voice = raw.get("voice", {})
     ui = raw.get("ui", {})
     contacts = raw.get("contacts", {})
 
@@ -131,6 +154,44 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
             ),
             fallback_to_text=bool(reply.get("fallback_to_text", ReplyConfig.fallback_to_text)),
             max_text_chars=int(reply.get("max_text_chars", ReplyConfig.max_text_chars)),
+        ),
+        voice=VoiceConfig(
+            enabled=bool(voice.get("enabled", VoiceConfig.enabled)),
+            capture_backend=str(voice.get("capture_backend", VoiceConfig.capture_backend)),
+            captured_dir=Path(str(voice.get("captured_dir", VoiceConfig.captured_dir))),
+            normalized_dir=Path(str(voice.get("normalized_dir", VoiceConfig.normalized_dir))),
+            failed_dir=Path(str(voice.get("failed_dir", VoiceConfig.failed_dir))),
+            ffmpeg_path=Path(str(voice.get("ffmpeg_path", VoiceConfig.ffmpeg_path))),
+            application_loopback_helper_path=Path(
+                str(
+                    voice.get(
+                        "application_loopback_helper_path",
+                        VoiceConfig.application_loopback_helper_path,
+                    )
+                )
+            ),
+            loopback_input_device=(
+                None
+                if voice.get("loopback_input_device", VoiceConfig.loopback_input_device) in (None, "")
+                else int(voice.get("loopback_input_device"))
+            ),
+            capture_timeout_seconds=float(
+                voice.get("capture_timeout_seconds", VoiceConfig.capture_timeout_seconds)
+            ),
+            min_capture_ms=int(voice.get("min_capture_ms", VoiceConfig.min_capture_ms)),
+            duration_tolerance_ms=int(
+                voice.get("duration_tolerance_ms", VoiceConfig.duration_tolerance_ms)
+            ),
+            silence_peak_threshold=float(
+                voice.get("silence_peak_threshold", VoiceConfig.silence_peak_threshold)
+            ),
+            max_capture_retries=int(voice.get("max_capture_retries", VoiceConfig.max_capture_retries)),
+            relocation_scan_limit=int(
+                voice.get("relocation_scan_limit", VoiceConfig.relocation_scan_limit)
+            ),
+            delete_captured_after_success=bool(
+                voice.get("delete_captured_after_success", VoiceConfig.delete_captured_after_success)
+            ),
         ),
         ui=UIConfig(
             operation_timeout_seconds=float(

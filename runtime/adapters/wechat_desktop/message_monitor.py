@@ -140,7 +140,7 @@ class MessageMonitor:
                 self._log("no_unseen_text", session=session, latest_reason="duplicate")
                 return []
             self.deduplicator.seen(message)
-            self._log("accepted_text", message=message)
+            self._log("accepted_text" if message.message_type == "text" else "accepted_voice", message=message)
             return self.buffer.add(message)
         return []
 
@@ -148,11 +148,16 @@ class MessageMonitor:
         if message.direction != "incoming":
             self._log("ignored_not_incoming", message=message)
             return False
-        if message.message_type != "text":
+        if message.message_type == "text":
+            if not message.text.strip():
+                self._log("ignored_empty_text", message=message)
+                return False
+        elif message.message_type == "voice":
+            if not message.is_bound_to_ui:
+                self._log("ignored_unbound_voice", message=message)
+                return False
+        else:
             self._log("ignored_non_text", message=message)
-            return False
-        if not message.text.strip():
-            self._log("ignored_empty_text", message=message)
             return False
         if not self.config.contacts.is_allowed(message.contact_key, message.contact_display_name):
             self._log("ignored_not_allowed", message=message)

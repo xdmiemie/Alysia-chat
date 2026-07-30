@@ -35,6 +35,23 @@ reply:
   fallback_to_text: true
   max_text_chars: 1000
 
+voice:
+  enabled: true
+  capture_backend: application_loopback
+  captured_dir: storage/wechat/incoming/captured
+  normalized_dir: storage/wechat/incoming/normalized
+  failed_dir: storage/wechat/failed
+  ffmpeg_path: tools/ffmpeg/bin/ffmpeg.exe
+  application_loopback_helper_path: tools/application_loopback_capture/application_loopback_capture.exe
+  loopback_input_device: null
+  capture_timeout_seconds: 20
+  min_capture_ms: 300
+  duration_tolerance_ms: 700
+  silence_peak_threshold: 0.002
+  max_capture_retries: 1
+  relocation_scan_limit: 8
+  delete_captured_after_success: true
+
 ui:
   operation_timeout_seconds: 15
   verify_chat_title_before_send: true
