@@ -194,6 +194,72 @@ def test_monitor_streams_ready_batch_before_polling_next_configured_contact(tmp_
     assert client.opened == ["alice-key", "bob-key"]
 
 
+def test_monitor_async_poll_yields_between_configured_contacts(tmp_path):
+    client = FakeWeChatDesktopClient()
+    client.messages_by_contact = {"alice-key": []}
+    config = WeChatDesktopConfig(
+        log_path=tmp_path / "wechat.jsonl",
+        dedup_path=tmp_path / "dedup.jsonl",
+        contacts=WeChatDesktopConfig.contacts.__class__(
+            default_policy="deny",
+            allow_contact_keys=("alice-key", "bob-key"),
+        ),
+        monitor=WeChatDesktopConfig.monitor.__class__(buffer_seconds=0),
+    )
+    monitor = MessageMonitor(config=config, client=client)
+    yielded = False
+
+    async def observe_yield():
+        nonlocal yielded
+        async for _batch in monitor.iter_ready_batches_async():
+            pass
+        yielded = True
+
+    async def run():
+        task = asyncio.create_task(observe_yield())
+        await asyncio.sleep(0)
+        assert task.done() is False
+        assert client.opened == ["alice-key"]
+        await task
+
+    asyncio.run(run())
+
+    assert yielded is True
+    assert client.opened == ["alice-key", "bob-key"]
+
+
+def test_monitor_async_poll_stops_between_contacts_when_requested(tmp_path):
+    client = FakeWeChatDesktopClient()
+    client.messages_by_contact = {"alice-key": []}
+    stop = False
+    original_open_chat = client.open_chat
+
+    def open_chat_and_stop_after_first(contact_key: str):
+        nonlocal stop
+        original_open_chat(contact_key)
+        stop = True
+
+    client.open_chat = open_chat_and_stop_after_first
+    config = WeChatDesktopConfig(
+        log_path=tmp_path / "wechat.jsonl",
+        dedup_path=tmp_path / "dedup.jsonl",
+        contacts=WeChatDesktopConfig.contacts.__class__(
+            default_policy="deny",
+            allow_contact_keys=("alice-key", "bob-key", "carol-key"),
+        ),
+        monitor=WeChatDesktopConfig.monitor.__class__(buffer_seconds=0),
+    )
+    monitor = MessageMonitor(config=config, client=client)
+
+    async def run():
+        async for _batch in monitor.iter_ready_batches_async(should_stop=lambda: stop):
+            pass
+
+    asyncio.run(run())
+
+    assert client.opened == ["alice-key"]
+
+
 def test_monitor_uses_latest_unseen_incoming_message(tmp_path):
     client = FakeWeChatDesktopClient()
     client.messages_by_contact["alice-key"] = [

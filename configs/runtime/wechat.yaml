@@ -52,6 +52,20 @@ voice:
   relocation_scan_limit: 8
   delete_captured_after_success: true
 
+calls:
+  enabled: true
+  auto_answer: true
+  allow_video_calls: false
+  default_policy: deny
+  poll_interval_seconds: 0.2
+  ring_wait_ms: 0
+  max_call_seconds: 1800
+  busy_behavior: ignore
+  model_unhealthy_behavior: ignore
+  duplicate_cooldown_seconds: 30
+  post_call_failure_text: ""
+  pause_message_polling_while_enabled: true
+
 ui:
   operation_timeout_seconds: 15
   verify_chat_title_before_send: true
@@ -79,3 +93,6 @@ contacts:
     - L
     - 文件传输助手
   block_contact_keys: []
+  call_enabled_contact_keys: []
+  call_enabled_display_names: []
+  call_disabled_contact_keys: []

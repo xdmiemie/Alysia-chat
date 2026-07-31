@@ -9,8 +9,9 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-13 and the Stage 15 scheduling foundation are complete. The remaining
-plan continues with the Windows WeChat desktop adapter stages:
+Stages 0-13, the Stage 15 scheduling foundation, and Stage 16 WeChat call
+detection/auto-answer control are complete. The remaining plan continues with
+the Windows WeChat desktop adapter stages:
 
 - Stage 11: Windows WeChat environment, text monitoring, and text sending.
 - Stage 12: contact identity, whitelist, session, and memory isolation.
@@ -19,6 +20,9 @@ plan continues with the Windows WeChat desktop adapter stages:
 - Stage 15: one global GPU inference queue, one shared WeChat UI queue,
   per-contact send ordering, queue metrics, bounded backpressure, and restart
   storm protection helpers.
+- Stage 16: incoming WeChat call window detection, caller resolution,
+  whitelist/call permission policy, highest-priority UI answer/reject/hangup,
+  duplicate suppression, manual takeover, and call-state sync.
 
 ## Clone-To-Code Quickstart
 
@@ -392,6 +396,59 @@ Queue events are logged as redacted JSONL entries in the configured
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests\test_stage15_scheduler.py
+```
+
+## Stage 16 WeChat Calls
+
+Stage 16 adds a call-only automation layer under
+`runtime/adapters/wechat_desktop/`:
+
+- `call_window_locator.py` detects WeChat voice/video call windows through UI
+  Automation or a client-provided `list_call_windows()` hook.
+- `call_detection_thread.py` runs a read-only detector thread for top-level
+  WeChat call windows. It does not open chats, switch contacts, or click.
+- `call_contact_resolver.py` resolves the caller to a stable contact key when
+  the client can provide one, with display text as the Stage 12 test fallback.
+- `call_policy.py` enforces calls enabled, auto-answer enabled, private
+  allowlist, `call_enabled` permission, no active call, no manual takeover,
+  health gates, and video-call policy.
+- `call_controller.py` performs answer/reject/hangup through the shared
+  `SingleUIQueue` at priority `0`, then confirms the call state before
+  reporting success.
+- `incoming_call_watcher.py` de-duplicates the same call, coordinates policy and
+  controller actions, and exposes `ordinary_messages_paused` while a call is in
+  the short ringing/answering/ending control phase.
+
+Call automation is explicit at runtime:
+
+```powershell
+& $Python -m runtime.adapters.wechat_desktop.app --enable-calls
+```
+
+The relevant config lives in `configs/runtime/wechat.yaml`:
+
+```yaml
+calls:
+  enabled: true
+  auto_answer: true
+  allow_video_calls: false
+  default_policy: deny
+  poll_interval_seconds: 0.2
+  ring_wait_ms: 0
+  max_call_seconds: 1800
+  busy_behavior: ignore
+  model_unhealthy_behavior: ignore
+
+contacts:
+  allow_contact_keys: []
+  call_enabled_contact_keys: []
+  call_disabled_contact_keys: []
+```
+
+Run the focused call tests with:
+
+```powershell
+runtime_env\python.exe -m pytest tests\test_stage16_wechat_calls.py
 ```
 
 ## Stage 6 Realtime App

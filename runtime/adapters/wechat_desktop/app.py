@@ -5,12 +5,19 @@ import asyncio
 import json
 import sys
 import time
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 
 from runtime.adapters.wechat_desktop.client import PyWeixinDesktopClient
+from runtime.adapters.wechat_desktop.call_contact_resolver import CallContactResolver
+from runtime.adapters.wechat_desktop.call_controller import CallStateTracker, WeChatCallController
+from runtime.adapters.wechat_desktop.call_detection_thread import ReadOnlyCallDetectionThread
+from runtime.adapters.wechat_desktop.call_health import CallHealthChecker
+from runtime.adapters.wechat_desktop.call_window_locator import WeChatCallWindowLocator
 from runtime.adapters.wechat_desktop.config import WeChatDesktopConfig, load_wechat_desktop_config
 from runtime.adapters.wechat_desktop.health import check_wechat_desktop_health
+from runtime.adapters.wechat_desktop.incoming_call_watcher import IncomingCallWatcher
 from runtime.adapters.wechat_desktop.message_monitor import MessageMonitor
 from runtime.adapters.wechat_desktop.models import BufferedDesktopBatch, DesktopMessage, SendResult
 from runtime.adapters.wechat_desktop.text_sender import WeChatDesktopSender
@@ -27,13 +34,14 @@ from runtime.sensevoice.service import SenseVoiceRecognizer
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Stage 13 Windows WeChat desktop text and voice adapter.")
+    parser = argparse.ArgumentParser(description="Stage 16 Windows WeChat desktop text, voice, and call adapter.")
     parser.add_argument("--character-id", "--character", default="elysia")
     parser.add_argument("--config", default="configs/runtime/wechat.yaml")
     parser.add_argument("--qwen3-config", default="configs/runtime/qwen3.yaml")
     parser.add_argument("--sensevoice-config", default="configs/runtime/sensevoice.yaml")
     parser.add_argument("--output-dir", default="storage/generated_audio/wechat_desktop_text")
     parser.add_argument("--skip-health", action="store_true")
+    parser.add_argument("--enable-calls", action="store_true")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser
@@ -93,22 +101,128 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
         queue=shared_ui_queue,
         executable_names=config.client.executable_names,
     )
-    print("Stage 13 Windows WeChat adapter is polling. Keep the test WeChat logged in and visible.")
-    while True:
-        for batch in monitor.iter_ready_batches():
-            result = await _reply_to_batch(
-                batch,
-                core=core,
-                sender=sender,
-                voice_capture=voice_capture,
-                gpu_queue=gpu_queue,
-                character_id=args.character_id,
-                log_path=config.log_path,
+    call_watcher = _build_call_watcher(config=config, client=client, queue=shared_ui_queue) if args.enable_calls else None
+    call_detector = (
+        ReadOnlyCallDetectionThread(
+            config=config,
+            interval_seconds=config.calls.poll_interval_seconds,
+        )
+        if call_watcher is not None
+        else None
+    )
+    if call_detector is not None:
+        call_detector.start()
+    call_task = (
+        asyncio.create_task(
+            _run_call_watcher_loop(
+                call_watcher,
+                detector=call_detector,
+                config=config,
+                json_output=args.json,
             )
-            _print(result.to_dict(), json_output=args.json)
-            if args.once:
-                return
-        await asyncio.sleep(config.monitor.poll_interval_ms / 1000.0)
+        )
+        if call_watcher is not None and call_detector is not None
+        else None
+    )
+    print("Stage 16 Windows WeChat adapter is polling. Keep the test WeChat logged in and visible.")
+    try:
+        while True:
+            if call_watcher is not None and _should_pause_message_polling_for_calls(config, call_watcher):
+                await asyncio.sleep(config.monitor.poll_interval_ms / 1000.0)
+                continue
+            async for batch in monitor.iter_ready_batches_async(
+                should_stop=lambda: call_watcher is not None and _should_pause_message_polling_for_calls(
+                    config,
+                    call_watcher,
+                )
+            ):
+                result = await _reply_to_batch(
+                    batch,
+                    core=core,
+                    sender=sender,
+                    voice_capture=voice_capture,
+                    gpu_queue=gpu_queue,
+                    character_id=args.character_id,
+                    log_path=config.log_path,
+                )
+                _print(result.to_dict(), json_output=args.json)
+                if args.once:
+                    return
+            await asyncio.sleep(config.monitor.poll_interval_ms / 1000.0)
+    finally:
+        if call_task is not None:
+            call_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await call_task
+        if call_detector is not None:
+            call_detector.stop()
+
+
+def _build_call_watcher(*, config: WeChatDesktopConfig, client, queue: SingleUIQueue) -> IncomingCallWatcher:
+    locator = WeChatCallWindowLocator(config=config, client=client)
+    resolver = CallContactResolver(account_key=config.account.account_key, client=client)
+    state = CallStateTracker()
+    controller = WeChatCallController(
+        locator=locator,
+        resolver=resolver,
+        ui=config.ui,
+        queue=queue,
+        state=state,
+    )
+    health_checker = CallHealthChecker(config=config)
+    return IncomingCallWatcher(
+        config=config,
+        locator=locator,
+        resolver=resolver,
+        controller=controller,
+        health_checker=health_checker,
+        state=state,
+        event_sink=lambda event, fields: _bridge_event(config.log_path, event, **fields),
+    )
+
+
+def _should_pause_message_polling_for_calls(
+    config: WeChatDesktopConfig,
+    call_watcher: IncomingCallWatcher,
+) -> bool:
+    return config.calls.pause_message_polling_while_enabled and call_watcher.state.ordinary_messages_paused
+
+
+async def _run_call_watcher_loop(
+    call_watcher: IncomingCallWatcher,
+    *,
+    detector: ReadOnlyCallDetectionThread,
+    config: WeChatDesktopConfig,
+    json_output: bool,
+) -> None:
+    last_sequence = 0
+    while True:
+        try:
+            frame = detector.latest()
+            if frame.sequence != last_sequence:
+                last_sequence = frame.sequence
+                if frame.error:
+                    _bridge_event(config.log_path, "call_detection_failed", error=frame.error, retryable=True)
+                results = await call_watcher.handle_detected_calls(frame.calls)
+                for call_result in results:
+                    _print(call_result.to_dict(), json_output=json_output)
+                _update_call_detector_pause(detector, results)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _bridge_event(config.log_path, "call_watcher_failed", error=str(exc), retryable=True)
+        await asyncio.sleep(0.05)
+
+
+def _update_call_detector_pause(detector: ReadOnlyCallDetectionThread, results) -> None:
+    if not results:
+        detector.resume()
+        return
+    actions = {result.action for result in results}
+    if "answer" in actions or "reject" in actions or "hangup" in actions:
+        detector.pause(seconds=5.0)
+        return
+    detector.pause(seconds=1.0)
 
 
 async def _reply_to_batch(

@@ -65,6 +65,22 @@ class VoiceConfig:
 
 
 @dataclass(frozen=True)
+class CallsConfig:
+    enabled: bool = True
+    auto_answer: bool = True
+    allow_video_calls: bool = False
+    default_policy: str = "deny"
+    poll_interval_seconds: float = 0.2
+    ring_wait_ms: int = 0
+    max_call_seconds: int = 1800
+    busy_behavior: str = "ignore"
+    model_unhealthy_behavior: str = "ignore"
+    duplicate_cooldown_seconds: float = 30.0
+    post_call_failure_text: str = ""
+    pause_message_polling_while_enabled: bool = True
+
+
+@dataclass(frozen=True)
 class UIConfig:
     operation_timeout_seconds: float = 15.0
     verify_chat_title_before_send: bool = True
@@ -93,6 +109,9 @@ class ContactsConfig:
     allow_contact_keys: tuple[str, ...] = ()
     allow_display_names: tuple[str, ...] = ()
     block_contact_keys: tuple[str, ...] = ()
+    call_enabled_contact_keys: tuple[str, ...] = ()
+    call_enabled_display_names: tuple[str, ...] = ()
+    call_disabled_contact_keys: tuple[str, ...] = ()
 
     def is_allowed(self, contact_key: str, display_name: str = "") -> bool:
         if contact_key in self.block_contact_keys:
@@ -104,6 +123,18 @@ class ContactsConfig:
         if display_name and display_name in self.allow_display_names:
             return True
         return self.default_policy == "allow"
+
+    def is_call_enabled(self, contact_key: str, display_name: str = "") -> bool:
+        if contact_key in self.call_disabled_contact_keys:
+            return False
+        if contact_key in self.call_enabled_contact_keys:
+            return True
+        if contact_key in self.call_enabled_display_names:
+            return True
+        if display_name and display_name in self.call_enabled_display_names:
+            return True
+        has_explicit_call_allowlist = bool(self.call_enabled_contact_keys or self.call_enabled_display_names)
+        return not has_explicit_call_allowlist and self.is_allowed(contact_key, display_name)
 
 
 @dataclass(frozen=True)
@@ -117,6 +148,7 @@ class WeChatDesktopConfig:
     monitor: MonitorConfig = MonitorConfig()
     reply: ReplyConfig = ReplyConfig()
     voice: VoiceConfig = VoiceConfig()
+    calls: CallsConfig = CallsConfig()
     ui: UIConfig = UIConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     contacts: ContactsConfig = ContactsConfig()
@@ -129,6 +161,7 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
     monitor = raw.get("monitor", {})
     reply = raw.get("reply", {})
     voice = raw.get("voice", {})
+    calls = raw.get("calls", {})
     ui = raw.get("ui", {})
     scheduler = raw.get("scheduler", {})
     contacts = raw.get("contacts", {})
@@ -208,6 +241,33 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
                 voice.get("delete_captured_after_success", VoiceConfig.delete_captured_after_success)
             ),
         ),
+        calls=CallsConfig(
+            enabled=bool(calls.get("enabled", CallsConfig.enabled)),
+            auto_answer=bool(calls.get("auto_answer", CallsConfig.auto_answer)),
+            allow_video_calls=bool(calls.get("allow_video_calls", CallsConfig.allow_video_calls)),
+            default_policy=str(calls.get("default_policy", CallsConfig.default_policy)),
+            poll_interval_seconds=float(
+                calls.get("poll_interval_seconds", CallsConfig.poll_interval_seconds)
+            ),
+            ring_wait_ms=int(calls.get("ring_wait_ms", CallsConfig.ring_wait_ms)),
+            max_call_seconds=int(calls.get("max_call_seconds", CallsConfig.max_call_seconds)),
+            busy_behavior=str(calls.get("busy_behavior", CallsConfig.busy_behavior)),
+            model_unhealthy_behavior=str(
+                calls.get("model_unhealthy_behavior", CallsConfig.model_unhealthy_behavior)
+            ),
+            duplicate_cooldown_seconds=float(
+                calls.get("duplicate_cooldown_seconds", CallsConfig.duplicate_cooldown_seconds)
+            ),
+            post_call_failure_text=str(
+                calls.get("post_call_failure_text", CallsConfig.post_call_failure_text)
+            ),
+            pause_message_polling_while_enabled=bool(
+                calls.get(
+                    "pause_message_polling_while_enabled",
+                    CallsConfig.pause_message_polling_while_enabled,
+                )
+            ),
+        ),
         ui=UIConfig(
             operation_timeout_seconds=float(
                 ui.get("operation_timeout_seconds", UIConfig.operation_timeout_seconds)
@@ -252,6 +312,9 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
             allow_contact_keys=_as_string_tuple(contacts.get("allow_contact_keys", ())),
             allow_display_names=_as_string_tuple(contacts.get("allow_display_names", ())),
             block_contact_keys=_as_string_tuple(contacts.get("block_contact_keys", ())),
+            call_enabled_contact_keys=_as_string_tuple(contacts.get("call_enabled_contact_keys", ())),
+            call_enabled_display_names=_as_string_tuple(contacts.get("call_enabled_display_names", ())),
+            call_disabled_contact_keys=_as_string_tuple(contacts.get("call_disabled_contact_keys", ())),
         ),
     )
 

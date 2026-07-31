@@ -73,6 +73,12 @@ class WeChatDesktopClient(Protocol):
     def play_voice_message(self, message) -> None:
         ...
 
+    def list_call_windows(self) -> tuple[object, ...]:
+        ...
+
+    def locate_call_window(self, call_id: str) -> object | None:
+        ...
+
 
 class UnsupportedPyWeixinApi(RuntimeError):
     pass
@@ -291,6 +297,16 @@ class PyWeixinDesktopClient:
             raise RuntimeError("open_chat must be called before play_voice_message")
         if not _click_current_chat_voice_message(message):
             raise RuntimeError("could not click the bound WeChat voice bubble")
+
+    def list_call_windows(self) -> tuple[object, ...]:
+        return _list_pyweixin_call_windows(self.module, account_key="role_account_main")
+
+    def locate_call_window(self, call_id: str) -> object | None:
+        for call in self.list_call_windows():
+            if getattr(call, "call_id", "") == call_id:
+                return call
+        connected = [call for call in self.list_call_windows() if getattr(call, "state", "") == "connected"]
+        return connected[0] if connected else None
 
     def _safe_about_weixin(self) -> dict[str, Any]:
         try:
@@ -964,6 +980,131 @@ def _rect_inside(inner, outer) -> bool:
         )
     except Exception:
         return False
+
+
+def _list_pyweixin_call_windows(module, *, account_key: str) -> tuple[object, ...]:
+    snapshots = []
+    for window in _pyweixin_call_window_candidates(module):
+        try:
+            from runtime.adapters.wechat_desktop.call_window_locator import _snapshot_from_uia_window
+
+            snapshot = _snapshot_from_uia_window(window, account_key=account_key)
+        except Exception:
+            snapshot = None
+        if snapshot is not None and snapshot.state in {"ringing", "connected", "answering", "ending"}:
+            snapshots.append(snapshot)
+    return tuple(snapshots)
+
+
+def _pyweixin_call_window_candidates(module) -> tuple[object, ...]:
+    windows = []
+    seen: set[str] = set()
+    for selector in _pyweixin_call_window_selectors(module):
+        window = _pyweixin_window_from_selector(selector)
+        if window is None:
+            continue
+        handle = str(_get(window, "handle", "") or _control_runtime_identity(window))
+        if handle and handle in seen:
+            continue
+        if handle:
+            seen.add(handle)
+        windows.append(window)
+    return tuple(windows)
+
+
+def _pyweixin_call_window_selectors(module) -> tuple[dict[str, str], ...]:
+    selectors: list[dict[str, str]] = []
+    try:
+        from pyweixin.Uielements import Windows
+
+        for name in ("IncomingCallWindow", "VoipCallWindow"):
+            selector = getattr(Windows, name, None)
+            if isinstance(selector, dict):
+                selectors.append({str(key): str(value) for key, value in selector.items()})
+    except Exception:
+        pass
+    selectors.extend(
+        [
+            {"title": "微信", "class_name": "mmui::VOIPTrayWindow"},
+            {"title": "Weixin", "class_name": "mmui::VOIPTrayWindow"},
+            {"title": "WeChat", "class_name": "mmui::VOIPTrayWindow"},
+            {"class_name": "mmui::VOIPTrayWindow"},
+            {"class_name": "ILinkVoipTrayWnd"},
+            {"title": "微信音视频通话", "class_name": "mmui::VOIPWindow"},
+            {"title": "Weixin Voice & Video Calls", "class_name": "mmui::VOIPWindow"},
+            {"class_name": "mmui::VOIPWindow"},
+        ]
+    )
+    unique: list[dict[str, str]] = []
+    seen = set()
+    for selector in selectors:
+        key = tuple(sorted(selector.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(selector)
+    return tuple(unique)
+
+
+def _pyweixin_window_from_selector(selector: dict[str, str]):
+    window = _pywinauto_window_from_selector(selector)
+    if window is not None:
+        return window
+    return _win32_window_from_selector(selector)
+
+
+def _pywinauto_window_from_selector(selector: dict[str, str]):
+    try:
+        from pywinauto import Desktop
+    except ImportError:
+        return None
+    try:
+        window = Desktop(backend="uia").window(**selector)
+        if window.exists(timeout=0.05):
+            return window
+    except Exception:
+        return None
+    return None
+
+
+def _win32_window_from_selector(selector: dict[str, str]):
+    try:
+        import win32gui
+        from pywinauto import Desktop
+    except ImportError:
+        return None
+    class_name = selector.get("class_name", "")
+    title = selector.get("title", "")
+    handles = []
+    if class_name or title:
+        try:
+            hwnd = win32gui.FindWindow(class_name or None, title or None)
+        except Exception:
+            hwnd = 0
+        if hwnd:
+            handles.append(hwnd)
+    if not handles and class_name:
+        found = []
+
+        def collect(hwnd, _param):
+            try:
+                if win32gui.GetClassName(hwnd) == class_name:
+                    found.append(hwnd)
+            except Exception:
+                pass
+            return True
+
+        try:
+            win32gui.EnumWindows(collect, None)
+        except Exception:
+            pass
+        handles.extend(found)
+    for hwnd in handles:
+        try:
+            return Desktop(backend="uia").window(handle=hwnd)
+        except Exception:
+            continue
+    return None
 
 
 def _safe_descendants(window):

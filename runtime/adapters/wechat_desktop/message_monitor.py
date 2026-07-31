@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 
 from runtime.adapters.wechat_desktop.client import WeChatDesktopClient
@@ -35,17 +36,82 @@ class MessageMonitor:
     def poll_once(self) -> list[BufferedDesktopBatch]:
         return list(self.iter_ready_batches())
 
+    async def iter_ready_batches_async(
+        self,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> AsyncIterator[BufferedDesktopBatch]:
+        sessions = self._configured_contact_sessions()
+        configured_allowlist = bool(sessions)
+        if not sessions:
+            sessions = self.client.list_sessions(limit=self.config.monitor.max_visible_sessions)
+        ready_count = 0
+        poll_elapsed_ms = 0
+        stopped = False
+        for session in sessions:
+            if should_stop is not None and should_stop():
+                stopped = True
+                break
+            if configured_allowlist:
+                _terminal_log("开始检测一个白名单", contact=session.contact_key)
+            started = time.perf_counter()
+            ready = self._poll_session(session)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            poll_elapsed_ms += elapsed_ms
+            ready_count += len(ready)
+            if configured_allowlist:
+                _terminal_log(
+                    "检测一个白名单结束",
+                    contact=session.contact_key,
+                    ready=len(ready),
+                    elapsed_ms=elapsed_ms,
+                )
+            for batch in ready:
+                yield batch
+            await asyncio.sleep(0)
+            if should_stop is not None and should_stop():
+                stopped = True
+                break
+
+        if stopped:
+            return
+
+        started = time.perf_counter()
+        expired = self.buffer.flush_expired()
+        poll_elapsed_ms += int((time.perf_counter() - started) * 1000)
+        ready_count += len(expired)
+        for batch in expired:
+            yield batch
+
+        if poll_elapsed_ms >= 1000:
+            self._log(
+                "slow_poll",
+                elapsed_ms=poll_elapsed_ms,
+                session_count=len(sessions),
+                ready_count=ready_count,
+            )
+
     def iter_ready_batches(self) -> Iterator[BufferedDesktopBatch]:
         sessions = self._configured_contact_sessions()
+        configured_allowlist = bool(sessions)
         if not sessions:
             sessions = self.client.list_sessions(limit=self.config.monitor.max_visible_sessions)
         ready_count = 0
         poll_elapsed_ms = 0
         for session in sessions:
+            if configured_allowlist:
+                _terminal_log("开始检测一个白名单", contact=session.contact_key)
             started = time.perf_counter()
             ready = self._poll_session(session)
-            poll_elapsed_ms += int((time.perf_counter() - started) * 1000)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            poll_elapsed_ms += elapsed_ms
             ready_count += len(ready)
+            if configured_allowlist:
+                _terminal_log(
+                    "检测一个白名单结束",
+                    contact=session.contact_key,
+                    ready=len(ready),
+                    elapsed_ms=elapsed_ms,
+                )
             yield from ready
 
         started = time.perf_counter()
@@ -188,3 +254,8 @@ class MessageMonitor:
             }
         with log_path.open("a", encoding="utf-8") as log:
             log.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _terminal_log(message: str, **fields: object) -> None:
+    suffix = " ".join(f"{key}={value}" for key, value in fields.items() if value not in (None, ""))
+    print(f"[wechat] {message}{' ' + suffix if suffix else ''}", flush=True)
