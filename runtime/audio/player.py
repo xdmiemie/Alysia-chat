@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import time
 import wave
 from array import array
 
 from runtime.audio.devices import select_output_device
 
 
-def play_wav(path: str | Path, output_device: int | None = None) -> None:
+def play_wav(
+    path: str | Path,
+    output_device: int | None = None,
+    *,
+    volume: float = 1.0,
+    stop_event=None,
+) -> None:
     sd = _sounddevice()
     np = _numpy()
     selected_output = select_output_device(output_device)
@@ -31,8 +38,19 @@ def play_wav(path: str | Path, output_device: int | None = None) -> None:
     audio = np.asarray(samples, dtype=np.int16)
     if channels > 1:
         audio = audio.reshape(-1, channels)
-
-    sd.play(audio, samplerate=sample_rate, device=selected_output.index, blocking=True)
+    volume = max(0.0, min(1.0, float(volume)))
+    if volume != 1.0:
+        audio = (audio.astype(np.float32) * volume).astype(np.int16)
+    sd.play(audio, samplerate=sample_rate, device=selected_output.index, blocking=False)
+    try:
+        while bool(getattr(sd.get_stream(), "active", False)):
+            if stop_event is not None and stop_event.wait(0.02):
+                sd.stop()
+                return
+            time.sleep(0.02) if stop_event is None else None
+    finally:
+        if stop_event is not None and stop_event.is_set():
+            sd.stop()
 
 
 def _sounddevice():

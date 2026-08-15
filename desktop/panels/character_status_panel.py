@@ -13,6 +13,7 @@ class CharacterStatusPanel(QFrame):
     character_switch_requested = Signal()
     model_switch_requested = Signal()
     model_service_requested = Signal()
+    call_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -94,8 +95,8 @@ class CharacterStatusPanel(QFrame):
         self.model_service_button.clicked.connect(self.model_service_requested)
         self.call_button = QPushButton("♬  发起语音通话")
         self.call_button.setObjectName("primaryButton")
-        self.call_button.setToolTip("语音通话将在 Stage 14 开放")
-        self.call_button.setEnabled(False)
+        self.call_button.setToolTip("开始半双工实时语音通话")
+        self.call_button.clicked.connect(self.call_requested)
         self.settings_button = QPushButton("⚙  设置")
         self.settings_button.setObjectName("secondaryButton")
         self.settings_button.clicked.connect(self.settings_requested)
@@ -121,3 +122,4 @@ class CharacterStatusPanel(QFrame):
             "■  关闭模型" if snapshot.model_service_running else "▶  启动模型"
         )
         self.model_service_button.setEnabled(snapshot.controls_enabled)
+        self.call_button.setEnabled(snapshot.chat_enabled)

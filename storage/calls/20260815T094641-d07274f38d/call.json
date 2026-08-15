@@ -1,0 +1,15 @@
+{
+  "call_id": "20260815T094641-d07274f38d",
+  "character_id": "elysia",
+  "conversation_id": "9839c015b2e64e19be50d09a8e2cb0b4",
+  "models": {
+    "qwen3": "qwen3-8b-q4-k-m-base-v1",
+    "gpt_sovits": "base-v1"
+  },
+  "save_audio": true,
+  "started_at": "2026-08-15T09:46:41.954135+00:00",
+  "status": "ended",
+  "ended_at": "2026-08-15T09:47:47.261649+00:00",
+  "turn_count": 2,
+  "error": ""
+}

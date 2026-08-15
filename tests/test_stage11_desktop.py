@@ -144,6 +144,43 @@ def test_stage11_selection_dialogs_expose_separate_model_controls() -> None:
     model_dialog.close()
 
 
+def test_secondary_windows_share_frameless_title_bar_and_dark_theme(tmp_path, monkeypatch) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from desktop.app import THEME_PATH
+    import desktop.windows.settings_dialog as settings_module
+    from desktop.windows.selection_dialogs import ModelSelectionDialog
+    from desktop.windows.voice_call_dialog import VoiceCallDialog
+
+    app = QApplication.instance() or QApplication([])
+    app.setStyleSheet(THEME_PATH.read_text(encoding="utf-8"))
+    monkeypatch.setattr(settings_module, "SETTINGS_PATH", tmp_path / "settings.json")
+    settings = settings_module.SettingsDialog(tmp_path / "missing.log")
+    model = ModelSelectionDialog(
+        [("qwen", "q1", "Qwen3 · Base"), ("tts", "t1", "GPT-SoVITS · Voice")],
+        "q1",
+        "t1",
+    )
+    call = VoiceCallDialog("爱莉希雅")
+    call._ending = True
+
+    assert all(
+        dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+        for dialog in (settings, model, call)
+    )
+    assert settings.title_bar.title_label.text() == "设置与日志"
+    assert model.title_bar.title_label.text() == "切换模型"
+    assert call.title_bar.title_label.text() == "与爱莉希雅语音通话"
+    settings.title_bar.ensurePolished()
+    assert settings.title_bar.close_button.font().pixelSize() >= 24
+    settings.reject()
+    model.reject()
+    call.reject()
+
+
 def test_stage11_managed_service_does_not_block_and_is_stopped() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")

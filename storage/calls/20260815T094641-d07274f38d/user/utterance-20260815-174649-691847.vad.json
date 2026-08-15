@@ -1,0 +1,18 @@
+[
+  {
+    "event": "speech_start",
+    "frame_index": 138,
+    "at_ms": 3720,
+    "duration_ms": 0,
+    "silence_ms": 0,
+    "reason": ""
+  },
+  {
+    "event": "speech_end",
+    "frame_index": 208,
+    "at_ms": 6270,
+    "duration_ms": 2550,
+    "silence_ms": 750,
+    "reason": "silence"
+  }
+]

@@ -177,6 +177,9 @@ def test_stage12_chat_page_has_multiline_input_and_history_controls() -> None:
 
     app = QApplication.instance() or QApplication([])
     page = ChatPage()
+    assert page.voice_button.text() == ""
+    assert not page.voice_button.icon().isNull()
+    assert page.voice_button.accessibleName() == "发送语音消息"
     assert isinstance(page.input, QTextEdit)
     assert page.new_button.text().endswith("新建")
     assert page.rename_button.text() == "重命名"

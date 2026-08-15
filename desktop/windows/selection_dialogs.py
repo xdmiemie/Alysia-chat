@@ -9,7 +9,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QVBoxLayout,
+    QWidget,
 )
+
+from desktop.widgets import TitleBar
 
 
 class SelectionComboBox(QComboBox):
@@ -43,10 +46,18 @@ class CharacterSelectionDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("selectionDialog")
         self.setWindowTitle("切换角色")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setModal(True)
         self.setMinimumWidth(440)
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.title_bar = TitleBar(title="切换角色")
+        root.addWidget(self.title_bar)
+        content = QWidget()
+        content.setObjectName("dialogContent")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(12)
         title = QLabel("选择角色")
@@ -67,6 +78,7 @@ class CharacterSelectionDialog(QDialog):
         layout.addWidget(self.character_combo)
         layout.addSpacing(8)
         layout.addWidget(_dialog_buttons(self))
+        root.addWidget(content, 1)
 
     @property
     def selected_character_id(self) -> str:
@@ -84,10 +96,18 @@ class ModelSelectionDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("selectionDialog")
         self.setWindowTitle("切换模型")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setModal(True)
         self.setMinimumWidth(520)
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.title_bar = TitleBar(title="切换模型")
+        root.addWidget(self.title_bar)
+        content = QWidget()
+        content.setObjectName("dialogContent")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(12)
         title = QLabel("选择运行模型")
@@ -113,6 +133,7 @@ class ModelSelectionDialog(QDialog):
         )
         layout.addSpacing(8)
         layout.addWidget(_dialog_buttons(self))
+        root.addWidget(content, 1)
 
     @staticmethod
     def _model_combo(

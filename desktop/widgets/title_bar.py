@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 class TitleBar(QFrame):
     """Themeable replacement for the native Windows title bar."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, title: str = "Alysia Studio") -> None:
         super().__init__(parent)
         self.setObjectName("titleBar")
         self.setFixedHeight(44)
@@ -18,10 +18,10 @@ class TitleBar(QFrame):
         layout.setSpacing(8)
         mark = QLabel("✦")
         mark.setObjectName("titleBarMark")
-        title = QLabel("Alysia Studio")
-        title.setObjectName("titleBarTitle")
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("titleBarTitle")
         layout.addWidget(mark)
-        layout.addWidget(title)
+        layout.addWidget(self.title_label)
         layout.addStretch(1)
 
         self.minimize_button = self._window_button("—", "最小化", "minimizeButton")

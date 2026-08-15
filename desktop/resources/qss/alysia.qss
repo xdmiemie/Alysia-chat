@@ -36,6 +36,12 @@ QMainWindow, #customWindowFrame, #windowSurface, #windowBody, #workspaceStack, #
     font-size: 16px;
 }
 
+#closeButton {
+    font-size: 25px;
+    font-weight: 500;
+    padding-bottom: 3px;
+}
+
 #minimizeButton:hover, #maximizeButton:hover {
     background: #292a42;
     color: #ffffff;
@@ -307,6 +313,15 @@ QPushButton:focus {
     padding: 0;
 }
 
+#iconButton:hover {
+    background: #343550;
+}
+
+#iconButton[recording="true"] {
+    background: #633047;
+    border: 1px solid #ef78aa;
+}
+
 #characterPanel {
     background: #17182b;
     border-left: 1px solid #292943;
@@ -420,6 +435,48 @@ QDialog, QTabWidget::pane {
     background: #15162a;
 }
 
+#dialogContent, #settingsContent, #settingsPage, #settingsTabs,
+#settingsTabs QStackedWidget, #voiceCallContent {
+    background: #15162a;
+}
+
+#settingsTabs::pane {
+    background: #191a30;
+    border: 1px solid #30314d;
+    border-radius: 10px;
+    top: -1px;
+}
+
+#settingsPage {
+    color: #eeeaf8;
+}
+
+#settingsDialog QDialogButtonBox, #settingsDialog QCheckBox {
+    background: transparent;
+    color: #eeeaf8;
+}
+
+#settingsDialog QCheckBox {
+    spacing: 9px;
+}
+
+#settingsDialog QCheckBox::indicator {
+    width: 17px;
+    height: 17px;
+    background: #24253d;
+    border: 1px solid #575873;
+    border-radius: 4px;
+}
+
+#settingsDialog QCheckBox::indicator:hover {
+    border-color: #e96ca9;
+}
+
+#settingsDialog QCheckBox::indicator:checked {
+    background: #e967a7;
+    border-color: #f08abb;
+}
+
 #selectionDialog {
     background: #15162a;
 }
@@ -520,4 +577,121 @@ QTabBar::tab {
 QTabBar::tab:selected {
     color: #ff8ac2;
     border-bottom: 2px solid #ee6fad;
+}
+
+#voiceCallDialog {
+    background: #15162a;
+}
+
+#voiceCallDialog QSlider::groove:horizontal {
+    background: #32334d;
+    height: 6px;
+    border-radius: 3px;
+}
+
+#voiceCallDialog QSlider::sub-page:horizontal {
+    background: #e967a7;
+    border-radius: 3px;
+}
+
+#voiceCallDialog QSlider::handle:horizontal {
+    background: #f4a2ca;
+    width: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}
+
+#callAvatar {
+    background: #4a2949;
+    color: #ffb4d7;
+    border: 3px solid #875573;
+    border-radius: 66px;
+    font-size: 44px;
+    font-weight: 700;
+}
+
+#callCharacterName {
+    color: #ffffff;
+    font-size: 25px;
+    font-weight: 700;
+}
+
+#callDuration {
+    color: #a9a5b8;
+    font-size: 18px;
+}
+
+#callStatus {
+    color: #75dcbc;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+#callLevel {
+    background: #292a43;
+    border: 0;
+    border-radius: 5px;
+    max-height: 10px;
+}
+
+#callLevel::chunk {
+    background: #ed72ad;
+    border-radius: 5px;
+}
+
+#callTextCard {
+    background: #202039;
+    border: 1px solid #343451;
+    border-radius: 14px;
+}
+
+#callTranscript, #callReply {
+    color: #e9e5f1;
+    padding: 4px 8px;
+}
+
+#callReplyToggle {
+    background: transparent;
+    color: #f18abb;
+    text-align: left;
+}
+
+#callMuteButton {
+    background: #292a43;
+    border: 1px solid #41425e;
+    border-radius: 29px;
+    min-width: 58px;
+    max-width: 58px;
+    min-height: 58px;
+    max-height: 58px;
+    padding: 0;
+}
+
+#callMuteButton:hover {
+    background: #353650;
+    border-color: #666784;
+}
+
+#callMuteButton:checked {
+    background: #4a293d;
+    border-color: #db658e;
+}
+
+#callEndButton {
+    background: #d84f70;
+    color: #ffffff;
+    border-radius: 31px;
+    min-width: 62px;
+    max-width: 62px;
+    min-height: 62px;
+    max-height: 62px;
+    padding: 0;
+}
+
+#callEndButton:hover {
+    background: #e6607f;
+}
+
+#callEndButton:pressed {
+    background: #bd3e5d;
 }

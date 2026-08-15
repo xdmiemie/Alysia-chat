@@ -15,6 +15,10 @@ from runtime.audio.audio_format import WaveMetrics, inspect_wav, save_metrics_js
 from runtime.audio.devices import select_input_device
 
 
+class RecordingCancelled(RuntimeError):
+    """Raised when a live VAD capture is intentionally stopped."""
+
+
 @dataclass(frozen=True)
 class VadConfig:
     sample_rate: int = 16000
@@ -237,7 +241,14 @@ class RealtimeVadRecorder:
         self.input_device = input_device
         self.vad = vad
 
-    def listen_once(self, recordings_dir: str | Path) -> VadRecordingResult:
+    def listen_once(
+        self,
+        recordings_dir: str | Path,
+        *,
+        stop_event=None,
+        mute_event=None,
+        level_callback=None,
+    ) -> VadRecordingResult:
         sd = _sounddevice()
         input_device = select_input_device(self.input_device)
         frames: queue.Queue[bytes] = queue.Queue()
@@ -247,6 +258,14 @@ class RealtimeVadRecorder:
         def callback(indata, _frames, _time, status) -> None:
             if status:
                 return
+            if stop_event is not None and stop_event.is_set():
+                return
+            if mute_event is not None and mute_event.is_set():
+                if level_callback is not None:
+                    level_callback(0.0)
+                return
+            if level_callback is not None:
+                level_callback(min(1.0, _pcm16_rms(bytes(indata)) / 12000.0))
             frames.put(bytes(indata))
 
         with sd.RawInputStream(
@@ -258,6 +277,18 @@ class RealtimeVadRecorder:
             callback=callback,
         ):
             while True:
+                if stop_event is not None and stop_event.is_set():
+                    raise RecordingCancelled("recording stopped")
+                if mute_event is not None and mute_event.is_set():
+                    segmenter.reset()
+                    while True:
+                        try:
+                            frames.get_nowait()
+                        except queue.Empty:
+                            break
+                    if stop_event is not None and stop_event.wait(0.05):
+                        raise RecordingCancelled("recording stopped")
+                    continue
                 try:
                     frame = frames.get(timeout=0.2)
                 except queue.Empty:

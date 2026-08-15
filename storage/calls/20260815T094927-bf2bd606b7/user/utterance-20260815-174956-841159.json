@@ -1,0 +1,13 @@
+{
+  "path": "D:\\Alysia-chat\\storage\\calls\\20260815T094927-bf2bd606b7\\user\\utterance-20260815-174956-841159.wav",
+  "duration_seconds": 2.25,
+  "sample_rate": 16000,
+  "channels": 1,
+  "sample_width_bits": 16,
+  "frame_count": 36000,
+  "peak_pcm": 28664,
+  "peak_normalized": 0.874755859375,
+  "peak_dbfs": -1.162262796033275,
+  "clipped": false,
+  "clipped_samples": 0
+}

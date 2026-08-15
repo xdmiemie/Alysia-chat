@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QSize, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from desktop.state import AppSnapshot
 from desktop.controllers.audio_playback import VoicePlaybackController
-from desktop.widgets import MessageBubble, VoiceMessageBubble
+from desktop.widgets import MessageBubble, VoiceMessageBubble, microphone_icon
 from desktop.state import AppStatus
 from runtime.conversation import Conversation, Message
 
@@ -136,8 +136,11 @@ class ChatPage(QWidget):
         self.input.setMaximumHeight(110)
         self.input.textChanged.connect(self._sync_send_button)
         self.input.submit_requested.connect(self._submit)
-        self.voice_button = QPushButton("◉")
+        self.voice_button = QPushButton()
         self.voice_button.setObjectName("iconButton")
+        self.voice_button.setIcon(microphone_icon())
+        self.voice_button.setIconSize(QSize(25, 25))
+        self.voice_button.setAccessibleName("发送语音消息")
         self.voice_button.setToolTip("开始录音")
         self.voice_button.clicked.connect(self._toggle_voice_recording)
         self.recording_label = QLabel("0:00")
@@ -184,7 +187,9 @@ class ChatPage(QWidget):
             button.setEnabled(snapshot.controls_enabled)
         recording = snapshot.status is AppStatus.RECORDING
         self.voice_button.setEnabled(snapshot.chat_enabled or recording)
-        self.voice_button.setText("■" if recording else "◉")
+        self.voice_button.setProperty("recording", recording)
+        self.voice_button.style().unpolish(self.voice_button)
+        self.voice_button.style().polish(self.voice_button)
         self.voice_button.setToolTip("结束录音" if recording else "开始录音")
         self.cancel_voice_button.setEnabled(recording)
         if not recording:

@@ -19,6 +19,7 @@ from desktop.state import AppSnapshot, Workspace
 from desktop.widgets import ResizeHandle, TitleBar
 from desktop.windows.selection_dialogs import CharacterSelectionDialog, ModelSelectionDialog
 from desktop.windows.settings_dialog import SettingsDialog
+from desktop.windows.voice_call_dialog import VoiceCallDialog
 
 
 class MainWindow(QMainWindow):
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
         self.character_panel.character_switch_requested.connect(self.open_character_selector)
         self.character_panel.model_switch_requested.connect(self.open_model_selector)
         self.character_panel.model_service_requested.connect(self.controller.toggle_model_service)
+        self.character_panel.call_requested.connect(self.open_voice_call)
         self.chat_page.send_requested.connect(self.controller.send_chat)
         self.chat_page.retry_requested.connect(self.controller.retry_message)
         self.chat_page.conversation_requested.connect(self.controller.open_conversation)
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
         self.controller.conversations_changed.connect(self._apply_conversations)
         self.controller.messages_changed.connect(self.chat_page.set_messages)
         self.controller.recording_changed.connect(self.chat_page.apply_recording_progress)
+        self._call_dialog: VoiceCallDialog | None = None
 
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self.open_settings)
         QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.controller.set_workspace(Workspace.CHAT))
@@ -170,6 +173,32 @@ class MainWindow(QMainWindow):
                 qwen_model=dialog.selected_qwen_model,
                 tts_model=dialog.selected_tts_model,
             )
+
+    @Slot()
+    def open_voice_call(self) -> None:
+        if self._call_dialog is not None and self._call_dialog.isVisible():
+            self._call_dialog.raise_()
+            self._call_dialog.activateWindow()
+            return
+        dialog = VoiceCallDialog(self.controller.state.snapshot.character_name, self)
+        dialog.mute_changed.connect(self.controller.set_call_muted)
+        dialog.volume_changed.connect(self.controller.set_call_volume)
+        dialog.end_requested.connect(self.controller.end_voice_call)
+        self.controller.call_state_changed.connect(dialog.set_call_state)
+        self.controller.call_level_changed.connect(dialog.set_level)
+        self.controller.call_transcript_changed.connect(dialog.set_transcript)
+        self.controller.call_reply_changed.connect(dialog.set_reply)
+        self.controller.call_error.connect(dialog.show_recoverable_error)
+        self.controller.call_finished.connect(dialog.finish_call)
+        dialog.finished.connect(lambda _result: self._clear_call_dialog(dialog))
+        dialog.finished.connect(dialog.deleteLater)
+        self._call_dialog = dialog
+        dialog.show()
+        self.controller.start_voice_call()
+
+    def _clear_call_dialog(self, dialog: VoiceCallDialog) -> None:
+        if self._call_dialog is dialog:
+            self._call_dialog = None
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self.chat_page.playback.stop()

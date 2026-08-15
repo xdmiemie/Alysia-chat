@@ -10,6 +10,7 @@ from uuid import uuid4
 from PySide6.QtCore import QObject, QProcess, QThread, QTimer, Signal, Slot
 
 from desktop.controllers.chat_worker import ChatWorker, ReplyFactory, generate_reply
+from desktop.controllers.call_worker import VoiceCallWorker
 from desktop.controllers.model_service_worker import ModelServiceWorker
 from desktop.controllers.voice_worker import (
     SynthesisPipeline,
@@ -27,7 +28,11 @@ from runtime.common.config import load_flat_yaml
 from runtime.conversation import Conversation, ConversationStore, Message
 from runtime.core.models import new_request_id
 from runtime.audio.audio_format import persist_chat_wav
+from runtime.audio.player import play_wav
 from runtime.audio.recorder import ButtonRecorder, RecordingResult
+from runtime.audio.vad_recorder import RealtimeVadRecorder, VadConfig
+from runtime.calls import CallSession, CallStore
+from runtime.calls.preferences import load_call_preferences
 from runtime.gpt_sovits import model_registry as tts_registry
 from runtime.gpt_sovits.server_manager import (
     gpt_sovits_server_matches,
@@ -42,6 +47,7 @@ DEFAULT_STATE_PATH = PROJECT_ROOT / "storage" / "desktop" / "state.json"
 DEFAULT_LOG_PATH = PROJECT_ROOT / "storage" / "logs" / "desktop.log"
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "storage" / "database" / "alysia.db"
 DEFAULT_CHAT_RECORDINGS_PATH = PROJECT_ROOT / "storage" / "recordings" / "chat"
+DEFAULT_CALLS_PATH = PROJECT_ROOT / "storage" / "calls"
 
 
 def discover_character(character_id: str) -> tuple[str, str]:
@@ -182,6 +188,13 @@ class AppController(QObject):
     conversations_changed = Signal(object)
     messages_changed = Signal(object)
     recording_changed = Signal(bool, int, float)
+    call_started = Signal(object)
+    call_state_changed = Signal(str, str)
+    call_level_changed = Signal(float)
+    call_transcript_changed = Signal(str)
+    call_reply_changed = Signal(str)
+    call_error = Signal(str)
+    call_finished = Signal(object)
 
     def __init__(
         self,
@@ -194,6 +207,9 @@ class AppController(QObject):
         voice_pipeline: VoicePipeline = generate_voice_reply,
         synthesis_pipeline: SynthesisPipeline = synthesize_voice_reply,
         chat_recordings_path: str | Path = DEFAULT_CHAT_RECORDINGS_PATH,
+        call_recorder_factory: Callable[..., object] = RealtimeVadRecorder,
+        call_player: Callable[..., None] = play_wav,
+        calls_path: str | Path = DEFAULT_CALLS_PATH,
     ) -> None:
         super().__init__(parent)
         self.state = state or AppState()
@@ -203,6 +219,9 @@ class AppController(QObject):
         self.voice_pipeline = voice_pipeline
         self.synthesis_pipeline = synthesis_pipeline
         self.chat_recordings_path = Path(chat_recordings_path)
+        self.call_recorder_factory = call_recorder_factory
+        self.call_player = call_player
+        self.calls_path = Path(calls_path)
         self._unsubscribe = self.state.subscribe(self.state_changed.emit)
         self._startup_thread: QThread | None = None
         self._startup_worker: StartupWorker | None = None
@@ -229,6 +248,9 @@ class AppController(QObject):
         self._service_thread: QThread | None = None
         self._service_worker: ModelServiceWorker | None = None
         self._service_action = ""
+        self._call_thread: QThread | None = None
+        self._call_worker: VoiceCallWorker | None = None
+        self._call_summary = None
         self._select_initial_conversation()
 
     def start(self, character_id: str = "") -> None:
@@ -878,6 +900,121 @@ class AppController(QObject):
         elif self.state.snapshot.status is AppStatus.PLAYING:
             self.state.set_status(AppStatus.IDLE, "语音播放已停止")
 
+    def start_voice_call(self) -> None:
+        """Start one cancellable half-duplex call on a dedicated worker thread."""
+        snapshot = self.state.snapshot
+        if (
+            self._call_thread is not None
+            or not snapshot.chat_enabled
+            or self._recorder is not None
+            or self._chat_thread is not None
+            or self._voice_thread is not None
+        ):
+            return
+        conversation = self.conversations.get_conversation(snapshot.session_id)
+        if conversation is None or conversation.character_id != snapshot.character_id:
+            conversation = self.conversations.latest_or_create(snapshot.character_id)
+            self.state.update(session_id=conversation.id)
+        audio_config = load_flat_yaml(PROJECT_ROOT / "configs" / "runtime" / "audio.yaml")
+        try:
+            recorder = self.call_recorder_factory(
+                config=VadConfig(
+                    sample_rate=16000,
+                    channels=1,
+                    frame_ms=30,
+                    pre_roll_ms=450,
+                ),
+                input_device=audio_config.get("input_device"),
+            )
+        except TypeError:
+            # Small injected test doubles may not accept runtime configuration.
+            recorder = self.call_recorder_factory()
+        preferences = load_call_preferences(PROJECT_ROOT / "storage" / "desktop" / "settings.json")
+        session = CallSession(
+            character_id=snapshot.character_id,
+            conversation_id=conversation.id,
+            qwen_model_id=snapshot.qwen_model,
+            tts_model_id=snapshot.tts_model,
+            history=self.conversations.context_messages(conversation.id, max_turns=8),
+            recorder=recorder,
+            pipeline=self.voice_pipeline,
+            player=self.call_player,
+            store=CallStore(self.calls_path),
+            save_audio=bool(preferences.get("save_call_audio", True)),
+            echo_guard_seconds=float(audio_config.get("call_echo_guard_ms") or 180) / 1000,
+            output_device=audio_config.get("output_device"),
+        )
+        thread = QThread(self)
+        worker = VoiceCallWorker(session)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.state_changed.connect(self._on_call_state)
+        worker.level_changed.connect(self.call_level_changed)
+        worker.transcript_changed.connect(self.call_transcript_changed)
+        worker.reply_changed.connect(self.call_reply_changed)
+        worker.recoverable_error.connect(self.call_error)
+        worker.completed.connect(self._on_call_completed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._call_thread_finished)
+        self._call_thread = thread
+        self._call_worker = worker
+        self._call_summary = None
+        self.state.set_status(AppStatus.CALLING, "正在连接语音通话…")
+        self.call_started.emit(
+            {
+                "character_id": snapshot.character_id,
+                "character_name": snapshot.character_name,
+                "qwen_model": snapshot.qwen_model,
+                "tts_model": snapshot.tts_model,
+            }
+        )
+        thread.start()
+
+    def end_voice_call(self) -> None:
+        worker = self._call_worker
+        if worker is not None:
+            worker.stop()
+            self.call_state_changed.emit("ending", "正在结束通话…")
+
+    def set_call_muted(self, muted: bool) -> None:
+        if self._call_worker is not None:
+            self._call_worker.set_muted(muted)
+
+    def set_call_volume(self, value: int | float) -> None:
+        if self._call_worker is not None:
+            numeric = float(value)
+            self._call_worker.set_volume(numeric / 100.0 if numeric > 1.0 else numeric)
+
+    @Slot(str, str)
+    def _on_call_state(self, state: str, detail: str) -> None:
+        if self._shutting_down:
+            return
+        self.state.set_status(AppStatus.CALLING, detail)
+        self.call_state_changed.emit(state, detail)
+
+    @Slot(object)
+    def _on_call_completed(self, summary) -> None:
+        self._call_summary = summary
+        self.call_finished.emit(summary)
+
+    @Slot()
+    def _call_thread_finished(self) -> None:
+        thread = self._call_thread
+        self._call_thread = None
+        self._call_worker = None
+        if thread is not None:
+            thread.deleteLater()
+        if self._shutting_down:
+            return
+        summary = self._call_summary
+        if summary is not None and summary.status == "failed":
+            self.state.set_error(f"语音通话已结束：{summary.error or '音频设备异常'}")
+        else:
+            turns = int(getattr(summary, "turn_count", 0)) if summary is not None else 0
+            self.state.set_status(AppStatus.IDLE, f"语音通话已结束，共 {turns} 个回合")
+        self._call_summary = None
+
     def toggle_model_service(self) -> None:
         if self.state.snapshot.model_service_running:
             self.stop_model_service()
@@ -1077,6 +1214,8 @@ class AppController(QObject):
             except Exception:
                 logging.getLogger(__name__).exception("Failed to cancel recording during shutdown")
             self._clear_recording()
+        if self._call_worker is not None:
+            self._call_worker.stop()
         for process in tuple(self._processes):
             if process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
@@ -1098,6 +1237,10 @@ class AppController(QObject):
         if voice_thread is not None and voice_thread.isRunning():
             voice_thread.quit()
             voice_thread.wait(timeout_ms)
+        call_thread = self._call_thread
+        if call_thread is not None and call_thread.isRunning():
+            call_thread.quit()
+            call_thread.wait(timeout_ms)
         service_thread = self._service_thread
         if service_thread is not None and service_thread.isRunning():
             if self._service_worker is not None:
@@ -1118,6 +1261,8 @@ class AppController(QObject):
             chat_thread.wait(max(timeout_ms, 5000))
         if voice_thread is not None and voice_thread.isRunning():
             voice_thread.wait(max(timeout_ms, 5000))
+        if call_thread is not None and call_thread.isRunning():
+            call_thread.wait(max(timeout_ms, 5000))
         if service_thread is not None and service_thread.isRunning():
             service_thread.wait(max(timeout_ms, 5000))
         self.state.update(model_service_running=False)

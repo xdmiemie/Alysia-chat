@@ -4,16 +4,17 @@ This repository follows the staged plan in `项目阶段要求-独立应用版.m
 
 Stage 0 establishes the project skeleton, configuration files, environment
 definitions, model manifests, Git repository, and diagnostics. Stages 1-10 build
-the shared local runtime and reusable `AlysiaCore`; Stages 11-13 add the independent
-Windows desktop application shell, persistent chat, and voice-message bubbles.
+the shared local runtime and reusable `AlysiaCore`; Stages 11-14 add the independent
+Windows desktop application shell, persistent chat, voice-message bubbles, and
+half-duplex realtime voice calls.
 
 ## Stage Roadmap
 
-Stages 0-13 are complete. The independent desktop roadmap continues with realtime
-voice calls in Stage 14. See
+Stages 0-14 are complete. The independent desktop roadmap continues with character
+resource management in Stage 15. See
 `项目阶段要求-独立应用版.md` for the full plan.
 
-## Desktop Application (Stages 11-13)
+## Desktop Application (Stages 11-14)
 
 Install the lightweight GUI dependency into the Python 3.10 environment, then
 start Alysia Studio from the repository root:
@@ -45,6 +46,18 @@ single-stream playback, pause, seek, replay, transcript toggling, and AI voice
 regeneration. ASR, Qwen3, and GPT-SoVITS processing remains on a worker thread;
 silent/too-short recordings and unavailable or missing audio files produce a
 visible error instead of entering the model pipeline or crashing the app.
+
+Stage 14 enables **发起语音通话** after the model services pass their health
+checks. Calls run continuously on a worker thread in a stable half-duplex loop:
+16 kHz mono VAD capture, SenseVoice, Qwen3, GPT-SoVITS, speaker playback, then a
+short echo-protection delay before the microphone is reopened. The call panel
+shows duration, live input level, state, transcript, and the character reply,
+with microphone mute, speaker volume, and end controls. A failed inference turn
+is recorded and returns to listening; ending a call cancels capture/playback and
+releases the audio streams. History is written to
+`storage/calls/<call_id>/call.json` and `turns.jsonl`, with optional user and
+assistant audio. Audio retention can be disabled in Settings while preserving
+text, timing, character, and model-version history.
 
 ## Clone-To-Code Quickstart
 
