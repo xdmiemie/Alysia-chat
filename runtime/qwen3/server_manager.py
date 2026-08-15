@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Event
 
 from runtime.qwen3.model_registry import Qwen3ModelEntry
+from runtime.common.http import urlopen
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -164,7 +165,7 @@ def stop_qwen_server(*, base_url: str = "http://127.0.0.1:8080") -> bool:
 
 def _get_json(url: str, timeout: float) -> dict[str, object] | None:
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urlopen(url, timeout=timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError):
         return None

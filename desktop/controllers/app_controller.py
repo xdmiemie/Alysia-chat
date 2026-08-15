@@ -4,18 +4,35 @@ import json
 import logging
 from pathlib import Path
 from threading import Event
-from typing import Iterable
+from typing import Callable, Iterable
+from uuid import uuid4
 
-from PySide6.QtCore import QObject, QProcess, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QProcess, QThread, QTimer, Signal, Slot
 
 from desktop.controllers.chat_worker import ChatWorker, ReplyFactory, generate_reply
 from desktop.controllers.model_service_worker import ModelServiceWorker
+from desktop.controllers.voice_worker import (
+    SynthesisPipeline,
+    VoiceChatWorker,
+    VoicePipeline,
+    VoicePipelineResult,
+    VoicePipelineFailure,
+    VoiceSynthesisWorker,
+    generate_voice_reply,
+    synthesize_voice_reply,
+)
 from desktop.state import AppSnapshot, AppState, AppStatus, Workspace
 from desktop.state.events import StartupResult
 from runtime.common.config import load_flat_yaml
 from runtime.conversation import Conversation, ConversationStore, Message
 from runtime.core.models import new_request_id
+from runtime.audio.audio_format import persist_chat_wav
+from runtime.audio.recorder import ButtonRecorder, RecordingResult
 from runtime.gpt_sovits import model_registry as tts_registry
+from runtime.gpt_sovits.server_manager import (
+    gpt_sovits_server_matches,
+    stop_gpt_sovits_server,
+)
 from runtime.qwen3 import model_registry as qwen_registry
 from runtime.qwen3.server_manager import qwen_server_matches, stop_qwen_server
 from runtime.qwen3.types import CharacterReply
@@ -24,6 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STATE_PATH = PROJECT_ROOT / "storage" / "desktop" / "state.json"
 DEFAULT_LOG_PATH = PROJECT_ROOT / "storage" / "logs" / "desktop.log"
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "storage" / "database" / "alysia.db"
+DEFAULT_CHAT_RECORDINGS_PATH = PROJECT_ROOT / "storage" / "recordings" / "chat"
 
 
 def discover_character(character_id: str) -> tuple[str, str]:
@@ -163,6 +181,7 @@ class AppController(QObject):
     log_requested = Signal(str)
     conversations_changed = Signal(object)
     messages_changed = Signal(object)
+    recording_changed = Signal(bool, int, float)
 
     def __init__(
         self,
@@ -171,11 +190,19 @@ class AppController(QObject):
         *,
         conversation_store: ConversationStore | None = None,
         reply_factory: ReplyFactory = generate_reply,
+        recorder_factory: Callable[..., ButtonRecorder] = ButtonRecorder,
+        voice_pipeline: VoicePipeline = generate_voice_reply,
+        synthesis_pipeline: SynthesisPipeline = synthesize_voice_reply,
+        chat_recordings_path: str | Path = DEFAULT_CHAT_RECORDINGS_PATH,
     ) -> None:
         super().__init__(parent)
         self.state = state or AppState()
         self.conversations = conversation_store or ConversationStore(DEFAULT_DATABASE_PATH)
         self.reply_factory = reply_factory
+        self.recorder_factory = recorder_factory
+        self.voice_pipeline = voice_pipeline
+        self.synthesis_pipeline = synthesis_pipeline
+        self.chat_recordings_path = Path(chat_recordings_path)
         self._unsubscribe = self.state.subscribe(self.state_changed.emit)
         self._startup_thread: QThread | None = None
         self._startup_worker: StartupWorker | None = None
@@ -187,6 +214,18 @@ class AppController(QObject):
         self._pending_request: dict[str, str] = {}
         self._chat_result_error = ""
         self._chat_result_succeeded = False
+        self._voice_thread: QThread | None = None
+        self._voice_worker: VoiceChatWorker | VoiceSynthesisWorker | None = None
+        self._voice_pending: dict[str, str] = {}
+        self._voice_result_error = ""
+        self._voice_result_succeeded = False
+        self._regenerate_message_id = ""
+        self._recorder: ButtonRecorder | None = None
+        self._recording_message_id = ""
+        self._recording_conversation_id = ""
+        self._recording_timer = QTimer(self)
+        self._recording_timer.setInterval(50)
+        self._recording_timer.timeout.connect(self._emit_recording_progress)
         self._service_thread: QThread | None = None
         self._service_worker: ModelServiceWorker | None = None
         self._service_action = ""
@@ -237,6 +276,8 @@ class AppController(QObject):
         try:
             service_running = qwen_server_matches(
                 qwen_registry.find_model(result.character_id, result.qwen_model)
+            ) and gpt_sovits_server_matches(
+                tts_registry.find_model(result.character_id, result.tts_model)
             )
         except Exception:
             service_running = False
@@ -475,6 +516,368 @@ class AppController(QObject):
         self._chat_worker = worker
         thread.start()
 
+    def start_voice_recording(self) -> None:
+        """Begin click-to-record capture; failures stay visible in app state."""
+        if (
+            not self.state.snapshot.chat_enabled
+            or self._recorder is not None
+            or self._chat_thread is not None
+            or self._voice_thread is not None
+        ):
+            return
+        snapshot = self.state.snapshot
+        conversation = self.conversations.get_conversation(snapshot.session_id)
+        if conversation is None or conversation.character_id != snapshot.character_id:
+            conversation = self.conversations.latest_or_create(snapshot.character_id)
+            self.state.update(session_id=conversation.id)
+        audio_config = load_flat_yaml(PROJECT_ROOT / "configs" / "runtime" / "audio.yaml")
+        try:
+            recorder = self.recorder_factory(
+                sample_rate=16000,
+                channels=1,
+                input_device=audio_config.get("input_device"),
+                max_duration_seconds=float(audio_config.get("chat_max_recording_seconds") or 60),
+            )
+            recorder.start()
+        except Exception as exc:
+            self.state.set_error(f"录音设备不可用：{exc}")
+            return
+        self._recorder = recorder
+        self._recording_message_id = uuid4().hex
+        self._recording_conversation_id = conversation.id
+        self.state.set_status(AppStatus.RECORDING, "正在录音；再次点击结束")
+        self._recording_timer.start()
+        self.recording_changed.emit(True, 0, 0.0)
+
+    def stop_voice_recording(self) -> None:
+        recorder = self._recorder
+        if recorder is None:
+            return
+        self._recording_timer.stop()
+        try:
+            result = recorder.stop_chat_message(
+                self.chat_recordings_path,
+                self._recording_conversation_id,
+                self._recording_message_id,
+            )
+        except Exception as exc:
+            self._clear_recording()
+            self.state.set_error(f"保存录音失败：{exc}")
+            return
+        conversation_id = self._recording_conversation_id
+        message_id = self._recording_message_id
+        self._clear_recording()
+        self._submit_voice_recording(conversation_id, message_id, result)
+
+    def cancel_voice_recording(self) -> None:
+        if self._recorder is None:
+            return
+        self._recording_timer.stop()
+        try:
+            self._recorder.cancel()
+        finally:
+            self._clear_recording()
+        self.state.set_status(AppStatus.IDLE, "录音已取消")
+
+    def send_voice_file(self, audio_path: str | Path) -> None:
+        """Normalize and submit an existing WAV (also useful for headless QA)."""
+        if not self.state.snapshot.chat_enabled or self._voice_thread is not None:
+            return
+        snapshot = self.state.snapshot
+        conversation = self.conversations.get_conversation(snapshot.session_id)
+        if conversation is None or conversation.character_id != snapshot.character_id:
+            conversation = self.conversations.latest_or_create(snapshot.character_id)
+            self.state.update(session_id=conversation.id)
+        message_id = uuid4().hex
+        try:
+            raw_path, normalized_path, metrics = persist_chat_wav(
+                audio_path,
+                self.chat_recordings_path,
+                conversation.id,
+                message_id,
+            )
+            result = RecordingResult(
+                normalized_path,
+                normalized_path.with_name("metrics.json"),
+                metrics,
+            )
+            self._submit_voice_recording(conversation.id, message_id, result, raw_path=raw_path)
+        except Exception as exc:
+            self.state.set_error(f"语音文件不可用：{exc}")
+
+    def _submit_voice_recording(
+        self,
+        conversation_id: str,
+        message_id: str,
+        recording: RecordingResult,
+        *,
+        raw_path: Path | None = None,
+    ) -> None:
+        sense_config = load_flat_yaml(PROJECT_ROOT / "configs" / "runtime" / "sensevoice.yaml")
+        min_duration = int(sense_config.get("min_duration_ms") or 300)
+        silence_threshold = float(sense_config.get("silence_peak_threshold") or 0.002)
+        duration_ms = int(recording.metrics.duration_seconds * 1000)
+        if duration_ms < min_duration:
+            self.state.set_error(f"录音太短，请至少录制 {min_duration / 1000:.1f} 秒")
+            return
+        if recording.metrics.peak_normalized <= silence_threshold:
+            self.state.set_error("没有检测到声音，录音未发送")
+            return
+        snapshot = self.state.snapshot
+        history = self.conversations.context_messages(conversation_id, max_turns=8)
+        request_id = new_request_id()
+        user_message = self.conversations.add_voice_message(
+            conversation_id,
+            "user",
+            recording.wav_path,
+            "",
+            message_id=message_id,
+            character_id=snapshot.character_id,
+            request_id=request_id,
+            status="pending",
+            duration_ms=duration_ms,
+            sample_rate=recording.metrics.sample_rate,
+            metadata={"raw_audio_path": str(raw_path or recording.wav_path.with_name("raw.wav"))},
+        )
+        assistant_message_id = uuid4().hex
+        output_path = (
+            self.chat_recordings_path
+            / conversation_id
+            / assistant_message_id
+            / "reply.wav"
+        )
+        self._voice_pending = {
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "character_id": snapshot.character_id,
+            "qwen_model_id": snapshot.qwen_model,
+            "tts_model_id": snapshot.tts_model,
+            "user_message_id": user_message.id,
+            "assistant_message_id": assistant_message_id,
+        }
+        self._voice_result_error = ""
+        self._voice_result_succeeded = False
+        self.refresh_chat()
+        self.state.set_status(AppStatus.TRANSCRIBING, "正在识别语音…")
+        thread = QThread(self)
+        worker = VoiceChatWorker(
+            character_id=snapshot.character_id,
+            qwen_model_id=snapshot.qwen_model,
+            tts_model_id=snapshot.tts_model,
+            audio_path=str(recording.wav_path),
+            output_path=str(output_path),
+            history=history,
+            pipeline=self.voice_pipeline,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_voice_progress)
+        worker.succeeded.connect(self._on_voice_succeeded)
+        worker.failed.connect(self._on_voice_failed)
+        worker.failed_with_context.connect(self._on_voice_failed_with_context)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._voice_thread_finished)
+        self._voice_thread = thread
+        self._voice_worker = worker
+        thread.start()
+
+    @Slot()
+    def _emit_recording_progress(self) -> None:
+        recorder = self._recorder
+        if recorder is None:
+            return
+        elapsed_ms = int(recorder.elapsed_seconds * 1000)
+        self.recording_changed.emit(True, elapsed_ms, recorder.level)
+        if recorder.reached_max_duration:
+            self.stop_voice_recording()
+
+    def _clear_recording(self) -> None:
+        self._recorder = None
+        self._recording_message_id = ""
+        self._recording_conversation_id = ""
+        self.recording_changed.emit(False, 0, 0.0)
+
+    @Slot(str)
+    def _on_voice_progress(self, stage: str) -> None:
+        if self._shutting_down:
+            return
+        if stage == "transcribing":
+            self.state.set_status(AppStatus.TRANSCRIBING, "正在识别语音…")
+        elif stage == "generating":
+            self.state.set_status(AppStatus.GENERATING_REPLY, "正在生成语音回复…")
+        elif stage == "synthesizing":
+            self.state.set_status(AppStatus.SYNTHESIZING, "正在合成语音…")
+
+    @Slot(object)
+    def _on_voice_succeeded(self, result: VoicePipelineResult) -> None:
+        if self._shutting_down or not self._voice_pending:
+            return
+        pending = dict(self._voice_pending)
+        self.conversations.update_message(
+            pending["user_message_id"],
+            text=result.transcript,
+            status="completed",
+        )
+        self.conversations.add_voice_message(
+            pending["conversation_id"],
+            "assistant",
+            result.audio_path,
+            result.reply_text,
+            message_id=pending["assistant_message_id"],
+            character_id=pending["character_id"],
+            model_version=pending["qwen_model_id"],
+            tts_model_version=result.tts_model_version,
+            request_id=pending["request_id"],
+            parent_message_id=pending["user_message_id"],
+            duration_ms=result.duration_ms,
+            sample_rate=result.sample_rate,
+            emotion=result.emotion,
+            reference_audio=result.reference_audio,
+            synthesis_ms=result.synthesis_ms,
+            metadata=result.metadata,
+        )
+        self._voice_result_succeeded = True
+        self.refresh_chat()
+
+    @Slot(str)
+    def _on_voice_failed(self, error: str) -> None:
+        if self._shutting_down or not self._voice_pending:
+            return
+        self.conversations.update_message(
+            self._voice_pending["user_message_id"],
+            status="failed",
+            metadata={"error": error},
+        )
+        self._voice_result_error = error
+        self.refresh_chat()
+
+    @Slot(object)
+    def _on_voice_failed_with_context(self, failure: VoicePipelineFailure) -> None:
+        if self._shutting_down or not self._voice_pending:
+            return
+        pending = dict(self._voice_pending)
+        if failure.transcript:
+            self.conversations.update_message(
+                pending["user_message_id"],
+                text=failure.transcript,
+                status="completed",
+            )
+        else:
+            self.conversations.update_message(
+                pending["user_message_id"],
+                status="failed",
+                metadata={"error": str(failure)},
+            )
+        if failure.reply_text:
+            output_path = (
+                self.chat_recordings_path
+                / pending["conversation_id"]
+                / pending["assistant_message_id"]
+                / "reply.wav"
+            )
+            self.conversations.add_voice_message(
+                pending["conversation_id"],
+                "assistant",
+                output_path,
+                failure.reply_text,
+                message_id=pending["assistant_message_id"],
+                character_id=pending["character_id"],
+                model_version=pending["qwen_model_id"],
+                tts_model_version=pending["tts_model_id"],
+                request_id=pending["request_id"],
+                parent_message_id=pending["user_message_id"],
+                emotion=failure.emotion,
+                status="failed",
+                metadata={"error": str(failure), "failed_stage": failure.stage},
+            )
+        self._voice_result_error = str(failure)
+        self.refresh_chat()
+
+    @Slot()
+    def _voice_thread_finished(self) -> None:
+        thread = self._voice_thread
+        self._voice_worker = None
+        self._voice_thread = None
+        self._voice_pending = {}
+        self._regenerate_message_id = ""
+        if thread is not None:
+            thread.deleteLater()
+        if not self._shutting_down:
+            if self._voice_result_error:
+                self.state.set_error(f"语音消息处理失败：{self._voice_result_error}")
+            elif self._voice_result_succeeded:
+                self.state.set_status(AppStatus.IDLE, "语音回复已生成")
+        self._voice_result_error = ""
+        self._voice_result_succeeded = False
+
+    def regenerate_voice(self, message_id: str) -> None:
+        message = self.conversations.get_message(message_id)
+        if (
+            message is None
+            or message.role != "assistant"
+            or message.message_type != "voice"
+            or not message.text.strip()
+            or self._voice_thread is not None
+            or not self.state.snapshot.controls_enabled
+        ):
+            return
+        snapshot = self.state.snapshot
+        self._regenerate_message_id = message.id
+        self._voice_result_error = ""
+        self._voice_result_succeeded = False
+        self.state.set_status(AppStatus.SYNTHESIZING, "正在重新生成语音…")
+        thread = QThread(self)
+        worker = VoiceSynthesisWorker(
+            pipeline=self.synthesis_pipeline,
+            character_id=message.character_id or snapshot.character_id,
+            tts_model_id=snapshot.tts_model,
+            text=message.text,
+            emotion=message.emotion or "neutral",
+            output_path=message.audio_path,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._on_regeneration_succeeded)
+        worker.failed.connect(self._on_voice_failed_regeneration)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._voice_thread_finished)
+        self._voice_thread = thread
+        self._voice_worker = worker
+        thread.start()
+
+    @Slot(object)
+    def _on_regeneration_succeeded(self, result: VoicePipelineResult) -> None:
+        if not self._regenerate_message_id:
+            return
+        self.conversations.update_message(
+            self._regenerate_message_id,
+            audio_path=result.audio_path,
+            duration_ms=result.duration_ms,
+            sample_rate=result.sample_rate,
+            emotion=result.emotion,
+            reference_audio=result.reference_audio,
+            tts_model_version=result.tts_model_version,
+            synthesis_ms=result.synthesis_ms,
+            metadata=result.metadata,
+            status="completed",
+        )
+        self._voice_result_succeeded = True
+        self.refresh_chat()
+
+    @Slot(str)
+    def _on_voice_failed_regeneration(self, error: str) -> None:
+        self._voice_result_error = error
+
+    def set_voice_playing(self, playing: bool) -> None:
+        if self._shutting_down or self._recorder is not None:
+            return
+        if playing:
+            self.state.set_status(AppStatus.PLAYING, "正在播放语音消息…")
+        elif self.state.snapshot.status is AppStatus.PLAYING:
+            self.state.set_status(AppStatus.IDLE, "语音播放已停止")
+
     def toggle_model_service(self) -> None:
         if self.state.snapshot.model_service_running:
             self.stop_model_service()
@@ -491,7 +894,12 @@ class AppController(QObject):
                 return
             snapshot = self.state.snapshot
         self.state.set_status(AppStatus.STARTING_SERVICE, "正在启动并检查 Qwen3 模型…")
-        self._start_service_worker("start", snapshot.character_id, snapshot.qwen_model)
+        self._start_service_worker(
+            "start",
+            snapshot.character_id,
+            snapshot.qwen_model,
+            snapshot.tts_model,
+        )
 
     def stop_model_service(self) -> None:
         if self._service_thread is not None or not self.state.snapshot.controls_enabled:
@@ -502,9 +910,15 @@ class AppController(QObject):
         self.state.set_status(AppStatus.STARTING_SERVICE, "正在关闭 Qwen3 模型…")
         self._start_service_worker("stop")
 
-    def _start_service_worker(self, action: str, character_id: str = "", model_id: str = "") -> None:
+    def _start_service_worker(
+        self,
+        action: str,
+        character_id: str = "",
+        model_id: str = "",
+        tts_model_id: str = "",
+    ) -> None:
         thread = QThread(self)
-        worker = ModelServiceWorker(action, character_id, model_id)
+        worker = ModelServiceWorker(action, character_id, model_id, tts_model_id)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.succeeded.connect(self._on_service_succeeded)
@@ -522,7 +936,7 @@ class AppController(QObject):
         if self._shutting_down:
             return
         self.state.update(model_service_running=running)
-        detail = "Qwen3 模型已启动，可以开始聊天" if running else "Qwen3 模型已关闭"
+        detail = "Qwen3 与 GPT-SoVITS 已启动，可以开始聊天" if running else "模型服务已关闭"
         self.state.set_status(AppStatus.IDLE, detail)
 
     @Slot(str)
@@ -656,6 +1070,13 @@ class AppController(QObject):
             return
         self._shutting_down = True
         self._startup_cancelled.set()
+        self._recording_timer.stop()
+        if self._recorder is not None:
+            try:
+                self._recorder.cancel()
+            except Exception:
+                logging.getLogger(__name__).exception("Failed to cancel recording during shutdown")
+            self._clear_recording()
         for process in tuple(self._processes):
             if process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
@@ -673,6 +1094,10 @@ class AppController(QObject):
             # finish; Qt threads cannot be killed safely.
             chat_thread.quit()
             chat_thread.wait(timeout_ms)
+        voice_thread = self._voice_thread
+        if voice_thread is not None and voice_thread.isRunning():
+            voice_thread.quit()
+            voice_thread.wait(timeout_ms)
         service_thread = self._service_thread
         if service_thread is not None and service_thread.isRunning():
             if self._service_worker is not None:
@@ -683,8 +1108,16 @@ class AppController(QObject):
             stop_qwen_server()
         except Exception:
             logging.getLogger(__name__).exception("Failed to stop Qwen3 service during shutdown")
+        try:
+            stop_gpt_sovits_server()
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to stop GPT-SoVITS service during shutdown"
+            )
         if chat_thread is not None and chat_thread.isRunning():
             chat_thread.wait(max(timeout_ms, 5000))
+        if voice_thread is not None and voice_thread.isRunning():
+            voice_thread.wait(max(timeout_ms, 5000))
         if service_thread is not None and service_thread.isRunning():
             service_thread.wait(max(timeout_ms, 5000))
         self.state.update(model_service_running=False)

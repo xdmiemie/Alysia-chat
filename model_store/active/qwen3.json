@@ -1,15 +1,15 @@
 {
   "model_type": "qwen3",
-  "character_id": "fish",
+  "character_id": "elysia",
   "model_id": "qwen3-8b-q4-k-m-base-v1",
   "version": "qwen3-8b-q4-k-m-base-v1",
   "model_format": "gguf",
   "required_files": [
     "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf"
   ],
-  "registry_manifest": "model_store/registry/qwen3/fish/models.json",
+  "registry_manifest": "model_store/registry/qwen3/elysia/models.json",
   "runtime": {
     "model_file": "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf"
   },
-  "activated_at": "2026-08-15T08:36:57.858363+00:00"
+  "activated_at": "2026-08-15T09:21:04.934187+00:00"
 }

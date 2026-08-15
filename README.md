@@ -4,16 +4,16 @@ This repository follows the staged plan in `项目阶段要求-独立应用版.m
 
 Stage 0 establishes the project skeleton, configuration files, environment
 definitions, model manifests, Git repository, and diagnostics. Stages 1-10 build
-the shared local runtime and reusable `AlysiaCore`; Stages 11-12 add the independent
-Windows desktop application shell and persistent text chat.
+the shared local runtime and reusable `AlysiaCore`; Stages 11-13 add the independent
+Windows desktop application shell, persistent chat, and voice-message bubbles.
 
 ## Stage Roadmap
 
-Stages 0-12 are complete. The independent desktop roadmap continues with voice
-messages in Stage 13 and realtime voice calls in Stage 14. See
+Stages 0-13 are complete. The independent desktop roadmap continues with realtime
+voice calls in Stage 14. See
 `项目阶段要求-独立应用版.md` for the full plan.
 
-## Desktop Application (Stages 11-12)
+## Desktop Application (Stages 11-13)
 
 Install the lightweight GUI dependency into the Python 3.10 environment, then
 start Alysia Studio from the repository root:
@@ -30,10 +30,21 @@ conversation actions, retry/copy message actions, and validated Qwen3 and
 GPT-SoVITS model selection. Chat history is stored locally in
 `storage/database/alysia.db`. Select a character/model and click **启动模型**
 before sending the first message; the input remains disabled until the Qwen3
-health check passes. Click **关闭模型** to release GPU memory. A model started by
+and GPT-SoVITS health checks pass. Click **关闭模型** to release GPU memory. Models started by
 the desktop app is also stopped automatically when its window closes. For a
 short headless smoke test, set
 `QT_QPA_PLATFORM=offscreen` and use the internal `--smoke-test-ms` option.
+
+Stage 13 enables the microphone button beside the composer. Click once to start
+recording and again to finish, or use **取消** to discard it. The live timer and
+input meter stop automatically at the configurable
+`chat_max_recording_seconds` limit in `configs/runtime/audio.yaml`. Accepted
+recordings are normalized to 16 kHz, 16-bit mono WAV and stored under
+`storage/recordings/chat/<conversation_id>/<message_id>/`. Voice bubbles provide
+single-stream playback, pause, seek, replay, transcript toggling, and AI voice
+regeneration. ASR, Qwen3, and GPT-SoVITS processing remains on a worker thread;
+silent/too-short recordings and unavailable or missing audio files produce a
+visible error instead of entering the model pipeline or crashing the app.
 
 ## Clone-To-Code Quickstart
 

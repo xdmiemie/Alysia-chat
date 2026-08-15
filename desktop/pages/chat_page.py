@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QTextEdit,
     QVBoxLayout,
@@ -17,7 +18,9 @@ from PySide6.QtWidgets import (
 )
 
 from desktop.state import AppSnapshot
-from desktop.widgets import MessageBubble
+from desktop.controllers.audio_playback import VoicePlaybackController
+from desktop.widgets import MessageBubble, VoiceMessageBubble
+from desktop.state import AppStatus
 from runtime.conversation import Conversation, Message
 
 
@@ -42,12 +45,22 @@ class ChatPage(QWidget):
     rename_requested = Signal(str)
     delete_requested = Signal()
     clear_context_requested = Signal()
+    voice_start_requested = Signal()
+    voice_stop_requested = Signal()
+    voice_cancel_requested = Signal()
+    regenerate_voice_requested = Signal(str)
+    playback_changed = Signal(bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("chatPage")
         self._snapshot = AppSnapshot()
         self._conversations: list[Conversation] = []
+        self._voice_bubbles: dict[str, VoiceMessageBubble] = {}
+        self.playback = VoicePlaybackController(self)
+        self.playback.state_changed.connect(self._on_playback_state)
+        self.playback.position_changed.connect(self._on_playback_position)
+        self.playback.failed.connect(self._on_playback_failed)
         root = QVBoxLayout(self)
         root.setContentsMargins(30, 26, 30, 24)
         root.setSpacing(14)
@@ -125,12 +138,28 @@ class ChatPage(QWidget):
         self.input.submit_requested.connect(self._submit)
         self.voice_button = QPushButton("◉")
         self.voice_button.setObjectName("iconButton")
-        self.voice_button.setToolTip("语音气泡将在 Stage 13 开放")
-        self.voice_button.setEnabled(False)
+        self.voice_button.setToolTip("开始录音")
+        self.voice_button.clicked.connect(self._toggle_voice_recording)
+        self.recording_label = QLabel("0:00")
+        self.recording_label.setObjectName("recordingTime")
+        self.recording_label.setVisible(False)
+        self.recording_level = QProgressBar()
+        self.recording_level.setObjectName("recordingLevel")
+        self.recording_level.setRange(0, 100)
+        self.recording_level.setTextVisible(False)
+        self.recording_level.setFixedWidth(90)
+        self.recording_level.setVisible(False)
+        self.cancel_voice_button = QPushButton("取消")
+        self.cancel_voice_button.setObjectName("bubbleAction")
+        self.cancel_voice_button.setVisible(False)
+        self.cancel_voice_button.clicked.connect(self.voice_cancel_requested)
         self.send_button = QPushButton("发送  ↑")
         self.send_button.setObjectName("sendButton")
         self.send_button.clicked.connect(self._submit)
         composer_layout.addWidget(self.voice_button)
+        composer_layout.addWidget(self.recording_label)
+        composer_layout.addWidget(self.recording_level)
+        composer_layout.addWidget(self.cancel_voice_button)
         composer_layout.addWidget(self.input, 1)
         composer_layout.addWidget(self.send_button)
         root.addWidget(composer)
@@ -153,6 +182,15 @@ class ChatPage(QWidget):
             self.conversation_combo,
         ):
             button.setEnabled(snapshot.controls_enabled)
+        recording = snapshot.status is AppStatus.RECORDING
+        self.voice_button.setEnabled(snapshot.chat_enabled or recording)
+        self.voice_button.setText("■" if recording else "◉")
+        self.voice_button.setToolTip("结束录音" if recording else "开始录音")
+        self.cancel_voice_button.setEnabled(recording)
+        if not recording:
+            self.recording_label.setVisible(False)
+            self.recording_level.setVisible(False)
+            self.cancel_voice_button.setVisible(False)
         self._sync_send_button()
 
     def set_conversations(self, conversations: list[Conversation], current_id: str) -> None:
@@ -167,6 +205,8 @@ class ChatPage(QWidget):
         del blocker
 
     def set_messages(self, messages: list[Message]) -> None:
+        self.playback.stop()
+        self._voice_bubbles = {}
         while self.message_layout.count():
             item = self.message_layout.takeAt(0)
             widget = item.widget()
@@ -193,18 +233,30 @@ class ChatPage(QWidget):
             outgoing = message.role == "user"
             sender = "你" if outgoing else self._snapshot.character_name
             row = QHBoxLayout()
-            bubble = MessageBubble(
-                sender,
-                message.text,
-                outgoing=outgoing,
-                created_at=message.created_at,
-                status=message.status,
-                model_version=message.model_version,
-                request_id=message.request_id if not outgoing else "",
-                message_id=message.id,
-                avatar=self._snapshot.character_name,
-            )
-            bubble.retry_requested.connect(self.retry_requested)
+            if message.message_type == "voice":
+                bubble = VoiceMessageBubble(
+                    sender,
+                    message,
+                    outgoing=outgoing,
+                    avatar=self._snapshot.character_name,
+                )
+                bubble.play_requested.connect(self.playback.toggle)
+                bubble.seek_requested.connect(self.playback.seek)
+                bubble.regenerate_requested.connect(self.regenerate_voice_requested)
+                self._voice_bubbles[message.id] = bubble
+            else:
+                bubble = MessageBubble(
+                    sender,
+                    message.text,
+                    outgoing=outgoing,
+                    created_at=message.created_at,
+                    status=message.status,
+                    model_version=message.model_version,
+                    request_id=message.request_id if not outgoing else "",
+                    message_id=message.id,
+                    avatar=self._snapshot.character_name,
+                )
+                bubble.retry_requested.connect(self.retry_requested)
             if outgoing:
                 row.addStretch(1)
                 row.addWidget(bubble)
@@ -225,6 +277,39 @@ class ChatPage(QWidget):
         self.send_button.setEnabled(
             self._snapshot.chat_enabled and bool(self.input.toPlainText().strip())
         )
+
+    def _toggle_voice_recording(self) -> None:
+        if self._snapshot.status is AppStatus.RECORDING:
+            self.voice_stop_requested.emit()
+        elif self._snapshot.chat_enabled:
+            self.playback.stop()
+            self.voice_start_requested.emit()
+
+    def apply_recording_progress(self, recording: bool, elapsed_ms: int, level: float) -> None:
+        self.recording_label.setVisible(recording)
+        self.recording_level.setVisible(recording)
+        self.cancel_voice_button.setVisible(recording)
+        if recording:
+            seconds = max(0, elapsed_ms) // 1000
+            self.recording_label.setText(f"{seconds // 60}:{seconds % 60:02d}")
+            self.recording_level.setValue(max(0, min(100, int(level * 100))))
+
+    def _on_playback_state(self, message_id: str, playing: bool) -> None:
+        bubble = self._voice_bubbles.get(message_id)
+        if bubble is not None:
+            bubble.set_playing(playing)
+        self.playback_changed.emit(playing)
+
+    def _on_playback_position(self, message_id: str, position: int, duration: int) -> None:
+        bubble = self._voice_bubbles.get(message_id)
+        if bubble is not None:
+            bubble.set_progress(position, duration)
+
+    def _on_playback_failed(self, message_id: str, error: str) -> None:
+        bubble = self._voice_bubbles.get(message_id)
+        if bubble is not None:
+            bubble.set_playback_error(error)
+        self.playback_changed.emit(False)
 
     def _conversation_changed(self, index: int) -> None:
         conversation_id = self.conversation_combo.itemData(index) if index >= 0 else ""

@@ -9,6 +9,7 @@ from typing import Protocol
 
 from runtime.gpt_sovits.config import GPTSoVITSConfig
 from runtime.gpt_sovits.types import ReferenceAudio
+from runtime.common.http import urlopen
 
 
 class SpeechBackend(Protocol):
@@ -40,7 +41,7 @@ class GPTSoVITSHttpBackend:
         )
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(request, timeout=self.config.request_timeout_seconds) as response:
+            with urlopen(request, timeout=self.config.request_timeout_seconds) as response:
                 audio = response.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

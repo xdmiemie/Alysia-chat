@@ -9,3 +9,4 @@ output_device: null
 
 recordings_dir: storage/recordings
 play_after_recording: true
+chat_max_recording_seconds: 60

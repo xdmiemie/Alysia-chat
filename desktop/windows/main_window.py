@@ -100,10 +100,16 @@ class MainWindow(QMainWindow):
         self.chat_page.rename_requested.connect(self.controller.rename_conversation)
         self.chat_page.delete_requested.connect(self.controller.delete_current_conversation)
         self.chat_page.clear_context_requested.connect(self.controller.clear_context)
+        self.chat_page.voice_start_requested.connect(self.controller.start_voice_recording)
+        self.chat_page.voice_stop_requested.connect(self.controller.stop_voice_recording)
+        self.chat_page.voice_cancel_requested.connect(self.controller.cancel_voice_recording)
+        self.chat_page.regenerate_voice_requested.connect(self.controller.regenerate_voice)
+        self.chat_page.playback_changed.connect(self.controller.set_voice_playing)
         self.controller.log_requested.connect(self.open_logs)
         self.controller.state_changed.connect(self.apply_state)
         self.controller.conversations_changed.connect(self._apply_conversations)
         self.controller.messages_changed.connect(self.chat_page.set_messages)
+        self.controller.recording_changed.connect(self.chat_page.apply_recording_progress)
 
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self.open_settings)
         QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.controller.set_workspace(Workspace.CHAT))
@@ -166,6 +172,7 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
+        self.chat_page.playback.stop()
         self.controller.shutdown()
         event.accept()
 

@@ -173,6 +173,72 @@ QPushButton:focus {
     color: #ff8ac2;
 }
 
+#voicePlayButton {
+    background: #e867a6;
+    color: #ffffff;
+    border-radius: 18px;
+    padding: 0;
+    font-size: 15px;
+}
+
+#voicePlayButton:disabled {
+    background: #3b3b52;
+    color: #777489;
+}
+
+#voiceWaveform {
+    color: #f08aba;
+    font-size: 12px;
+    letter-spacing: 1px;
+}
+
+#voiceWaveform[playing="true"] {
+    color: #7ce0c2;
+}
+
+#voiceEmotion {
+    background: #35243f;
+    color: #f3a2c9;
+    border-radius: 8px;
+    padding: 2px 7px;
+    font-size: 10px;
+}
+
+#voiceError {
+    color: #ff8da5;
+    font-size: 11px;
+}
+
+#recordingTime {
+    color: #ff91bd;
+    font-weight: 700;
+}
+
+#recordingLevel {
+    background: #2b2b43;
+    border: 0;
+    border-radius: 4px;
+    max-height: 8px;
+}
+
+#recordingLevel::chunk {
+    background: #ef6eaa;
+    border-radius: 4px;
+}
+
+#voiceProgress::groove:horizontal {
+    background: #373750;
+    height: 4px;
+    border-radius: 2px;
+}
+
+#voiceProgress::handle:horizontal {
+    background: #f17db5;
+    width: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+
 #conversationBar {
     background: #191a30;
     border: 1px solid #30314d;

@@ -8,6 +8,7 @@ from typing import Protocol
 from runtime.qwen3.config import Qwen3Config
 from runtime.qwen3.prompt import REPLY_SCHEMA
 from runtime.qwen3.types import ChatMessage
+from runtime.common.http import urlopen
 
 
 class ChatCompletionClient(Protocol):
@@ -43,7 +44,7 @@ class LlamaServerClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.request_timeout_seconds) as response:
+            with urlopen(request, timeout=self.config.request_timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.URLError as exc:
             raise RuntimeError(f"llama-server request failed: {exc}") from exc

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -30,6 +31,44 @@ class Message:
     parent_message_id: str
     created_at: int
     status: str
+    duration_ms: int = 0
+    sample_rate: int = 0
+    emotion: str = ""
+    reference_audio: str = ""
+    tts_model_version: str = ""
+    synthesis_ms: int = 0
+    metadata: dict[str, object] | None = None
+
+    @property
+    def transcript(self) -> str:
+        return self.text
+
+
+@dataclass(frozen=True)
+class VoiceMessage:
+    """Portable voice-bubble data required by the Stage 13 UI."""
+
+    message_id: str
+    audio_path: str
+    transcript: str
+    duration_ms: int
+    sample_rate: int
+    emotion: str
+    status: str
+
+    @classmethod
+    def from_message(cls, message: Message) -> "VoiceMessage":
+        if message.message_type != "voice":
+            raise ValueError("message is not a voice message")
+        return cls(
+            message_id=message.id,
+            audio_path=message.audio_path,
+            transcript=message.text,
+            duration_ms=message.duration_ms,
+            sample_rate=message.sample_rate,
+            emotion=message.emotion,
+            status=message.status,
+        )
 
 
 class ConversationStore:
@@ -77,9 +116,31 @@ class ConversationStore:
                     parent_message_id TEXT,
                     created_at INTEGER NOT NULL,
                     status TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    sample_rate INTEGER NOT NULL DEFAULT 0,
+                    emotion TEXT NOT NULL DEFAULT '',
+                    reference_audio TEXT NOT NULL DEFAULT '',
+                    tts_model_version TEXT NOT NULL DEFAULT '',
+                    synthesis_ms INTEGER NOT NULL DEFAULT 0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
                     FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
                 );
 
+                """
+            )
+            # A process exit cannot resume an in-flight ASR/TTS worker. Make
+            # those bubbles explicitly retryable instead of leaving history
+            # forever in a misleading "处理中" state after restart.
+            connection.execute(
+                """
+                UPDATE messages
+                SET status = 'failed',
+                    text = CASE
+                        WHEN text IS NULL OR text = '' OR text = '正在识别…'
+                        THEN '上次语音处理未完成'
+                        ELSE text
+                    END
+                WHERE status = 'pending' AND message_type = 'voice'
                 """
             )
             # Databases made by early development builds only had the columns
@@ -92,6 +153,13 @@ class ConversationStore:
                 ("character_id", "TEXT NOT NULL DEFAULT ''"),
                 ("request_id", "TEXT"),
                 ("parent_message_id", "TEXT"),
+                ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
+                ("sample_rate", "INTEGER NOT NULL DEFAULT 0"),
+                ("emotion", "TEXT NOT NULL DEFAULT ''"),
+                ("reference_audio", "TEXT NOT NULL DEFAULT ''"),
+                ("tts_model_version", "TEXT NOT NULL DEFAULT ''"),
+                ("synthesis_ms", "INTEGER NOT NULL DEFAULT 0"),
+                ("metadata_json", "TEXT NOT NULL DEFAULT '{}'"),
             ):
                 if name not in existing:
                     connection.execute(f"ALTER TABLE messages ADD COLUMN {name} {declaration}")
@@ -171,6 +239,13 @@ class ConversationStore:
         parent_message_id: str = "",
         status: str = "completed",
         message_id: str | None = None,
+        duration_ms: int = 0,
+        sample_rate: int = 0,
+        emotion: str = "",
+        reference_audio: str = "",
+        tts_model_version: str = "",
+        synthesis_ms: int = 0,
+        metadata: dict[str, object] | None = None,
     ) -> Message:
         if role not in {"user", "assistant", "system"}:
             raise ValueError(f"unsupported message role: {role}")
@@ -190,6 +265,13 @@ class ConversationStore:
             parent_message_id=parent_message_id,
             created_at=now,
             status=status,
+            duration_ms=max(0, int(duration_ms)),
+            sample_rate=max(0, int(sample_rate)),
+            emotion=emotion,
+            reference_audio=reference_audio,
+            tts_model_version=tts_model_version,
+            synthesis_ms=max(0, int(synthesis_ms)),
+            metadata=dict(metadata or {}),
         )
         with self._connect() as connection:
             if connection.execute(
@@ -201,8 +283,9 @@ class ConversationStore:
                 INSERT INTO messages(
                     id, conversation_id, role, message_type, text, audio_path,
                     character_id, model_version, request_id, parent_message_id,
-                    created_at, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, status, duration_ms, sample_rate, emotion,
+                    reference_audio, tts_model_version, synthesis_ms, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -217,6 +300,13 @@ class ConversationStore:
                     record.parent_message_id,
                     record.created_at,
                     record.status,
+                    record.duration_ms,
+                    record.sample_rate,
+                    record.emotion,
+                    record.reference_audio,
+                    record.tts_model_version,
+                    record.synthesis_ms,
+                    json.dumps(record.metadata or {}, ensure_ascii=False),
                 ),
             )
             connection.execute(
@@ -225,6 +315,76 @@ class ConversationStore:
             if role == "user":
                 self._set_automatic_title(connection, conversation_id, text)
         return record
+
+    def add_voice_message(
+        self,
+        conversation_id: str,
+        role: str,
+        audio_path: str | Path,
+        transcript: str = "",
+        **fields: object,
+    ) -> Message:
+        return self.add_message(
+            conversation_id,
+            role,
+            transcript,
+            message_type="voice",
+            audio_path=str(audio_path),
+            **fields,
+        )
+
+    def update_message(self, message_id: str, **changes: object) -> Message:
+        """Atomically update mutable delivery metadata for an existing bubble."""
+        allowed = {
+            "text",
+            "audio_path",
+            "status",
+            "duration_ms",
+            "sample_rate",
+            "emotion",
+            "reference_audio",
+            "tts_model_version",
+            "synthesis_ms",
+            "metadata",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unsupported message fields: {', '.join(sorted(unknown))}")
+        if not changes:
+            existing = self.get_message(message_id)
+            if existing is None:
+                raise KeyError(f"message not found: {message_id}")
+            return existing
+        if "status" in changes and changes["status"] not in {"pending", "completed", "failed"}:
+            raise ValueError(f"unsupported message status: {changes['status']}")
+        encoded = dict(changes)
+        if "metadata" in encoded:
+            encoded["metadata_json"] = json.dumps(encoded.pop("metadata") or {}, ensure_ascii=False)
+        assignments = ", ".join(f"{name} = ?" for name in encoded)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE messages SET {assignments} WHERE id = ?",
+                (*encoded.values(), message_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"message not found: {message_id}")
+            row = connection.execute(
+                "SELECT conversation_id, role, text FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (_now_ms(), str(row["conversation_id"])),
+            )
+            if str(row["role"]) == "user" and "text" in encoded:
+                self._set_automatic_title(
+                    connection,
+                    str(row["conversation_id"]),
+                    str(row["text"] or ""),
+                )
+        updated = self.get_message(message_id)
+        if updated is None:  # defensive; row existed in the same transaction
+            raise KeyError(f"message not found: {message_id}")
+        return updated
 
     def get_message(self, message_id: str) -> Message | None:
         with self._connect() as connection:
@@ -285,6 +445,12 @@ def _conversation(row: sqlite3.Row) -> Conversation:
 
 
 def _message(row: sqlite3.Row) -> Message:
+    try:
+        metadata = json.loads(str(row["metadata_json"] or "{}"))
+    except (json.JSONDecodeError, KeyError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
     return Message(
         id=str(row["id"]),
         conversation_id=str(row["conversation_id"]),
@@ -298,4 +464,11 @@ def _message(row: sqlite3.Row) -> Message:
         parent_message_id=str(row["parent_message_id"] or ""),
         created_at=int(row["created_at"]),
         status=str(row["status"]),
+        duration_ms=int(row["duration_ms"] or 0),
+        sample_rate=int(row["sample_rate"] or 0),
+        emotion=str(row["emotion"] or ""),
+        reference_audio=str(row["reference_audio"] or ""),
+        tts_model_version=str(row["tts_model_version"] or ""),
+        synthesis_ms=int(row["synthesis_ms"] or 0),
+        metadata=metadata,
     )
