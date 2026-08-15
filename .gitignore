@@ -9,6 +9,7 @@ tools/ffmpeg/
 tools/llama.cpp/
 
 storage/logs/*
+storage/desktop/*
 storage/temporary/*
 storage/recordings/
 storage/generated_audio/*

@@ -1,20 +1,33 @@
 # Companion Robot Prototype
 
-This repository follows the staged plan in `项目阶段要求.md`.
+This repository follows the staged plan in `项目阶段要求-独立应用版.md`.
 
 Stage 0 establishes the project skeleton, configuration files, environment
-definitions, model manifests, Git repository, and diagnostics. Stages 1-6 build
-from local audio loopback to a realtime microphone dialogue app that starts and
-stops the required model services.
+definitions, model manifests, Git repository, and diagnostics. Stages 1-10 build
+the shared local runtime and reusable `AlysiaCore`; Stage 11 adds the independent
+Windows desktop application shell.
 
 ## Stage Roadmap
 
-Stages 0-10 are complete. The remaining plan starts with the WeChat adapter
-stages:
+Stages 0-11 are complete. The independent desktop roadmap continues with text
+chat and model selection in Stage 12, voice messages in Stage 13, and realtime
+voice calls in Stage 14. See `项目阶段要求-独立应用版.md` for the full plan.
 
-- Stage 11: WeChat text message receive/send.
-- Stage 12: WeChat voice receive and SenseVoice transcription.
-- Stage 13: WeChat audio file/native voice replies.
+## Desktop Application (Stage 11)
+
+Install the lightweight GUI dependency into the Python 3.10 environment, then
+start Alysia Studio from the repository root:
+
+```powershell
+python -m pip install -r desktop/requirements.txt
+python -m desktop.main
+```
+
+The Stage 11 shell starts without loading the large models. It performs only a
+lightweight asynchronous startup check, restores the last character/workspace,
+and leaves model services to be started on demand by later stages. For a short
+headless smoke test, set `QT_QPA_PLATFORM=offscreen` and use the internal
+`--smoke-test-ms` option.
 
 ## Clone-To-Code Quickstart
 

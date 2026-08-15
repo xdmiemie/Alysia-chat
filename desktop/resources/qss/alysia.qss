@@ -1,0 +1,413 @@
+* {
+    font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    font-size: 14px;
+    color: #eeeaf8;
+}
+
+QMainWindow, #customWindowFrame, #windowSurface, #windowBody, #workspaceStack, #chatPage, #trainingPage {
+    background: #111225;
+}
+
+#titleBar {
+    background: #0c0d1c;
+    border-bottom: 1px solid #292943;
+}
+
+#titleBarMark {
+    color: #ff79b8;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+#titleBarTitle {
+    color: #dcd8e7;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#minimizeButton, #maximizeButton, #closeButton {
+    background: transparent;
+    color: #aaa7b8;
+    border: 0;
+    border-radius: 7px;
+    min-height: 34px;
+    padding: 0;
+    font-family: "Segoe UI Symbol", "Segoe UI", sans-serif;
+    font-size: 16px;
+}
+
+#minimizeButton:hover, #maximizeButton:hover {
+    background: #292a42;
+    color: #ffffff;
+}
+
+#closeButton:hover {
+    background: #d84f70;
+    color: #ffffff;
+}
+
+#resizeHandle {
+    background: #0c0d1c;
+}
+
+#leftNavigation {
+    background: #0c0d1c;
+    border-right: 1px solid #292943;
+}
+
+#brandMark {
+    color: #ff80bd;
+    font-size: 30px;
+    font-weight: 700;
+}
+
+#brandName {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+#brandCaption, #versionLabel, #eyebrow {
+    color: #777690;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+
+QPushButton {
+    min-height: 38px;
+    border: 0;
+    border-radius: 10px;
+    padding: 0 14px;
+}
+
+QPushButton:focus {
+    outline: none;
+}
+
+#navButton {
+    background: transparent;
+    color: #a9a5b8;
+    font-weight: 600;
+    text-align: left;
+    min-height: 46px;
+}
+
+#navButton:hover {
+    background: #191a30;
+    color: #ffffff;
+}
+
+#navButton:checked {
+    background: #29213c;
+    color: #ff8ac2;
+    border-left: 3px solid #f06fad;
+}
+
+#pageTitle {
+    color: #ffffff;
+    font-size: 25px;
+    font-weight: 700;
+}
+
+#pageSubtitle, #statusDetail, #cardBody {
+    color: #8e8ba1;
+}
+
+#localBadge {
+    background: #172c29;
+    color: #65d5b1;
+    border: 1px solid #245047;
+    border-radius: 12px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+#messageScroll {
+    background: #15162a;
+    border: 1px solid #292a45;
+    border-radius: 18px;
+}
+
+#messageScroll > QWidget > QWidget, #messageCanvas {
+    background: #15162a;
+}
+
+#messageBubble {
+    background: #202039;
+    border: 1px solid #31314e;
+    border-radius: 16px;
+}
+
+#messageBubbleOutgoing {
+    background: #4a2949;
+    border: 1px solid #6e3b63;
+    border-radius: 16px;
+}
+
+#bubbleSender {
+    color: #f489bc;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+#bubbleText {
+    color: #e8e4f0;
+    font-size: 14px;
+}
+
+#composer {
+    background: #191a30;
+    border: 1px solid #30314d;
+    border-radius: 16px;
+}
+
+#chatInput {
+    background: transparent;
+    color: #dad6e5;
+    border: 0;
+    min-height: 42px;
+    padding: 0 8px;
+}
+
+#chatInput:disabled {
+    color: #777489;
+}
+
+#sendButton, #primaryButton {
+    background: #e967a7;
+    color: #ffffff;
+    font-weight: 700;
+}
+
+#sendButton:hover, #primaryButton:hover {
+    background: #f27eb7;
+}
+
+#sendButton:disabled, #primaryButton:disabled, #secondaryButton:disabled {
+    background: #28283c;
+    color: #686678;
+}
+
+#iconButton {
+    background: #25263e;
+    color: #aaa7ba;
+    min-width: 42px;
+    max-width: 42px;
+    padding: 0;
+}
+
+#characterPanel {
+    background: #17182b;
+    border-left: 1px solid #292943;
+}
+
+#characterAvatar {
+    background: #3e2945;
+    color: #ffaad1;
+    border: 2px solid #76506d;
+    border-radius: 44px;
+    font-size: 30px;
+    font-weight: 700;
+}
+
+#characterName {
+    color: #ffffff;
+    font-size: 21px;
+    font-weight: 700;
+}
+
+#statusBadge {
+    border-radius: 12px;
+    padding: 6px 10px;
+    font-weight: 600;
+}
+
+#statusBadge[tone="idle"] {
+    background: #172d2a;
+    color: #6ed9b6;
+}
+
+#statusBadge[tone="busy"] {
+    background: #382d1d;
+    color: #f3c36e;
+}
+
+#statusBadge[tone="error"] {
+    background: #3e202c;
+    color: #ff849e;
+}
+
+#modelCard, #trainingCard {
+    background: #202039;
+    border: 1px solid #30314c;
+    border-radius: 14px;
+}
+
+#cardTitle, #sectionTitle {
+    color: #f5f2fb;
+    font-weight: 700;
+}
+
+#cardHeading {
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+#modelValue {
+    color: #aaa7b8;
+    font-size: 12px;
+}
+
+#errorCard {
+    background: #39202c;
+    border: 1px solid #7d354c;
+    border-radius: 12px;
+}
+
+#errorText {
+    color: #ffabbc;
+}
+
+#secondaryButton {
+    background: #282941;
+    color: #d4cfdf;
+    border: 1px solid #3b3c58;
+}
+
+#secondaryButton:hover {
+    background: #34354f;
+    color: #ffffff;
+}
+
+#logConsole {
+    background: #0c0d1a;
+    color: #b9d8cf;
+    border: 1px solid #2b2c43;
+    border-radius: 12px;
+    padding: 12px;
+    selection-background-color: #814b72;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 4px 2px;
+}
+
+QScrollBar::handle:vertical {
+    background: #3b3b55;
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QDialog, QTabWidget::pane {
+    background: #15162a;
+}
+
+#selectionDialog {
+    background: #15162a;
+}
+
+#dialogTitle {
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+#dialogHint {
+    color: #9692a7;
+}
+
+#selectionField {
+    background: #1d1e35;
+    border: 1px solid #30314d;
+    border-radius: 12px;
+}
+
+#fieldLabel {
+    color: #ddd8e7;
+    font-weight: 600;
+}
+
+#selectionCombo {
+    background: #25263f;
+    color: #f1edf8;
+    border: 1px solid #454663;
+    border-radius: 9px;
+    padding: 0 38px 0 13px;
+    selection-background-color: #70405f;
+    selection-color: #ffffff;
+}
+
+#selectionCombo:hover, #selectionCombo:focus {
+    background: #2b2c47;
+    border: 1px solid #e96ca9;
+}
+
+#selectionCombo:disabled {
+    background: #202136;
+    color: #6f6c7e;
+    border-color: #303148;
+}
+
+#selectionCombo::drop-down {
+    background: #31324d;
+    border: 0;
+    border-left: 1px solid #454663;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+    width: 32px;
+}
+
+#selectionCombo QAbstractItemView {
+    background: #24253d;
+    color: #eeeaf8;
+    border: 1px solid #4b4c68;
+    outline: 0;
+    padding: 5px;
+    selection-background-color: #70405f;
+    selection-color: #ffffff;
+}
+
+#dialogCancelButton, #dialogConfirmButton {
+    min-width: 88px;
+    min-height: 38px;
+}
+
+#dialogCancelButton {
+    background: #292a42;
+    color: #d1cddd;
+    border: 1px solid #42435d;
+}
+
+#dialogCancelButton:hover {
+    background: #34354f;
+    color: #ffffff;
+}
+
+#dialogConfirmButton {
+    background: #e967a7;
+    color: #ffffff;
+    font-weight: 700;
+}
+
+#dialogConfirmButton:hover {
+    background: #f27eb7;
+}
+
+QTabBar::tab {
+    background: #202039;
+    color: #aaa7b8;
+    padding: 10px 18px;
+}
+
+QTabBar::tab:selected {
+    color: #ff8ac2;
+    border-bottom: 2px solid #ee6fad;
+}
