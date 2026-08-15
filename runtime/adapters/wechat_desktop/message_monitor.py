@@ -13,6 +13,7 @@ from runtime.adapters.wechat_desktop.message_buffer import MessageBuffer
 from runtime.adapters.wechat_desktop.message_parser import MessageParser
 from runtime.adapters.wechat_desktop.models import BufferedDesktopBatch, DesktopMessage
 from runtime.adapters.wechat_desktop.ui_snapshot import ChatSessionSnapshot
+from runtime.adapters.wechat_desktop.ui_queue import SingleUIQueue
 
 
 class MessageMonitor:
@@ -23,6 +24,7 @@ class MessageMonitor:
         client: WeChatDesktopClient,
         deduplicator: MessageDeduplicator | None = None,
         buffer: MessageBuffer | None = None,
+        ui_queue: SingleUIQueue | None = None,
     ) -> None:
         self.config = config
         self.client = client
@@ -32,6 +34,7 @@ class MessageMonitor:
             buffer_seconds=config.monitor.buffer_seconds,
             max_text_chars=config.reply.max_text_chars,
         )
+        self.ui_queue = ui_queue
 
     def poll_once(self) -> list[BufferedDesktopBatch]:
         return list(self.iter_ready_batches())
@@ -54,7 +57,20 @@ class MessageMonitor:
             if configured_allowlist:
                 _terminal_log("开始检测一个白名单", contact=session.contact_key)
             started = time.perf_counter()
-            ready = self._poll_session(session)
+            if self.ui_queue is None:
+                ready = self._poll_session(session)
+            else:
+                # Desktop scraping can spend several seconds inside UIA. Run it
+                # off the event loop and serialize it with answer/hangup clicks.
+                # A pending call job has priority 0 and runs before the next
+                # ordinary contact poll (priority 90).
+                ready = await self.ui_queue.run(
+                    lambda current=session: asyncio.to_thread(self._poll_session, current),
+                    request_id=f"poll:{session.contact_key}",
+                    contact_key=session.contact_key,
+                    priority=90,
+                    timeout_seconds=self.config.ui.operation_timeout_seconds,
+                )
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             poll_elapsed_ms += elapsed_ms
             ready_count += len(ready)

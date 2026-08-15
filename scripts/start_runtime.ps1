@@ -9,6 +9,7 @@ param(
     [switch]$GPTSoVITS,
     [switch]$GPTSoVITSWrapper,
     [switch]$WeChatDesktop,
+    [switch]$EnableCalls,
     [switch]$Doctor
 )
 
@@ -63,6 +64,9 @@ if ($WeChatDesktop) {
     $BridgeArgs = @("-m", "runtime.adapters.wechat_desktop.app")
     if (-not [string]::IsNullOrWhiteSpace($Character)) {
         $BridgeArgs += @("--character-id", $Character)
+    }
+    if ($EnableCalls) {
+        $BridgeArgs += "--enable-calls"
     }
     & $Python @BridgeArgs
 }

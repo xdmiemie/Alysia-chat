@@ -19,6 +19,16 @@ CallState = Literal[
     "busy",
     "failed",
     "manual_takeover",
+    "waiting_for_first_speech",
+    "listening",
+    "recognizing",
+    "thinking",
+    "synthesizing",
+    "speaking",
+    "silence_timeout",
+    "model_error",
+    "audio_error",
+    "hangup",
 ]
 CallAction = Literal["answer", "reject", "hangup", "ignore"]
 

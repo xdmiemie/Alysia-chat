@@ -168,6 +168,11 @@ def _qwen3_config_for_character(config_path: str | Path, character_id: str):
 
 
 def _validate_audio_devices(input_device: int | None, output_device: int | None) -> None:
+    # Null indices intentionally follow the current OS defaults.
+    if input_device is None and output_device is None:
+        select_input_device()
+        select_output_device()
+        return
     devices = list_devices()
     select_input_device(input_device, devices)
     select_output_device(output_device, devices)

@@ -70,7 +70,7 @@ class WeChatCallWindowLocator:
         for window in windows:
             process_id = _window_process_id(window)
             snapshot = _snapshot_from_uia_window(window, account_key=self.config.account.account_key)
-            if snapshot is None or snapshot.state != "ringing":
+            if snapshot is None or snapshot.state not in {"ringing", "answering", "connected", "ending"}:
                 continue
             if _trusted_wechat_call_snapshot(snapshot, process_ids=process_ids, process_id=process_id):
                 snapshots.append(snapshot)

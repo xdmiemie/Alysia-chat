@@ -9,9 +9,9 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-13, the Stage 15 scheduling foundation, and Stage 16 WeChat call
-detection/auto-answer control are complete. The remaining plan continues with
-the Windows WeChat desktop adapter stages:
+Stages 0-17 (except the reserved Stage 14), including the half-duplex AI WeChat
+phone pipeline, are complete. The remaining release/control-panel work is
+Stage 18.
 
 - Stage 11: Windows WeChat environment, text monitoring, and text sending.
 - Stage 12: contact identity, whitelist, session, and memory isolation.
@@ -23,6 +23,9 @@ the Windows WeChat desktop adapter stages:
 - Stage 16: incoming WeChat call window detection, caller resolution,
   whitelist/call permission policy, highest-priority UI answer/reject/hangup,
   duplicate suppression, manual takeover, and call-state sync.
+- Stage 17: WeChat process loopback, VAD turn segmentation, SenseVoice → Qwen3
+  → GPT-SoVITS inference, default-device playback, echo protection, manifests,
+  and deterministic audio cleanup.
 
 ## Clone-To-Code Quickstart
 
@@ -449,6 +452,46 @@ Run the focused call tests with:
 
 ```powershell
 runtime_env\python.exe -m pytest tests\test_stage16_wechat_calls.py
+```
+
+## Stage 17 Half-Duplex WeChat Calls
+
+Stage 17 starts automatically after a Stage 16 allowlisted call is answered.
+It captures only WeChat process output, stops capture during inference and TTS
+playback, then waits 450 ms before listening again. Ordinary WeChat UI work is
+paused for the full AI-call state sequence. Call manifests and summaries are
+stored under `storage/wechat/calls/<call_id>/`; input/output WAV files are
+deleted after each turn unless `calls.retain_audio` is enabled.
+
+The send side is bound by stable endpoint name to `CABLE Input (VB-Audio
+Virtual Cable)` through `calls.output_device_name`; PortAudio numeric indices
+may change after reboot. Select the paired `CABLE Output` recording endpoint as
+the WeChat microphone. Windows may keep the physical headset as its default
+input/output because the Stage 17 route no longer depends on those defaults.
+
+Build the streaming helper once after cloning or after changing its source:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_application_loopback_capture.ps1
+```
+
+Start the adapter with the managed Stage 17 launcher:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start_wechat_desktop.ps1 -Character elysia -EnableCalls
+```
+
+This command starts Qwen3 and GPT-SoVITS when their ports are not already in
+use. SenseVoice is loaded in-process by the adapter. On `Ctrl+C` or any normal
+exit, the launcher stops only the Qwen3/GPT-SoVITS process trees that it started;
+services that were already running before launch are reused and left running.
+Pass `-NoServiceManagement` only when intentionally managing all model services
+from another terminal.
+
+The focused automated acceptance suite is:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_stage17_wechat_calls.py tests\test_stage16_wechat_calls.py tests\test_stage13_wechat_voice.py
 ```
 
 ## Stage 6 Realtime App

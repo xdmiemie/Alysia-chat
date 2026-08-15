@@ -65,6 +65,22 @@ calls:
   duplicate_cooldown_seconds: 30
   post_call_failure_text: ""
   pause_message_polling_while_enabled: true
+  # Stage 17 half-duplex call pipeline. The stable endpoint name takes
+  # precedence over output_device; clear both to follow the Windows default.
+  ai_enabled: true
+  recordings_dir: storage/wechat/calls
+  retain_audio: false
+  output_device: null
+  output_device_name: CABLE Input (VB-Audio Virtual Cable)
+  listen_timeout_seconds: 30
+  listen_guard_ms: 450
+  max_consecutive_failures: 3
+  vad_frame_ms: 30
+  vad_pre_roll_ms: 450
+  vad_speech_start_frames: 4
+  vad_silence_end_ms: 750
+  vad_min_speech_ms: 300
+  vad_max_speech_ms: 25000
 
 ui:
   operation_timeout_seconds: 15

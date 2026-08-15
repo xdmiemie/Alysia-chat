@@ -123,6 +123,11 @@ class IncomingCallWatcher:
             self._remember(result.call_id)
 
     def _sync_closed_call(self) -> None:
+        # A connected WeChat call is not exposed reliably through UIA on all
+        # desktop builds. Once Stage 17 owns the call, audio/session limits are
+        # authoritative and an empty window scan must not clear call state.
+        if self.state.call_session_active:
+            return
         if not self.state.has_active_call:
             return
         current = self.locator.current_state(self.state.current_call_id)

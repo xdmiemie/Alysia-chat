@@ -14,6 +14,7 @@ from runtime.adapters.wechat_desktop.call_contact_resolver import CallContactRes
 from runtime.adapters.wechat_desktop.call_controller import CallStateTracker, WeChatCallController
 from runtime.adapters.wechat_desktop.call_detection_thread import ReadOnlyCallDetectionThread
 from runtime.adapters.wechat_desktop.call_health import CallHealthChecker
+from runtime.adapters.wechat_desktop.call_supervisor import HalfDuplexCallSupervisor
 from runtime.adapters.wechat_desktop.call_window_locator import WeChatCallWindowLocator
 from runtime.adapters.wechat_desktop.config import WeChatDesktopConfig, load_wechat_desktop_config
 from runtime.adapters.wechat_desktop.health import check_wechat_desktop_health
@@ -26,6 +27,8 @@ from runtime.adapters.wechat_desktop.voice_capture import WeChatVoiceCaptureServ
 from runtime.core.models import UnifiedMessage, new_request_id
 from runtime.core.service import AlysiaCore
 from runtime.gpt_sovits.types import SpeechRequest, SpeechResult
+from runtime.gpt_sovits.config import gpt_sovits_config_for_character
+from runtime.gpt_sovits.service import GPTSoVITSSynthesizer
 from runtime.qwen3.config import load_qwen3_config
 from runtime.qwen3.service import Qwen3ChatSession
 from runtime.scheduler.inference_queue import SingleGPUQueue
@@ -34,11 +37,12 @@ from runtime.sensevoice.service import SenseVoiceRecognizer
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Stage 16 Windows WeChat desktop text, voice, and call adapter.")
+    parser = argparse.ArgumentParser(description="Stage 17 Windows WeChat desktop text, voice, and half-duplex call adapter.")
     parser.add_argument("--character-id", "--character", default="elysia")
     parser.add_argument("--config", default="configs/runtime/wechat.yaml")
     parser.add_argument("--qwen3-config", default="configs/runtime/qwen3.yaml")
     parser.add_argument("--sensevoice-config", default="configs/runtime/sensevoice.yaml")
+    parser.add_argument("--gpt-sovits-config", default="configs/runtime/gpt_sovits.yaml")
     parser.add_argument("--output-dir", default="storage/generated_audio/wechat_desktop_text")
     parser.add_argument("--skip-health", action="store_true")
     parser.add_argument("--enable-calls", action="store_true")
@@ -70,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 async def _run(args, config: WeChatDesktopConfig, client) -> None:
-    core = AlysiaCore(
+    text_core = AlysiaCore(
         transcriber=SenseVoiceRecognizer.from_config(args.sensevoice_config),
         chat_session_factory=lambda session_id: Qwen3ChatSession.from_config(
             _qwen3_config_for_character(args.qwen3_config, args.character_id)
@@ -80,13 +84,29 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
         tts_character_id=args.character_id,
         synthesize_replies=False,
     )
-    monitor = MessageMonitor(config=config, client=client)
+    call_core = (
+        AlysiaCore(
+            transcriber=SenseVoiceRecognizer.from_config(args.sensevoice_config),
+            chat_session_factory=lambda session_id: Qwen3ChatSession.from_config(
+                _qwen3_config_for_character(args.qwen3_config, args.character_id)
+            ),
+            synthesizer=GPTSoVITSSynthesizer.from_config(
+                gpt_sovits_config_for_character(args.gpt_sovits_config, args.character_id)
+            ),
+            output_dir=config.calls.recordings_dir / "generated",
+            tts_character_id=args.character_id,
+            synthesize_replies=True,
+        )
+        if args.enable_calls and config.calls.ai_enabled
+        else None
+    )
     shared_ui_queue = SingleUIQueue(
         max_pending=config.scheduler.ui_max_pending,
         operation_timeout_seconds=config.ui.operation_timeout_seconds,
         pause_max_pending=config.scheduler.ui_pause_max_pending,
         event_sink=lambda event: _bridge_queue_event(config.log_path, event),
     )
+    monitor = MessageMonitor(config=config, client=client, ui_queue=shared_ui_queue)
     gpu_queue = SingleGPUQueue(
         max_pending=config.scheduler.gpu_max_pending,
         total_timeout_seconds=config.scheduler.total_message_seconds,
@@ -102,6 +122,18 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
         executable_names=config.client.executable_names,
     )
     call_watcher = _build_call_watcher(config=config, client=client, queue=shared_ui_queue) if args.enable_calls else None
+    call_supervisor = (
+        HalfDuplexCallSupervisor(
+            config=config,
+            character_id=args.character_id,
+            core=call_core,
+            gpu_queue=gpu_queue,
+            state=call_watcher.state,
+            event_sink=lambda event, fields: _bridge_event(config.log_path, event, **fields),
+        )
+        if call_watcher is not None and call_core is not None
+        else None
+    )
     call_detector = (
         ReadOnlyCallDetectionThread(
             config=config,
@@ -119,12 +151,14 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
                 detector=call_detector,
                 config=config,
                 json_output=args.json,
+                call_supervisor=call_supervisor,
             )
         )
         if call_watcher is not None and call_detector is not None
         else None
     )
-    print("Stage 16 Windows WeChat adapter is polling. Keep the test WeChat logged in and visible.")
+    mode = "Stage 17 half-duplex calls" if call_supervisor is not None else "Stage 16 call control"
+    print(f"Windows WeChat adapter is polling ({mode}). Keep the test WeChat logged in and visible.")
     try:
         while True:
             if call_watcher is not None and _should_pause_message_polling_for_calls(config, call_watcher):
@@ -138,7 +172,7 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
             ):
                 result = await _reply_to_batch(
                     batch,
-                    core=core,
+                    core=text_core,
                     sender=sender,
                     voice_capture=voice_capture,
                     gpu_queue=gpu_queue,
@@ -154,6 +188,8 @@ async def _run(args, config: WeChatDesktopConfig, client) -> None:
             call_task.cancel()
             with suppress(asyncio.CancelledError):
                 await call_task
+        if call_supervisor is not None:
+            await call_supervisor.shutdown()
         if call_detector is not None:
             call_detector.stop()
 
@@ -194,10 +230,28 @@ async def _run_call_watcher_loop(
     detector: ReadOnlyCallDetectionThread,
     config: WeChatDesktopConfig,
     json_output: bool,
+    call_supervisor: HalfDuplexCallSupervisor | None = None,
 ) -> None:
     last_sequence = 0
+    detector_paused_for_session = False
     while True:
         try:
+            call_session_active = call_supervisor is not None and call_supervisor.active
+            if call_session_active:
+                if not detector_paused_for_session:
+                    detector.pause()
+                    detector_paused_for_session = True
+                    _bridge_event(
+                        config.log_path,
+                        "call_detection_paused_for_session",
+                        call_id=call_supervisor.session.call_id if call_supervisor.session else "",
+                    )
+                await asyncio.sleep(0.05)
+                continue
+            if detector_paused_for_session:
+                detector.resume()
+                detector_paused_for_session = False
+                _bridge_event(config.log_path, "call_detection_resumed_after_session")
             frame = detector.latest()
             if frame.sequence != last_sequence:
                 last_sequence = frame.sequence
@@ -206,6 +260,19 @@ async def _run_call_watcher_loop(
                 results = await call_watcher.handle_detected_calls(frame.calls)
                 for call_result in results:
                     _print(call_result.to_dict(), json_output=json_output)
+                    if call_supervisor is not None:
+                        await call_supervisor.start(call_result)
+                if call_supervisor is not None and call_supervisor.active:
+                    detector.pause()
+                    detector_paused_for_session = True
+                    _bridge_event(
+                        config.log_path,
+                        "call_detection_paused_for_session",
+                        call_id=call_supervisor.session.call_id if call_supervisor.session else "",
+                    )
+                    continue
+                if call_supervisor is not None:
+                    await call_supervisor.observe(frame.calls)
                 _update_call_detector_pause(detector, results)
         except asyncio.CancelledError:
             raise

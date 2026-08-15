@@ -6,7 +6,12 @@ param(
     [string]$Python = "",
     [switch]$Qwen3Interactive,
     [switch]$GPTSoVITSInteractive,
-    [switch]$SkipHealth
+    [switch]$SkipHealth,
+    [switch]$WeChatDesktop,
+    [string]$WeChatConfig = "configs/runtime/wechat.yaml",
+    [switch]$EnableCalls,
+    [switch]$Once,
+    [switch]$Json
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,7 +91,7 @@ try {
         Write-Host "Reusing existing Qwen3 llama-server at 127.0.0.1:8080."
     } else {
         $ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json", "--activate")
-        if ($Qwen3Interactive -or [string]::IsNullOrWhiteSpace($Qwen3Model)) {
+        if ($Qwen3Interactive -or ((-not $WeChatDesktop) -and [string]::IsNullOrWhiteSpace($Qwen3Model))) {
             $ResolveArgs += "--interactive"
         }
         if (-not [string]::IsNullOrWhiteSpace($Character)) {
@@ -117,7 +122,7 @@ try {
     }
 
     $ResolveGptArgs = @((Join-Path $ProjectRoot "scripts\gpt_sovits_models.py"), "resolve", "--json", "--activate", "--character", $Character)
-    if ($GPTSoVITSInteractive -or [string]::IsNullOrWhiteSpace($GPTSoVITSModel)) {
+    if ($GPTSoVITSInteractive -or ((-not $WeChatDesktop) -and [string]::IsNullOrWhiteSpace($GPTSoVITSModel))) {
         $ResolveGptArgs += "--interactive"
     }
     if (-not [string]::IsNullOrWhiteSpace($GPTSoVITSModel)) {
@@ -166,9 +171,26 @@ try {
 
     $Started | ConvertTo-Json | Set-Content -LiteralPath $PidFile -Encoding UTF8
 
-    $AppArgs = @("-m", "runtime.app.main", "--character-id", $Character)
-    if ($MaxTurns -gt 0) {
-        $AppArgs += @("--max-turns", "$MaxTurns")
+    if ($WeChatDesktop) {
+        $AppArgs = @(
+            "-m", "runtime.adapters.wechat_desktop.app",
+            "--character-id", $Character,
+            "--config", $WeChatConfig
+        )
+        if ($EnableCalls) {
+            $AppArgs += "--enable-calls"
+        }
+        if ($Once) {
+            $AppArgs += "--once"
+        }
+        if ($Json) {
+            $AppArgs += "--json"
+        }
+    } else {
+        $AppArgs = @("-m", "runtime.app.main", "--character-id", $Character)
+        if ($MaxTurns -gt 0) {
+            $AppArgs += @("--max-turns", "$MaxTurns")
+        }
     }
     if ($SkipHealth) {
         $AppArgs += "--skip-health"
@@ -176,6 +198,9 @@ try {
 
     Push-Location $ProjectRoot
     try {
+        if ($WeChatDesktop) {
+            Write-Host "Starting WeChat Stage 17 adapter; SenseVoice loads in this process."
+        }
         Write-Host "Using unified runtime Python: $RuntimePython"
         & $RuntimePython @AppArgs
     } finally {

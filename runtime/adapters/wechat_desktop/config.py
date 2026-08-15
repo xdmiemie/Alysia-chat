@@ -78,6 +78,20 @@ class CallsConfig:
     duplicate_cooldown_seconds: float = 30.0
     post_call_failure_text: str = ""
     pause_message_polling_while_enabled: bool = True
+    ai_enabled: bool = True
+    recordings_dir: Path = Path("storage/wechat/calls")
+    retain_audio: bool = False
+    output_device: int | None = None
+    output_device_name: str = ""
+    listen_timeout_seconds: float = 30.0
+    listen_guard_ms: int = 450
+    max_consecutive_failures: int = 3
+    vad_frame_ms: int = 30
+    vad_pre_roll_ms: int = 450
+    vad_speech_start_frames: int = 4
+    vad_silence_end_ms: int = 750
+    vad_min_speech_ms: int = 300
+    vad_max_speech_ms: int = 25_000
 
 
 @dataclass(frozen=True)
@@ -266,6 +280,38 @@ def load_wechat_desktop_config(path: str | Path = "configs/runtime/wechat.yaml")
                     "pause_message_polling_while_enabled",
                     CallsConfig.pause_message_polling_while_enabled,
                 )
+            ),
+            ai_enabled=bool(calls.get("ai_enabled", CallsConfig.ai_enabled)),
+            recordings_dir=Path(str(calls.get("recordings_dir", CallsConfig.recordings_dir))),
+            retain_audio=bool(calls.get("retain_audio", CallsConfig.retain_audio)),
+            output_device=(
+                None
+                if calls.get("output_device", CallsConfig.output_device) in (None, "")
+                else int(calls.get("output_device"))
+            ),
+            output_device_name=str(
+                calls.get("output_device_name", CallsConfig.output_device_name)
+            ),
+            listen_timeout_seconds=float(
+                calls.get("listen_timeout_seconds", CallsConfig.listen_timeout_seconds)
+            ),
+            listen_guard_ms=int(calls.get("listen_guard_ms", CallsConfig.listen_guard_ms)),
+            max_consecutive_failures=int(
+                calls.get("max_consecutive_failures", CallsConfig.max_consecutive_failures)
+            ),
+            vad_frame_ms=int(calls.get("vad_frame_ms", CallsConfig.vad_frame_ms)),
+            vad_pre_roll_ms=int(calls.get("vad_pre_roll_ms", CallsConfig.vad_pre_roll_ms)),
+            vad_speech_start_frames=int(
+                calls.get("vad_speech_start_frames", CallsConfig.vad_speech_start_frames)
+            ),
+            vad_silence_end_ms=int(
+                calls.get("vad_silence_end_ms", CallsConfig.vad_silence_end_ms)
+            ),
+            vad_min_speech_ms=int(
+                calls.get("vad_min_speech_ms", CallsConfig.vad_min_speech_ms)
+            ),
+            vad_max_speech_ms=int(
+                calls.get("vad_max_speech_ms", CallsConfig.vad_max_speech_ms)
             ),
         ),
         ui=UIConfig(

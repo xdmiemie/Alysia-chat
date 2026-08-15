@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -258,6 +259,56 @@ def test_monitor_async_poll_stops_between_contacts_when_requested(tmp_path):
     asyncio.run(run())
 
     assert client.opened == ["alice-key"]
+
+
+def test_monitor_ui_poll_does_not_block_async_call_tasks(tmp_path):
+    from runtime.adapters.wechat_desktop.ui_queue import SingleUIQueue
+
+    client = FakeWeChatDesktopClient()
+    client.messages_by_contact = {"alice-key": []}
+    entered = threading.Event()
+    release = threading.Event()
+    original_open_chat = client.open_chat
+
+    def slow_open_chat(contact_key: str):
+        entered.set()
+        release.wait(timeout=2.0)
+        original_open_chat(contact_key)
+
+    client.open_chat = slow_open_chat
+    config = WeChatDesktopConfig(
+        log_path=tmp_path / "wechat.jsonl",
+        dedup_path=tmp_path / "dedup.jsonl",
+        contacts=WeChatDesktopConfig.contacts.__class__(
+            default_policy="deny",
+            allow_contact_keys=("alice-key",),
+        ),
+        monitor=WeChatDesktopConfig.monitor.__class__(buffer_seconds=0),
+    )
+    monitor = MessageMonitor(
+        config=config,
+        client=client,
+        ui_queue=SingleUIQueue(operation_timeout_seconds=3),
+    )
+
+    async def run():
+        async def consume():
+            async for _batch in monitor.iter_ready_batches_async():
+                pass
+
+        task = asyncio.create_task(consume())
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert entered.is_set() is True
+        # Reaching this assertion while open_chat is still waiting proves the
+        # WeChat call watcher can keep running on the event loop.
+        assert release.is_set() is False
+        release.set()
+        await task
+
+    asyncio.run(run())
 
 
 def test_monitor_uses_latest_unseen_incoming_message(tmp_path):

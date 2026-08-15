@@ -176,6 +176,9 @@ struct WavWriter {
             return;
         }
         stream.write(reinterpret_cast<const char*>(data), bytes);
+        // Stage 17 tails the growing PCM payload so VAD can finish a turn
+        // without waiting for the whole call capture to close.
+        stream.flush();
         data_bytes += bytes;
     }
 

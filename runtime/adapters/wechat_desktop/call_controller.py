@@ -26,15 +26,22 @@ class CallStateTracker:
     state: CallState = "idle"
     contact_key: str = ""
     session_id: str = ""
+    call_session_active: bool = False
     events: list[CallStateEvent] = field(default_factory=list)
 
     @property
     def has_active_call(self) -> bool:
-        return self.state in {"ringing", "answering", "connected", "ending"} and bool(self.current_call_id)
+        return self.call_session_active or (self.state not in {
+            "idle", "rejected", "missed", "busy", "failed", "manual_takeover", "hangup"
+        } and bool(self.current_call_id))
 
     @property
     def ordinary_messages_paused(self) -> bool:
-        return self.state in {"ringing", "answering", "ending"} and bool(self.current_call_id)
+        return self.call_session_active or (self.state in {
+            "ringing", "answering", "ending", "waiting_for_first_speech", "listening",
+            "recognizing", "thinking", "synthesizing", "speaking", "silence_timeout",
+            "model_error", "audio_error",
+        } and bool(self.current_call_id))
 
     def transition(
         self,

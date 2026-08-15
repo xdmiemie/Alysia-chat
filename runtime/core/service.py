@@ -171,7 +171,7 @@ class AlysiaCore:
     ) -> tuple[str, TranscriptionResult | None, str]:
         if message.message_type == "text":
             return message.text or "", None, ""
-        if message.message_type not in {"voice", "audio"}:
+        if message.message_type not in {"voice", "audio", "voice_call_turn"}:
             raise ValueError(f"unsupported message_type: {message.message_type}")
         if not message.audio_path:
             raise ValueError("audio message requires audio_path")
