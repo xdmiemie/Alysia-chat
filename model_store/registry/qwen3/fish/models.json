@@ -1,6 +1,6 @@
 {
   "character_id": "fish",
-  "active_model_id": "fish-fish-qwen3-lora-final",
+  "active_model_id": "qwen3-8b-q4-k-m-base-v1",
   "models": [
     {
       "id": "qwen3-8b-q4-k-m-base-v1",
@@ -29,5 +29,5 @@
       "export_log": "training/qwen3/outputs/fish/fish-qwen3-lora/export_log.json"
     }
   ],
-  "activated_at": "2026-07-26T15:07:39.190533+00:00"
+  "activated_at": "2026-08-15T08:36:57.858363+00:00"
 }

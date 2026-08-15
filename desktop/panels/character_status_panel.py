@@ -12,6 +12,7 @@ class CharacterStatusPanel(QFrame):
     log_requested = Signal()
     character_switch_requested = Signal()
     model_switch_requested = Signal()
+    model_service_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -88,6 +89,9 @@ class CharacterStatusPanel(QFrame):
         self.switch_model_button = QPushButton("⇄  切换模型")
         self.switch_model_button.setObjectName("secondaryButton")
         self.switch_model_button.clicked.connect(self.model_switch_requested)
+        self.model_service_button = QPushButton("▶  启动模型")
+        self.model_service_button.setObjectName("primaryButton")
+        self.model_service_button.clicked.connect(self.model_service_requested)
         self.call_button = QPushButton("♬  发起语音通话")
         self.call_button.setObjectName("primaryButton")
         self.call_button.setToolTip("语音通话将在 Stage 14 开放")
@@ -97,6 +101,7 @@ class CharacterStatusPanel(QFrame):
         self.settings_button.clicked.connect(self.settings_requested)
         layout.addWidget(self.switch_character_button)
         layout.addWidget(self.switch_model_button)
+        layout.addWidget(self.model_service_button)
         layout.addWidget(self.call_button)
         layout.addWidget(self.settings_button)
 
@@ -109,5 +114,10 @@ class CharacterStatusPanel(QFrame):
         self.tts_label.setText(f"语音  ·  {snapshot.tts_model}")
         self.error_label.setText(snapshot.error_summary)
         self.error_card.setVisible(snapshot.status is AppStatus.ERROR)
-        self.switch_character_button.setEnabled(snapshot.controls_enabled)
-        self.switch_model_button.setEnabled(snapshot.controls_enabled)
+        can_change_runtime = snapshot.controls_enabled and not snapshot.model_service_running
+        self.switch_character_button.setEnabled(can_change_runtime)
+        self.switch_model_button.setEnabled(can_change_runtime)
+        self.model_service_button.setText(
+            "■  关闭模型" if snapshot.model_service_running else "▶  启动模型"
+        )
+        self.model_service_button.setEnabled(snapshot.controls_enabled)

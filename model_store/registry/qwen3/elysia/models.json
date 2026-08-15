@@ -1,6 +1,6 @@
 {
   "character_id": "elysia",
-  "active_model_id": "elysia-qwen3-lora-final",
+  "active_model_id": "qwen3-8b-q4-k-m-base-v1",
   "models": [
     {
       "id": "qwen3-8b-q4-k-m-base-v1",
@@ -29,5 +29,5 @@
       "export_log": "training/qwen3/outputs/elysia/elysia-qwen3-lora/export_log.json"
     }
   ],
-  "activated_at": "2026-07-26T10:50:40.131569+00:00"
+  "activated_at": "2026-08-15T08:36:15.444505+00:00"
 }

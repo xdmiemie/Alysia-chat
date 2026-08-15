@@ -92,8 +92,18 @@ class MainWindow(QMainWindow):
         self.character_panel.log_requested.connect(self.controller.request_log)
         self.character_panel.character_switch_requested.connect(self.open_character_selector)
         self.character_panel.model_switch_requested.connect(self.open_model_selector)
+        self.character_panel.model_service_requested.connect(self.controller.toggle_model_service)
+        self.chat_page.send_requested.connect(self.controller.send_chat)
+        self.chat_page.retry_requested.connect(self.controller.retry_message)
+        self.chat_page.conversation_requested.connect(self.controller.open_conversation)
+        self.chat_page.new_conversation_requested.connect(self.controller.new_conversation)
+        self.chat_page.rename_requested.connect(self.controller.rename_conversation)
+        self.chat_page.delete_requested.connect(self.controller.delete_current_conversation)
+        self.chat_page.clear_context_requested.connect(self.controller.clear_context)
         self.controller.log_requested.connect(self.open_logs)
         self.controller.state_changed.connect(self.apply_state)
+        self.controller.conversations_changed.connect(self._apply_conversations)
+        self.controller.messages_changed.connect(self.chat_page.set_messages)
 
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self.open_settings)
         QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.controller.set_workspace(Workspace.CHAT))
@@ -101,6 +111,7 @@ class MainWindow(QMainWindow):
             QKeySequence("Ctrl+2"), self, activated=lambda: self.controller.set_workspace(Workspace.TRAINING)
         )
         self.apply_state(self.controller.state.snapshot)
+        self.controller.refresh_chat()
 
     @Slot(object)
     def apply_state(self, snapshot: AppSnapshot) -> None:
@@ -110,6 +121,13 @@ class MainWindow(QMainWindow):
         self.chat_page.apply_state(snapshot)
         self.training_page.apply_state(snapshot)
         self.character_panel.apply_state(snapshot)
+
+    @Slot(object)
+    def _apply_conversations(self, conversations) -> None:
+        self.chat_page.set_conversations(
+            list(conversations),
+            self.controller.state.snapshot.session_id,
+        )
 
     @Slot()
     def open_settings(self) -> None:

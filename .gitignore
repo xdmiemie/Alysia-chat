@@ -83,3 +83,7 @@ model_store/registry/gpt_sovits/elysia/base-v1/references/*
 .vscode/
 third_party/GPT-SoVITS/*
 !third_party/GPT-SoVITS/.gitkeep
+# Local conversation database (created by the desktop app)
+storage/database/*.db
+storage/database/*.db-shm
+storage/database/*.db-wal

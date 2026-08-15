@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $PidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
+$SelectionFile = Join-Path $ProjectRoot "storage\temporary\qwen3-selection.json"
 $StdoutLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.out.log"
 $StderrLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.err.log"
 
@@ -102,6 +103,11 @@ if ($Background) {
         -PassThru
 
     Set-Content -LiteralPath $PidFile -Value $Process.Id
+    [ordered]@{
+        character_id = [string]$Resolved.character_id
+        model_id = [string]$Resolved.model_id
+        pid = $Process.Id
+    } | ConvertTo-Json | Set-Content -LiteralPath $SelectionFile -Encoding UTF8
     Write-Host "Started Qwen3 llama-server with PID $($Process.Id)."
     Write-Host "Using project llama-server: $LlamaExecutable"
     Write-Host "Using Qwen3 model: $($Resolved.character_id)/$($Resolved.model_id)"

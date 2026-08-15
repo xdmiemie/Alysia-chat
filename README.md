@@ -4,16 +4,16 @@ This repository follows the staged plan in `项目阶段要求-独立应用版.m
 
 Stage 0 establishes the project skeleton, configuration files, environment
 definitions, model manifests, Git repository, and diagnostics. Stages 1-10 build
-the shared local runtime and reusable `AlysiaCore`; Stage 11 adds the independent
-Windows desktop application shell.
+the shared local runtime and reusable `AlysiaCore`; Stages 11-12 add the independent
+Windows desktop application shell and persistent text chat.
 
 ## Stage Roadmap
 
-Stages 0-11 are complete. The independent desktop roadmap continues with text
-chat and model selection in Stage 12, voice messages in Stage 13, and realtime
-voice calls in Stage 14. See `项目阶段要求-独立应用版.md` for the full plan.
+Stages 0-12 are complete. The independent desktop roadmap continues with voice
+messages in Stage 13 and realtime voice calls in Stage 14. See
+`项目阶段要求-独立应用版.md` for the full plan.
 
-## Desktop Application (Stage 11)
+## Desktop Application (Stages 11-12)
 
 Install the lightweight GUI dependency into the Python 3.10 environment, then
 start Alysia Studio from the repository root:
@@ -23,11 +23,17 @@ python -m pip install -r desktop/requirements.txt
 python -m desktop.main
 ```
 
-The Stage 11 shell starts without loading the large models. It performs only a
-lightweight asynchronous startup check, restores the last character/workspace,
-and leaves model services to be started on demand by later stages. For a short
-headless smoke test, set `QT_QPA_PLATFORM=offscreen` and use the internal
-`--smoke-test-ms` option.
+The app performs a lightweight asynchronous startup check, restores the last
+character, workspace, and conversation, and keeps model work off the UI thread.
+Stage 12 adds multi-line text chat, per-character history, new/rename/delete
+conversation actions, retry/copy message actions, and validated Qwen3 and
+GPT-SoVITS model selection. Chat history is stored locally in
+`storage/database/alysia.db`. Select a character/model and click **启动模型**
+before sending the first message; the input remains disabled until the Qwen3
+health check passes. Click **关闭模型** to release GPU memory. A model started by
+the desktop app is also stopped automatically when its window closes. For a
+short headless smoke test, set
+`QT_QPA_PLATFORM=offscreen` and use the internal `--smoke-test-ms` option.
 
 ## Clone-To-Code Quickstart
 

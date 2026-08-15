@@ -60,6 +60,7 @@ class AppSnapshot:
     session_id: str = "desktop-default"
     qwen_model: str = "按需加载"
     tts_model: str = "按需加载"
+    model_service_running: bool = False
     status_detail: str = ""
     error_summary: str = ""
     log_path: str = "storage/logs/desktop.log"
@@ -67,6 +68,10 @@ class AppSnapshot:
     @property
     def controls_enabled(self) -> bool:
         return not self.status.busy
+
+    @property
+    def chat_enabled(self) -> bool:
+        return self.controls_enabled and self.model_service_running
 
 
 StateListener = Callable[[AppSnapshot], None]

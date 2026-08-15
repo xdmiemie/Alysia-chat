@@ -104,6 +104,29 @@ def test_core_processes_audio_message_through_same_pipeline(tmp_path):
     assert "WAV_SAVED" in result.states
 
 
+def test_core_text_mode_can_skip_synthesis(tmp_path):
+    synth = FakeSynthesizer(tmp_path)
+    core = AlysiaCore(
+        transcriber=FakeTranscriber(),
+        chat_session_factory=lambda session_id: StatefulChatSession(session_id),
+        synthesizer=synth,
+        output_dir=tmp_path / "out",
+    )
+
+    result = core.process(
+        UnifiedMessage.local_text(
+            "text only",
+            metadata={"synthesize_reply": False},
+        )
+    )
+
+    assert result.ok is True
+    assert result.message_type == "text"
+    assert result.audio_path == ""
+    assert "SYNTHESIZING" not in result.states
+    assert synth.calls == []
+
+
 def test_core_package_has_no_wechat_imports():
     core_files = list((Path("runtime") / "core").glob("*.py"))
     assert core_files

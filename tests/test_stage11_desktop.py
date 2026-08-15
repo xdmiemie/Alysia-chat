@@ -72,6 +72,7 @@ def test_stage11_main_window_switches_both_workspaces() -> None:
     assert not hasattr(window.navigation, "settings_button")
     assert window.character_panel.switch_character_button.text().endswith("切换角色")
     assert window.character_panel.switch_model_button.text().endswith("切换模型")
+    assert window.character_panel.model_service_button.text().endswith("启动模型")
 
     controller.set_workspace(Workspace.TRAINING)
     app.processEvents()

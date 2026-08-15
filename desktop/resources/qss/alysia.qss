@@ -156,6 +156,50 @@ QPushButton:focus {
     font-size: 14px;
 }
 
+#bubbleMeta {
+    color: #88859a;
+    font-size: 10px;
+}
+
+#bubbleAction {
+    background: transparent;
+    color: #aaa6b8;
+    min-height: 24px;
+    padding: 0 5px;
+    font-size: 11px;
+}
+
+#bubbleAction:hover {
+    color: #ff8ac2;
+}
+
+#conversationBar {
+    background: #191a30;
+    border: 1px solid #30314d;
+    border-radius: 12px;
+}
+
+#conversationCombo {
+    background: #25263f;
+    color: #f1edf8;
+    border: 1px solid #454663;
+    border-radius: 8px;
+    min-height: 34px;
+    padding: 0 10px;
+}
+
+#compactButton {
+    background: #282941;
+    color: #d4cfdf;
+    border: 1px solid #3b3c58;
+    min-height: 34px;
+    padding: 0 10px;
+}
+
+#compactButton:hover {
+    background: #34354f;
+}
+
 #composer {
     background: #191a30;
     border: 1px solid #30314d;
@@ -167,7 +211,7 @@ QPushButton:focus {
     color: #dad6e5;
     border: 0;
     min-height: 42px;
-    padding: 0 8px;
+    padding: 8px;
 }
 
 #chatInput:disabled {
