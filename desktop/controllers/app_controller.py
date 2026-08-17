@@ -160,7 +160,10 @@ class StartupWorker(QObject):
                 character_id=character_id,
                 character_name=character_name,
                 session_id=str(restored.get("session_id") or f"desktop-{character_id}"),
-                workspace=str(restored.get("workspace") or Workspace.CHAT.value),
+                # Always enter the primary usage/chat workspace.  Training is
+                # an explicit destination and should never become a surprising
+                # startup screen because it was open when the app last closed.
+                workspace=Workspace.CHAT.value,
                 qwen_model=_character_qwen_model(character_id),
                 tts_model=_character_tts_model(character_id),
                 log_path=DEFAULT_LOG_PATH,

@@ -10,8 +10,9 @@ half-duplex realtime voice calls.
 
 ## Stage Roadmap
 
-Stages 0-14 are complete. The independent desktop roadmap continues with character
-resource management in Stage 15. See
+Stages 0-15 are complete. Stage 15 adds a character management centre in the
+training workspace: create, edit, duplicate, import, export, validate, and
+delete local character bundles without manually editing YAML. See
 `项目阶段要求-独立应用版.md` for the full plan.
 
 ## Desktop Application (Stages 11-14)

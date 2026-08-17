@@ -542,6 +542,125 @@ QDialog, QTabWidget::pane {
     selection-color: #ffffff;
 }
 
+/* Stage 15 character management: Qt's native editors default to a light
+   palette unless every input surface is explicitly themed. */
+#characterManagerCombo {
+    background: #25263f;
+    color: #f1edf8;
+    border: 1px solid #454663;
+    border-radius: 9px;
+    min-height: 38px;
+    padding: 0 34px 0 12px;
+    selection-background-color: #70405f;
+    selection-color: #ffffff;
+}
+
+#characterManagerCombo:hover {
+    background: #2b2c47;
+    border-color: #e96ca9;
+}
+
+#characterManagerCombo::drop-down {
+    background: #31324d;
+    border: 0;
+    border-left: 1px solid #454663;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+    width: 32px;
+}
+
+#characterManagerCombo QAbstractItemView {
+    background: #24253d;
+    color: #eeeaf8;
+    border: 1px solid #4b4c68;
+    selection-background-color: #70405f;
+    selection-color: #ffffff;
+}
+
+#characterManagerDialog, #characterManagerDialog QWidget {
+    background: #15162a;
+    color: #eeeaf8;
+}
+
+#characterManagerDialog QTabWidget::pane {
+    background: #191a30;
+    border: 1px solid #30314d;
+    border-radius: 10px;
+    top: -1px;
+}
+
+#characterManagerDialog QLineEdit,
+#characterManagerDialog QTextEdit,
+#characterManagerDialog QSpinBox,
+#characterManagerDialog QDoubleSpinBox,
+#characterManagerDialog QComboBox,
+#characterManagerDialog QListWidget {
+    background: #25263f;
+    color: #f1edf8;
+    border: 1px solid #454663;
+    border-radius: 8px;
+    padding: 6px 10px;
+    selection-background-color: #70405f;
+    selection-color: #ffffff;
+}
+
+#characterManagerDialog QLineEdit:focus,
+#characterManagerDialog QTextEdit:focus,
+#characterManagerDialog QSpinBox:focus,
+#characterManagerDialog QDoubleSpinBox:focus,
+#characterManagerDialog QComboBox:focus,
+#characterManagerDialog QListWidget:focus {
+    border-color: #e96ca9;
+    background: #2b2c47;
+}
+
+#characterManagerDialog QLineEdit:read-only {
+    background: #202136;
+    color: #aaa7b8;
+}
+
+#characterManagerDialog QComboBox QAbstractItemView,
+#characterManagerDialog QListWidget::item {
+    background: #24253d;
+    color: #eeeaf8;
+    selection-background-color: #70405f;
+    selection-color: #ffffff;
+}
+
+#characterManagerDialog QListWidget::item {
+    padding: 7px;
+    border-radius: 5px;
+}
+
+#characterManagerDialog QCheckBox {
+    background: transparent;
+    color: #eeeaf8;
+    spacing: 9px;
+}
+
+#characterManagerDialog QCheckBox::indicator {
+    width: 17px;
+    height: 17px;
+    background: #24253d;
+    border: 1px solid #575873;
+    border-radius: 4px;
+}
+
+#characterManagerDialog QCheckBox::indicator:checked {
+    background: #e967a7;
+    border-color: #f08abb;
+}
+
+#characterManagerDialog QDialogButtonBox QPushButton {
+    background: #e967a7;
+    color: #ffffff;
+    font-weight: 700;
+}
+
+#characterManagerDialog QDialogButtonBox QPushButton:hover {
+    background: #f27eb7;
+}
+
 #dialogCancelButton, #dialogConfirmButton {
     min-width: 88px;
     min-height: 38px;
