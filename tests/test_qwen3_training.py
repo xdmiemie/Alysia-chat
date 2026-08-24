@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from runtime.qwen3 import model_registry
-from training.qwen3.config import BaseModelConfig, DatasetConfig, TrainingConfig
+from training.qwen3.config import BaseModelConfig, DatasetConfig, TrainingConfig, trained_model_identity
 from training.qwen3.train.checkpoint_policy import write_checkpoint_metadata
 from training.qwen3.train.resume import resolve_resume_checkpoint
 from training.qwen3.train import train_lora
@@ -129,6 +129,22 @@ def test_from_scratch_ignores_existing_checkpoint(tmp_path):
     )
 
 
+def test_training_reads_only_conversation_payload_not_heterogeneous_metadata(tmp_path):
+    source = tmp_path / "examples.jsonl"
+    source.write_text(
+        "\n".join([
+            json.dumps({"messages": [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}], "metadata": {"source_quote_ids": []}}),
+            json.dumps({"messages": [{"role": "user", "content": "c"}, {"role": "assistant", "content": "d"}], "metadata": {"source_quote_ids": ["q-1"]}}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    assert train_lora._conversation_records(source) == [
+        {"messages": [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]},
+        {"messages": [{"role": "user", "content": "c"}, {"role": "assistant", "content": "d"}]},
+    ]
+
+
 def test_final_adapter_is_registered_as_role_model(tmp_path, monkeypatch):
     monkeypatch.setattr(model_registry, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(model_registry, "REGISTRY_ROOT", tmp_path / "model_store" / "registry" / "qwen3")
@@ -176,6 +192,23 @@ def test_final_adapter_is_registered_as_role_model(tmp_path, monkeypatch):
     assert entry.lora_adapter.suffix == ".gguf"
     assert entry.lora_adapter.parent.parent.name == "elysia"
     assert json.loads((run_dir / "registration_log.json").read_text(encoding="utf-8"))["model_id"] == entry.model_id
+
+
+def test_custom_training_model_name_is_preserved_for_display_and_safe_for_registry():
+    config = TrainingConfig(
+        character_id="elysia",
+        run_name="elysia-qwen3-lora",
+        model_name="爱莉希雅 · 夏日语录 LoRA",
+        outputs_dir=Path("outputs"),
+        base_model=BaseModelConfig(model_id="base-v1", gguf_path=Path("base.gguf")),
+        dataset=DatasetConfig(raw=Path("raw"), normalized=Path("normalized"), train=Path("train"), validation=Path("validation")),
+    )
+
+    model_id, display_name = trained_model_identity(config)
+
+    assert display_name == "爱莉希雅 · 夏日语录 LoRA"
+    assert model_id.startswith("elysia-lora-")
+    assert model_id.endswith("-final")
 
 
 def test_registering_peft_safetensors_as_llama_lora_is_rejected(tmp_path):

@@ -13,6 +13,7 @@ import tempfile
 import wave
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -93,6 +94,20 @@ class CharacterValidation:
     @property
     def complete(self) -> bool:
         return not self.errors and not self.warnings
+
+
+@dataclass(frozen=True)
+class SharedModel:
+    """One model artifact with one or more character registry associations."""
+
+    model_type: str
+    model_id: str
+    registry_key: str
+    display_name: str
+    kind: str
+    required_files: tuple[Path, ...]
+    character_ids: tuple[str, ...]
+    raw: dict[str, object]
 
 
 class CharacterManager:
@@ -222,6 +237,145 @@ class CharacterManager:
             raise FileNotFoundError(f"角色不存在：{character_id}")
         shutil.rmtree(root)
 
+    # Model entries intentionally stay in the per-character registry format
+    # consumed by the runtime.  The same raw entry may occur in several
+    # registries and points at one physical artifact directory, which makes a
+    # model shareable without adding a parallel runtime registry.
+    def list_shared_models(self, model_type: str) -> list[SharedModel]:
+        self._check_model_type(model_type)
+        grouped: dict[str, tuple[dict[str, object], set[str]]] = {}
+        for character_id, manifest in self._iter_model_manifests(model_type):
+            for value in manifest.get("models", []):
+                if not isinstance(value, dict) or not value.get("id"):
+                    continue
+                model_id = str(value["id"])
+                registry_key = self._model_registry_key(model_id, value.get("required_files", []))
+                if registry_key not in grouped:
+                    grouped[registry_key] = (dict(value), set())
+                grouped[registry_key][1].add(character_id)
+        models: list[SharedModel] = []
+        for registry_key, (raw, character_ids) in grouped.items():
+            model_id = str(raw["id"])
+            files = tuple(self._project_model_path(path) for path in raw.get("required_files", []) if path)
+            models.append(SharedModel(
+                model_type=model_type,
+                model_id=model_id,
+                registry_key=registry_key,
+                display_name=str(raw.get("display_name") or model_id),
+                kind=str(raw.get("kind") or "trained"),
+                required_files=files,
+                character_ids=tuple(sorted(character_ids)),
+                raw=raw,
+            ))
+        return sorted(models, key=lambda item: (item.kind != "base", item.display_name.lower(), item.model_id))
+
+    def associate_model(self, model_type: str, model_key: str, character_ids: Iterable[str]) -> SharedModel:
+        """Associate an existing model with roles, reusing its physical files."""
+        self._check_model_type(model_type)
+        source = self._shared_model(model_type, model_key)
+        model_key = source.registry_key
+        ids = self._valid_character_ids(character_ids)
+        if not ids:
+            raise ValueError("请至少选择一个角色。")
+        for character_id in ids:
+            manifest = self._load_model_manifest(model_type, character_id)
+            models = [item for item in manifest["models"] if self._model_registry_key(str(item.get("id") or ""), item.get("required_files", [])) != model_key]
+            models.append(dict(source.raw))
+            manifest["models"] = models
+            if not manifest.get("active_model_id"):
+                manifest["active_model_id"] = source.model_id
+            self._save_model_manifest(model_type, character_id, manifest)
+        return next(model for model in self.list_shared_models(model_type) if model.registry_key == model_key)
+
+    def add_shared_model(
+        self,
+        model_type: str,
+        model_id: str,
+        display_name: str,
+        character_ids: Iterable[str],
+        required_files: Iterable[str | Path],
+        *,
+        model_kind: str = "trained",
+        model_format: str = "gguf",
+    ) -> SharedModel:
+        """Import model files once, then associate their registry entry with roles."""
+        self._check_model_type(model_type)
+        model_id = model_id.strip()
+        if not _VALID_ID.fullmatch(model_id):
+            raise ValueError("模型 ID 仅支持小写字母、数字、连字符和下划线，且须以字母开头。")
+        if any(model.model_id == model_id for model in self.list_shared_models(model_type)):
+            raise ValueError("模型 ID 已存在；请使用已有模型的角色关联功能，或填写新的 ID。")
+        if model_kind not in {"base", "trained"}:
+            raise ValueError("模型类型必须是 base 或 trained。")
+        ids = self._valid_character_ids(character_ids)
+        files = [Path(path) for path in required_files if str(path).strip()]
+        if not ids:
+            raise ValueError("请至少选择一个角色。")
+        if not files or any(not path.is_file() for path in files):
+            raise ValueError("请选择存在的模型文件。")
+        suffixes = {path.suffix.lower() for path in files}
+        if model_type == "gpt_sovits" and not {".ckpt", ".pth"}.issubset(suffixes):
+            raise ValueError("TTS 模型必须同时选择 .ckpt 和 .pth 文件。")
+        if model_type == "qwen3" and not suffixes.intersection({".gguf", ".bin", ".safetensors"}):
+            raise ValueError("Qwen 模型需要至少一个 .gguf、.bin 或 .safetensors 文件。")
+
+        target_dir = self.registry_dir / model_type / "_shared" / model_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        copied: list[Path] = []
+        for source in files:
+            target = target_dir / source.name
+            if source.resolve() != target.resolve():
+                shutil.copy2(source, target)
+            copied.append(target)
+        raw: dict[str, object] = {
+            "id": model_id,
+            "display_name": display_name.strip() or model_id,
+            "kind": model_kind,
+            "required_files": [self._relative_model_path(path) for path in copied],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if model_type == "qwen3":
+            raw["format"] = model_format
+        for character_id in ids:
+            manifest = self._load_model_manifest(model_type, character_id)
+            manifest["models"] = [item for item in manifest["models"] if str(item.get("id")) != model_id] + [dict(raw)]
+            if not manifest.get("active_model_id"):
+                manifest["active_model_id"] = model_id
+            self._save_model_manifest(model_type, character_id, manifest)
+        return next(model for model in self.list_shared_models(model_type) if model.registry_key == self._model_registry_key(model_id, raw["required_files"]))
+
+    def remove_model_association(self, model_type: str, model_key: str, character_id: str) -> bool:
+        """Remove one role's association and delete unreferenced owned files.
+
+        Returns ``True`` only when no role retains the model, so the caller can
+        show the final-file-removal notice.
+        """
+        self._check_model_type(model_type)
+        manifest = self._load_model_manifest(model_type, character_id)
+        model = self._shared_model(model_type, model_key)
+        model_key = model.registry_key
+        removed = [item for item in manifest["models"] if self._model_registry_key(str(item.get("id") or ""), item.get("required_files", [])) == model_key]
+        if not removed:
+            raise ValueError(f"角色“{character_id}”未使用该模型。")
+        model_id = str(removed[0].get("id") or "")
+        manifest["models"] = [item for item in manifest["models"] if self._model_registry_key(str(item.get("id") or ""), item.get("required_files", [])) != model_key]
+        if str(manifest.get("active_model_id") or "") == model_id:
+            manifest["active_model_id"] = str(manifest["models"][0].get("id")) if manifest["models"] else None
+        self._save_model_manifest(model_type, character_id, manifest)
+
+        still_used = any(model.registry_key == model_key for model in self.list_shared_models(model_type))
+        if still_used:
+            return False
+        referenced = {
+            path.resolve() for model in self.list_shared_models(model_type) for path in model.required_files
+        }
+        for raw in removed:
+            for value in raw.get("required_files", []):
+                path = self._project_model_path(value)
+                if path.resolve() not in referenced:
+                    self._remove_owned_model_file(model_type, path)
+        return True
+
     def export_bundle(self, character_id: str, destination: str | Path) -> Path:
         root = self._root_for(character_id)
         if not root.is_dir():
@@ -344,6 +498,92 @@ class CharacterManager:
         except (OSError, json.JSONDecodeError):
             return ""
         return str(data.get("active_model_id") or "")
+
+    def _check_model_type(self, model_type: str) -> None:
+        if model_type not in {"qwen3", "gpt_sovits"}:
+            raise ValueError(f"不支持的模型类型：{model_type}")
+
+    def _valid_character_ids(self, character_ids: Iterable[str]) -> list[str]:
+        ids = sorted({str(value).strip() for value in character_ids if str(value).strip()})
+        known = {character_id for character_id, _ in self.list_profiles()}
+        invalid = [character_id for character_id in ids if character_id not in known]
+        if invalid:
+            raise ValueError("角色不存在：" + "、".join(invalid))
+        return ids
+
+    def _iter_model_manifests(self, model_type: str) -> Iterable[tuple[str, dict[str, object]]]:
+        root = self.registry_dir / model_type
+        if not root.exists():
+            return
+        for path in sorted(root.glob("*/models.json")):
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            models = manifest.get("models")
+            if isinstance(models, list):
+                yield path.parent.name, {"character_id": path.parent.name, **manifest, "models": models}
+
+    def _load_model_manifest(self, model_type: str, character_id: str) -> dict[str, object]:
+        path = self.registry_dir / model_type / character_id / "models.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8-sig"))
+        except FileNotFoundError:
+            raw = {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"模型清单无法解析：{path}") from exc
+        models = raw.get("models")
+        if not isinstance(models, list):
+            models = []
+        return {**raw, "character_id": character_id, "models": models}
+
+    def _save_model_manifest(self, model_type: str, character_id: str, manifest: dict[str, object]) -> None:
+        path = self.registry_dir / model_type / character_id / "models.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {**manifest, "character_id": character_id}
+        self._atomic_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+    def _project_model_path(self, value: str | Path) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else self.project_root / path
+
+    def _model_registry_key(self, model_id: str, required_files: object) -> str:
+        values = required_files if isinstance(required_files, list) else []
+        paths = "\x1f".join(sorted(str(self._project_model_path(item).resolve()) for item in values if item))
+        return f"{model_id}\x1e{paths}"
+
+    def _shared_model(self, model_type: str, key_or_id: str) -> SharedModel:
+        models = self.list_shared_models(model_type)
+        exact = next((model for model in models if model.registry_key == key_or_id), None)
+        if exact is not None:
+            return exact
+        matches = [model for model in models if model.model_id == key_or_id]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError("存在同名但文件不同的模型，请从管理界面选择具体模型。")
+        raise ValueError("模型不存在。")
+
+    def _relative_model_path(self, path: Path) -> str:
+        try:
+            return path.resolve().relative_to(self.project_root.resolve()).as_posix()
+        except ValueError:
+            return str(path.resolve())
+
+    def _remove_owned_model_file(self, model_type: str, path: Path) -> None:
+        """Only clean files located in this application's model registry."""
+        root = (self.registry_dir / model_type).resolve()
+        resolved = path.resolve()
+        if not resolved.is_file() or root not in resolved.parents:
+            return
+        resolved.unlink()
+        current = resolved.parent
+        while current != root and current.exists():
+            try:
+                current.rmdir()
+            except OSError:
+                break
+            current = current.parent
 
     def _root_for(self, character_id: str) -> Path:
         return self.characters_dir / character_id

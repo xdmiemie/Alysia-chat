@@ -423,10 +423,19 @@ class AppController(QObject):
     ) -> None:
         if not self.state.snapshot.controls_enabled:
             return
+        # The model selector contains both fields.  Treat an unchanged value
+        # as absent so changing Qwen never validates, activates, or rewrites
+        # the independently selected GPT-SoVITS model (and vice versa).
+        snapshot = self.state.snapshot
+        if qwen_model == snapshot.qwen_model:
+            qwen_model = None
+        if tts_model == snapshot.tts_model:
+            tts_model = None
+        if not qwen_model and not tts_model:
+            return
         if (
-            self.state.snapshot.model_service_running
+            snapshot.model_service_running
             and qwen_model
-            and qwen_model != self.state.snapshot.qwen_model
         ):
             self.state.set_error("请先关闭当前模型，再切换 Qwen3 版本")
             return

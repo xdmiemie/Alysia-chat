@@ -1,0 +1,33 @@
+[job:b9ae0cb5] 已启动 dataset 任务。
+Traceback (most recent call last):
+  File "D:\Alysia-chat\training\qwen3\generate\pipeline.py", line 67, in json
+    with urllib.request.urlopen(request, timeout=120) as response:
+  File "C:\Users\MLTZ\AppData\Local\Programs\Python\Python310\lib\urllib\request.py", line 216, in urlopen
+    return opener.open(url, data, timeout)
+  File "C:\Users\MLTZ\AppData\Local\Programs\Python\Python310\lib\urllib\request.py", line 525, in open
+    response = meth(req, response)
+  File "C:\Users\MLTZ\AppData\Local\Programs\Python\Python310\lib\urllib\request.py", line 634, in http_response
+    response = self.parent.error(
+  File "C:\Users\MLTZ\AppData\Local\Programs\Python\Python310\lib\urllib\request.py", line 563, in error
+    return self._call_chain(*args)
+  File "C:\Users\MLTZ\AppData\Local\Programs\Python\Python310\lib\urllib\request.py", line 496, in _call_chain
+    result = func(*args)
+  File "C:\Users\MLTZ\AppData\Local\Programs\Python\Python310\lib\urllib\request.py", line 643, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 400: Bad Request
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Alysia-chat\training\qwen3\generate\build_dataset.py", line 27, in <module>
+    raise SystemExit(main())
+  File "D:\Alysia-chat\training\qwen3\generate\build_dataset.py", line 21, in main
+    report = build_quote_dataset(config, system_prompt=system_prompt)
+  File "D:\Alysia-chat\training\qwen3\generate\pipeline.py", line 115, in build_quote_dataset
+    persona = _persona(generator, config, quotes, system_prompt)
+  File "D:\Alysia-chat\training\qwen3\generate\pipeline.py", line 206, in _persona
+    value = teacher.json(task="extract_persona", payload=payload)
+  File "D:\Alysia-chat\training\qwen3\generate\pipeline.py", line 73, in json
+    raise RuntimeError(
+RuntimeError: Teacher HTTP 400 for extract_persona: {"error":{"code":400,"message":"request (28149 tokens) exceeds the available context size (8192 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":28149,"n_ctx":8192}}
+[error] 任务进程退出，退出码 1

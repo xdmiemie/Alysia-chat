@@ -1,6 +1,13 @@
 # Qwen3 Role Dataset Format
 
-Stage 7 normalizes role data to JSONL chat records:
+Stage 7 defaults to **Quote-to-SFT**: add a UTF-8 `raw/quotes.txt` (one source
+quote per line) or a `raw/quotes.jsonl` (`text` required; `id`, `source`,
+`context`, `emotion` and `tags` optional). The source stays read-only. The
+pipeline writes auditable intermediate data to `generated/` and standard Chat
+JSONL to `final/train.jsonl` and `final/validation.jsonl`.
+
+An already prepared Chat JSONL source remains supported with
+`data_source.mode: chat_jsonl`. Both sources converge on the same final format:
 
 ```json
 {"messages":[{"role":"system","content":"..."},{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}

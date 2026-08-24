@@ -1,0 +1,93 @@
+[job:491efd86] 已启动 training 任务。
+Using unified runtime Python: D:\Alysia-chat\runtime_env\python.exe
+Using Qwen3 training config: storage/training_jobs/configs/elysia-20260824-170332.yaml
+Step 1/4: build Quote-to-SFT dataset
+[progress] {"phase": "finalize", "completed": 0, "total": 1, "percent": 0.0, "message": "已找到已生成的候选，正在复用并校验训练集"}
+[progress] {"phase": "complete", "completed": 1, "total": 1, "percent": 100.0, "message": "训练集已就绪，可开始训练"}
+generated 74 SFT examples
+Step 2/4: split included in Quote-to-SFT dataset build
+
+Step 3/4: validate dataset
+validated 74 examples -> training\qwen3\outputs\elysia\elysia-qwen3-lora\dataset_manifest.json
+Step 4/4: train Qwen3 LoRA
+W0824 17:13:47.795000 17448 runtime_env\Lib\site-packages\torch\utils\flop_counter.py:29] triton not found; flop counting will not work for triton kernels
+resume: no compatible checkpoint found; starting from scratch
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]
+Loading checkpoint shards:  20%|██        | 1/5 [00:04<00:17,  4.32s/it]
+Loading checkpoint shards:  40%|████      | 2/5 [00:08<00:13,  4.36s/it]
+Loading checkpoint shards:  60%|██████    | 3/5 [00:13<00:08,  4.41s/it]
+Loading checkpoint shards:  80%|████████  | 4/5 [00:16<00:04,  4.10s/it]
+Loading checkpoint shards: 100%|██████████| 5/5 [00:18<00:00,  3.07s/it]Loading checkpoint shards: 100%|██████████| 5/5 [00:18<00:00,  3.61s/it]
+Generating train split: 0 examples [00:00, ? examples/s]
+Generating train split: 67 examples [00:00, 4188.68 examples/s]
+Generating validation split: 0 examples [00:00, ? examples/s]
+Generating validation split: 0 examples [00:00, ? examples/s]
+Traceback (most recent call last):
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\builder.py", line 1871, in _prepare_split_single
+    writer.write_table(table)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\arrow_writer.py", line 643, in write_table
+    pa_table = table_cast(pa_table, self._schema)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 2293, in table_cast
+    return cast_table_to_schema(table, schema)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 2246, in cast_table_to_schema
+    arrays = [
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 2247, in <listcomp>
+    cast_array_to_feature(
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 1796, in wrapper
+    return pa.chunked_array([func(chunk, *args, **kwargs) for chunk in array.chunks])
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 1796, in <listcomp>
+    return pa.chunked_array([func(chunk, *args, **kwargs) for chunk in array.chunks])
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 2006, in cast_array_to_feature
+    arrays = [
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 2007, in <listcomp>
+    _c(array.field(name) if name in array_fields else null_array, subfeature)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 1798, in wrapper
+    return func(array, *args, **kwargs)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 2066, in cast_array_to_feature
+    casted_array_values = _c(array.values, feature.feature)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 1798, in wrapper
+    return func(array, *args, **kwargs)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 2103, in cast_array_to_feature
+    return array_cast(
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 1798, in wrapper
+    return func(array, *args, **kwargs)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\table.py", line 1949, in array_cast
+    raise TypeError(f"Couldn't cast array of type {_short_str(array.type)} to {_short_str(pa_type)}")
+TypeError: Couldn't cast array of type string to null
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Alysia-chat\training\qwen3\train\train_lora.py", line 416, in <module>
+    raise SystemExit(main())
+  File "D:\Alysia-chat\training\qwen3\train\train_lora.py", line 81, in main
+    stopped_for = run_qlora_training(
+  File "D:\Alysia-chat\training\qwen3\train\train_lora.py", line 172, in run_qlora_training
+    dataset = load_dataset("json", data_files={"train": str(config.dataset.train), "validation": str(config.dataset.validation)})
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\load.py", line 2084, in load_dataset
+    builder_instance.download_and_prepare(
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\builder.py", line 925, in download_and_prepare
+    self._download_and_prepare(
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\builder.py", line 1001, in _download_and_prepare
+    self._prepare_split(split_generator, **prepare_split_kwargs)
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\builder.py", line 1742, in _prepare_split
+    for job_id, done, content in self._prepare_split_single(
+  File "D:\Alysia-chat\runtime_env\lib\site-packages\datasets\builder.py", line 1898, in _prepare_split_single
+    raise DatasetGenerationError("An error occurred while generating the dataset") from e
+datasets.exceptions.DatasetGenerationError: An error occurred while generating the dataset
+If this is a real QLoRA run, make sure these were completed first:
+
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1
+python command failed: D:\Alysia-chat\runtime_env\python.exe D:\Alysia-chat\training\qwen3\train\train_lora.py --config
+ storage/training_jobs/configs/elysia-20260824-170332.yaml --pause-file D:\Alysia-chat\storage\training_jobs\491efd8689
+d24aa7888b6daace0885bf.pause --finish-file D:\Alysia-chat\storage\training_jobs\491efd8689d24aa7888b6daace0885bf.finish
+At D:\Alysia-chat\quickstart\train_qwen3.ps1:31 char:9
++         throw "python command failed: $RuntimePython $($Arguments -jo ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (python command ...ce0885bf.finish:String) [], RuntimeException
+    + FullyQualifiedErrorId : python command failed: D:\Alysia-chat\runtime_env\python.exe D:\Alysia-chat\training\qwe 
+   n3\train\train_lora.py --config storage/training_jobs/configs/elysia-20260824-170332.yaml --pause-file D:\Alysia-c  
+  hat\storage\training_jobs\491efd8689d24aa7888b6daace0885bf.pause --finish-file D:\Alysia-chat\storage\training_job   
+ s\491efd8689d24aa7888b6daace0885bf.finish
+[error] 任务进程退出，退出码 1

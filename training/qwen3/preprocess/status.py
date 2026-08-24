@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -32,6 +33,18 @@ def preprocess_status(config_path: str | Path) -> dict[str, object]:
     system_prompt_hash = file_sha256(system_prompt_path) if system_prompt_path.exists() else None
     metadata_path = config.dataset.normalized.parent / ".preprocess_manifest.json"
     metadata = _load_metadata(metadata_path)
+    report_path = (config.dataset.generated_dir / "generation_report.json") if config.dataset.generated_dir else None
+    quote_source = config.dataset.quotes or config.dataset.raw
+    quote_current = (
+        config.dataset.mode == "quotes"
+        and report_path is not None
+        and report_path.exists()
+        and config.dataset.train.exists()
+        and config.dataset.validation.exists()
+        and _report_hash(report_path, "source_sha256") == (file_sha256(quote_source) if quote_source.exists() else None)
+        and _report_hash(report_path, "system_prompt_sha256") == system_prompt_hash
+        and _report_value(report_path, "generation_config") == asdict(config.generation)
+    )
 
     normalized_current = (
         config.dataset.normalized.exists()
@@ -48,14 +61,16 @@ def preprocess_status(config_path: str | Path) -> dict[str, object]:
     )
 
     return {
+        "mode": config.dataset.mode,
         "metadata_path": _relative(metadata_path),
+        "generation_report": _relative(report_path) if report_path else None,
         "raw": _relative(config.dataset.raw),
         "normalized": _relative(config.dataset.normalized),
         "train": _relative(config.dataset.train),
         "validation": _relative(config.dataset.validation),
         "raw_exists": config.dataset.raw.exists(),
-        "normalized_current": normalized_current,
-        "split_current": split_current,
+        "normalized_current": quote_current or normalized_current,
+        "split_current": quote_current or split_current,
         "config_hash": cfg_hash,
         "raw_hash": raw_hash,
         "system_prompt_hash": system_prompt_hash,
@@ -86,6 +101,21 @@ def _load_metadata(path: Path) -> dict[str, object]:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
+
+
+def _report_hash(path: Path, key: str) -> str | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get(key)
+        return str(value) if value else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _report_value(path: Path, key: str) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get(key)
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _relative(path: Path) -> str:

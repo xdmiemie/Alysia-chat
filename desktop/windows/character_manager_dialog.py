@@ -16,6 +16,159 @@ from desktop.characters import CharacterDraft, CharacterManager, ReferenceVoice
 from desktop.widgets import TitleBar
 
 
+class SharedModelDialog(QDialog):
+    """Manage shared Qwen/TTS registry entries from the character editor."""
+
+    models_changed = Signal()
+
+    def __init__(self, manager: CharacterManager, model_type: str, character_id: str, parent=None) -> None:
+        super().__init__(parent)
+        self.manager = manager
+        self.model_type = model_type
+        self.character_id = character_id
+        label = "Qwen" if model_type == "qwen3" else "TTS"
+        self.setObjectName("characterManagerDialog")
+        self.setWindowTitle(f"管理 {label} 模型")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setModal(True)
+        self.resize(660, 560)
+        root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
+        root.addWidget(TitleBar(title=self.windowTitle()))
+        body = QWidget(); layout = QVBoxLayout(body); layout.setContentsMargins(24, 20, 24, 20); layout.setSpacing(12)
+        hint = QLabel("模型文件只保存一份，可同时关联多个角色。移除当前角色后，若没有任何角色使用该模型，会自动删除模型本体文件。")
+        hint.setObjectName("dialogHint"); hint.setWordWrap(True); layout.addWidget(hint)
+        self.model_list = QListWidget(); self.model_list.setObjectName("sharedModelList"); self.model_list.currentTextChanged.connect(self._load_selected)
+        layout.addWidget(self.model_list, 1)
+        layout.addWidget(QLabel("所属角色（可多选）"))
+        roles = QWidget(); role_layout = QHBoxLayout(roles); role_layout.setContentsMargins(0, 0, 0, 0)
+        self.role_checks: dict[str, QCheckBox] = {}
+        for role_id, role_name in manager.list_profiles():
+            check = QCheckBox(f"{role_name} ({role_id})")
+            self.role_checks[role_id] = check; role_layout.addWidget(check)
+        role_layout.addStretch(1); layout.addWidget(roles)
+        actions = QHBoxLayout()
+        add = QPushButton("增加模型"); add.setObjectName("secondaryButton"); add.clicked.connect(self._add_model)
+        save_roles = QPushButton("保存所属角色"); save_roles.setObjectName("secondaryButton"); save_roles.clicked.connect(self._save_roles)
+        delete = QPushButton("移除当前角色关联"); delete.setObjectName("secondaryButton"); delete.clicked.connect(self._remove_current_association)
+        close = QPushButton("完成"); close.setObjectName("dialogConfirmButton"); close.clicked.connect(self.accept)
+        for button in (add, save_roles, delete, close): actions.addWidget(button)
+        layout.addLayout(actions); root.addWidget(body, 1)
+        self._refresh()
+
+    def _refresh(self, selected_id: str = "") -> None:
+        selected_id = selected_id or self._selected_id()
+        self.model_list.clear()
+        for model in self.manager.list_shared_models(self.model_type):
+            self.model_list.addItem(f"{model.display_name}  ·  {model.model_id}")
+            self.model_list.item(self.model_list.count() - 1).setData(Qt.ItemDataRole.UserRole, model.registry_key)
+        for index in range(self.model_list.count()):
+            if self.model_list.item(index).data(Qt.ItemDataRole.UserRole) == selected_id:
+                self.model_list.setCurrentRow(index); break
+        if self.model_list.count() and self.model_list.currentRow() < 0:
+            self.model_list.setCurrentRow(0)
+        self._load_selected()
+
+    def _selected_id(self) -> str:
+        item = self.model_list.currentItem()
+        return str(item.data(Qt.ItemDataRole.UserRole)) if item else ""
+
+    def _load_selected(self, *_args) -> None:
+        model = next((item for item in self.manager.list_shared_models(self.model_type) if item.registry_key == self._selected_id()), None)
+        for role_id, check in self.role_checks.items():
+            check.setChecked(bool(model and role_id in model.character_ids))
+
+    def _selected_roles(self) -> list[str]:
+        return [role_id for role_id, check in self.role_checks.items() if check.isChecked()]
+
+    def _save_roles(self) -> None:
+        model_key = self._selected_id()
+        if not model_key:
+            return
+        current = next((item for item in self.manager.list_shared_models(self.model_type) if item.registry_key == model_key), None)
+        selected = set(self._selected_roles())
+        if not selected:
+            QMessageBox.warning(self, "所属角色", "模型至少需要属于一个角色。")
+            return
+        try:
+            self.manager.associate_model(self.model_type, model_key, selected)
+            if current:
+                for role_id in set(current.character_ids) - selected:
+                    self.manager.remove_model_association(self.model_type, model_key, role_id)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "保存所属角色", str(exc)); return
+        self.models_changed.emit(); self._refresh(model_key)
+
+    def _add_model(self) -> None:
+        dialog = SharedModelImportDialog(self.model_type, self._selected_roles() or [self.character_id], self)
+        if not dialog.exec():
+            return
+        try:
+            model = self.manager.add_shared_model(
+                self.model_type, dialog.model_id, dialog.display_name, dialog.character_ids,
+                dialog.required_files, model_format="gguf",
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "增加模型", str(exc)); return
+        self.models_changed.emit(); self._refresh(model.registry_key)
+
+    def _remove_current_association(self) -> None:
+        model_key = self._selected_id()
+        if not model_key or not self.character_id:
+            return
+        model = next((item for item in self.manager.list_shared_models(self.model_type) if item.registry_key == model_key), None)
+        if not model or self.character_id not in model.character_ids:
+            QMessageBox.information(self, "移除模型", "该模型未关联当前角色。")
+            return
+        if QMessageBox.question(self, "移除模型", f"确认从当前角色移除模型“{model.display_name}”吗？") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            deleted_files = self.manager.remove_model_association(self.model_type, model_key, self.character_id)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "移除模型", str(exc)); return
+        if deleted_files:
+            CharacterNoticeDialog("模型已删除", f"模型“{model.display_name}”已不属于任何角色，模型本体文件已删除。", self).exec()
+        self.models_changed.emit(); self._refresh()
+
+
+class SharedModelImportDialog(QDialog):
+    """Small themed import form; TTS requires both of its runtime weights."""
+
+    def __init__(self, model_type: str, selected_roles: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self.model_type = model_type
+        self.setObjectName("characterManagerDialog"); self.setWindowTitle("增加模型")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint); self.setModal(True); self.setMinimumWidth(570)
+        root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0); root.addWidget(TitleBar(title=self.windowTitle()))
+        body = QWidget(); layout = QVBoxLayout(body); layout.setContentsMargins(24, 20, 24, 20)
+        form = QFormLayout(); self.id_edit = QLineEdit(); self.id_edit.setPlaceholderText("例如：summer-voice-v1")
+        self.name_edit = QLineEdit(); self.name_edit.setPlaceholderText("显示名称")
+        self.roles_edit = QLineEdit("，".join(selected_roles)); self.roles_edit.setReadOnly(True)
+        self.first_file = QLineEdit(); first_button = QPushButton("选择文件"); first_button.clicked.connect(lambda: self._browse(self.first_file, "模型文件"))
+        first_row = QWidget(); first_layout = QHBoxLayout(first_row); first_layout.setContentsMargins(0, 0, 0, 0); first_layout.addWidget(self.first_file, 1); first_layout.addWidget(first_button)
+        form.addRow("模型 ID", self.id_edit); form.addRow("模型名称", self.name_edit); form.addRow("所属角色", self.roles_edit)
+        form.addRow("Qwen 文件" if model_type == "qwen3" else "GPT 权重 (.ckpt)", first_row)
+        self.second_file = QLineEdit()
+        if model_type == "gpt_sovits":
+            second_button = QPushButton("选择文件"); second_button.clicked.connect(lambda: self._browse(self.second_file, "SoVITS 权重"))
+            second_row = QWidget(); second_layout = QHBoxLayout(second_row); second_layout.setContentsMargins(0, 0, 0, 0); second_layout.addWidget(self.second_file, 1); second_layout.addWidget(second_button)
+            form.addRow("SoVITS 权重 (.pth)", second_row)
+        layout.addLayout(form); layout.addWidget(_character_dialog_buttons(self, ok_text="导入模型")); root.addWidget(body)
+
+    @property
+    def model_id(self) -> str: return self.id_edit.text().strip()
+    @property
+    def display_name(self) -> str: return self.name_edit.text().strip()
+    @property
+    def character_ids(self) -> list[str]: return [item.strip() for item in self.roles_edit.text().split("，") if item.strip()]
+    @property
+    def required_files(self) -> list[str]: return [item.text().strip() for item in (self.first_file, self.second_file) if item.text().strip()]
+
+    def _browse(self, target: QLineEdit, title: str) -> None:
+        filter_text = "Qwen (*.gguf *.bin *.safetensors);;所有文件 (*)" if self.model_type == "qwen3" else "模型权重 (*.ckpt *.pth);;所有文件 (*)"
+        path, _ = QFileDialog.getOpenFileName(self, title, "", filter_text)
+        if path: target.setText(path)
+
+
 class CharacterTextPromptDialog(QDialog):
     """Frameless replacement for QInputDialog used by character actions."""
 
@@ -183,13 +336,16 @@ class CharacterManagerDialog(QDialog):
     def _persona_tab(self) -> QWidget:
         tab = QWidget(); form = QFormLayout(tab)
         self.qwen_edit = QLineEdit(self.draft.qwen_model); self.qwen_edit.setPlaceholderText("训练完成后可填写该角色的模型 ID")
+        qwen_manage = QPushButton("管理 Qwen 模型")
+        qwen_manage.clicked.connect(lambda: self._manage_models("qwen3"))
+        qwen_row = QWidget(); qwen_layout = QHBoxLayout(qwen_row); qwen_layout.setContentsMargins(0, 0, 0, 0); qwen_layout.addWidget(self.qwen_edit, 1); qwen_layout.addWidget(qwen_manage)
         self.prompt_edit = QTextEdit(self.draft.system_prompt); self.prompt_edit.setMinimumHeight(180)
         self.personality_edit = QTextEdit(self.draft.personality); self.personality_edit.setPlaceholderText("性格关键词或说明")
         self.style_edit = QTextEdit(self.draft.speaking_style); self.forbidden_edit = QTextEdit(self.draft.forbidden_behavior)
         self.temperature = QDoubleSpinBox(); self.temperature.setRange(0, 2); self.temperature.setSingleStep(.1); self.temperature.setValue(self.draft.temperature)
         self.top_p = QDoubleSpinBox(); self.top_p.setRange(.01, 1); self.top_p.setSingleStep(.05); self.top_p.setValue(self.draft.top_p)
         self.max_tokens = QSpinBox(); self.max_tokens.setRange(1, 8192); self.max_tokens.setValue(self.draft.max_tokens)
-        form.addRow("默认运行模型", self.qwen_edit); form.addRow("System prompt", self.prompt_edit); form.addRow("Personality", self.personality_edit)
+        form.addRow("默认运行模型", qwen_row); form.addRow("System prompt", self.prompt_edit); form.addRow("Personality", self.personality_edit)
         form.addRow("Speaking style", self.style_edit); form.addRow("Forbidden behavior", self.forbidden_edit)
         form.addRow("Temperature", self.temperature); form.addRow("Top P", self.top_p); form.addRow("Max tokens", self.max_tokens)
         return tab
@@ -197,12 +353,29 @@ class CharacterManagerDialog(QDialog):
     def _voice_tab(self) -> QWidget:
         tab = QWidget(); form = QFormLayout(tab)
         self.tts_edit = QLineEdit(self.draft.tts_model); self.tts_edit.setPlaceholderText("训练完成后可填写该角色的模型 ID")
+        tts_manage = QPushButton("管理 TTS 模型")
+        tts_manage.clicked.connect(lambda: self._manage_models("gpt_sovits"))
+        tts_row = QWidget(); tts_layout = QHBoxLayout(tts_row); tts_layout.setContentsMargins(0, 0, 0, 0); tts_layout.addWidget(self.tts_edit, 1); tts_layout.addWidget(tts_manage)
         self.emotion_edit = QLineEdit(self.draft.default_emotion)
         self.speed = QDoubleSpinBox(); self.speed.setRange(.25, 3); self.speed.setSingleStep(.05); self.speed.setValue(self.draft.speed)
         self.text_language = QComboBox(); self.text_language.addItems(["zh", "ja", "en"]); self._set_combo(self.text_language, self.draft.text_language)
         test = QPushButton("用中性参考语音测试 TTS"); test.clicked.connect(self._test_tts)
-        form.addRow("默认 TTS 模型", self.tts_edit); form.addRow("默认情绪", self.emotion_edit); form.addRow("默认语速", self.speed); form.addRow("文本语言", self.text_language); form.addRow("", test)
+        form.addRow("默认 TTS 模型", tts_row); form.addRow("默认情绪", self.emotion_edit); form.addRow("默认语速", self.speed); form.addRow("文本语言", self.text_language); form.addRow("", test)
         return tab
+
+    def _manage_models(self, model_type: str) -> None:
+        if not self.editing_id:
+            CharacterNoticeDialog("请先保存角色", "新建角色保存后，才能将共享模型关联到该角色。", self).exec()
+            return
+        dialog = SharedModelDialog(self.manager, model_type, self.editing_id, self)
+        dialog.models_changed.connect(lambda: self._refresh_default_model(model_type))
+        dialog.exec()
+
+    def _refresh_default_model(self, model_type: str) -> None:
+        current = self.qwen_edit if model_type == "qwen3" else self.tts_edit
+        available = {model.model_id for model in self.manager.list_shared_models(model_type) if self.editing_id in model.character_ids}
+        if current.text().strip() not in available:
+            current.clear()
 
     def _references_tab(self) -> QWidget:
         tab = QWidget(); layout = QVBoxLayout(tab)

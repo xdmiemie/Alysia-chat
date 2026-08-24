@@ -1,0 +1,32 @@
+# Copy these fields into a character config to override Quote-to-SFT defaults.
+# No cloud service is required: an OpenAI-compatible local endpoint is the
+# default Teacher transport.
+teacher:
+  generator:
+    provider: openai_compatible
+    model: ""
+    base_url: http://127.0.0.1:8080/v1
+    temperature: 0.7
+    max_tokens: 1024
+  judge:
+    provider: openai_compatible
+    model: ""
+    base_url: http://127.0.0.1:8080/v1
+    temperature: 0.2
+    max_tokens: 1024
+
+generation:
+  target_samples: 3000
+  candidates_per_scene: 3
+  max_regenerate: 2
+  seed: 7
+  keep_metadata: true
+  auto_balance: true
+  min_persona_score: 0.70
+  min_relevance_score: 0.70
+  min_naturalness_score: 0.65
+  min_behavior_score: 0.65
+  max_copy_score: 0.30
+  max_assistant_like_penalty: 0.25
+  max_catchphrase_penalty: 0.35
+  max_near_duplicate_ratio: 0.92

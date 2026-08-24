@@ -1,0 +1,24 @@
+{
+  "job_id": "ede4982cf44e445a9f07e9f570901b36",
+  "kind": "training",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260824-135734.yaml",
+  "state": "CANCELLED",
+  "created_at": "2026-08-24T08:03:48.111664+00:00",
+  "updated_at": "2026-08-24T08:06:14.698182+00:00",
+  "error": "stopped by user; generated artifacts retained",
+  "progress": 81.3,
+  "phase": "training",
+  "detail": "{'train_runtime': 46.9374, 'train_samples_per_second': 170.44, 'train_steps_per_second': 21.305, 'train_loss': 0.012762309880274249, 'epoch': 101.67}",
+  "metrics": {
+    "train_runtime": 46.9374,
+    "train_samples_per_second": 170.44,
+    "train_steps_per_second": 21.305,
+    "total_flos": 1.2371561368823808e+17,
+    "train_loss": 0.012762309880274249,
+    "epoch": 101.67,
+    "steps_per_second": 17.321,
+    "loss": 0.012762309880274249,
+    "raw": "{'train_runtime': 46.9374, 'train_samples_per_second': 170.44, 'train_steps_per_second': 21.305, 'train_loss': 0.012762309880274249, 'epoch': 101.67}"
+  }
+}

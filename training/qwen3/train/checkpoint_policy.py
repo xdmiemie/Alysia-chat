@@ -26,6 +26,7 @@ def write_checkpoint_metadata(
     dataset_hash: str,
     config_hash: str,
     base_model_id: str,
+    lineage: dict[str, Any] | None = None,
 ) -> None:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     metadata = {
@@ -33,6 +34,7 @@ def write_checkpoint_metadata(
         "config_hash": config_hash,
         "base_model_id": base_model_id,
         "training_config": training_config,
+        "lineage": lineage or {},
     }
     _atomic_write_json(checkpoint_dir / "alysia_checkpoint.json", metadata)
 

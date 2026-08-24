@@ -1,0 +1,19 @@
+[job:fec0f50b] 已启动 dataset 任务。
+[progress] {"phase": "scenario", "completed": 326, "total": 300, "percent": 108.7, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 327, "total": 300, "percent": 109.0, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 328, "total": 300, "percent": 109.3, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 329, "total": 300, "percent": 109.7, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 330, "total": 300, "percent": 110.0, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 331, "total": 300, "percent": 110.3, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 332, "total": 300, "percent": 110.7, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 333, "total": 300, "percent": 111.0, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 334, "total": 300, "percent": 111.3, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 335, "total": 300, "percent": 111.7, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 336, "total": 300, "percent": 112.0, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 337, "total": 300, "percent": 112.3, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 338, "total": 300, "percent": 112.7, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 339, "total": 300, "percent": 113.0, "message": "正在生成场景"}
+[pause] 已请求在当前安全边界暂停；已完成的数据会保留。
+[progress] {"phase": "scenario", "completed": 340, "total": 300, "percent": 113.3, "message": "正在生成场景"}
+[progress] {"phase": "scenario", "completed": 340, "total": 300, "percent": 113.3, "message": "场景生成已暂停；已完成场景已保存"}
+DATASET_PAUSED: saved candidates can be resumed from Judge

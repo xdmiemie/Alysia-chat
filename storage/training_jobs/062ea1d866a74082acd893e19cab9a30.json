@@ -1,0 +1,20 @@
+{
+  "job_id": "062ea1d866a74082acd893e19cab9a30",
+  "kind": "dataset",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260817-174228.yaml",
+  "state": "DATASET_READY",
+  "created_at": "2026-08-17T09:42:28.751840+00:00",
+  "updated_at": "2026-08-18T11:25:20.797982+00:00",
+  "error": "",
+  "progress": 100.0,
+  "phase": "dataset_ready",
+  "detail": "训练集构造完成：563 条 SFT 样本已就绪",
+  "metrics": {
+    "phase": "judge",
+    "completed": 27144,
+    "total": 27144,
+    "percent": 100.0,
+    "message": "Judge 正在评分与筛选"
+  }
+}

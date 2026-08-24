@@ -1,0 +1,4 @@
+[job:8976025a] 已启动 dataset 任务。
+[progress] {"phase": "finalize", "completed": 0, "total": 1, "percent": 0.0, "message": "已找到已生成的候选，正在复用并校验训练集"}
+[progress] {"phase": "complete", "completed": 1, "total": 1, "percent": 100.0, "message": "训练集已就绪，可开始训练"}
+generated 559 SFT examples

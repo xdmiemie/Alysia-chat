@@ -1,0 +1,34 @@
+[job:fa5016cb] 已启动 training 任务。
+Using unified runtime Python: D:\Alysia-chat\runtime_env\python.exe
+Using Qwen3 training config: storage/training_jobs/configs/elysia-20260819-160941.yaml
+
+Step 1/4: build Quote-to-SFT dataset
+generated 559 SFT examples
+Step 2/4: split included in Quote-to-SFT dataset build
+Step 3/4: validate dataset
+validated 559 examples -> training\qwen3\outputs\elysia\elysia-qwen3-lora\dataset_manifest.json
+Step 4/4: train Qwen3 LoRA
+resume: no compatible checkpoint found; starting from scratch
+Traceback (most recent call last):
+  File "D:\Alysia-chat\training\qwen3\train\train_lora.py", line 416, in <module>
+    raise SystemExit(main())
+  File "D:\Alysia-chat\training\qwen3\train\train_lora.py", line 81, in main
+    stopped_for = run_qlora_training(
+  File "D:\Alysia-chat\training\qwen3\train\train_lora.py", line 133, in run_qlora_training
+    raise RuntimeError(
+RuntimeError: Qwen3 training requires transformers>=4.51.0, but found 4.50.0. Run quickstart/install_qwen3_training_deps.ps1 to upgrade the training-only dependencies.
+If this is a real QLoRA run, make sure these were completed first:
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1
+python command failed: D:\Alysia-chat\runtime_env\python.exe D:\Alysia-chat\training\qwen3\train\train_lora.py --config
+ storage/training_jobs/configs/elysia-20260819-160941.yaml --pause-file D:\Alysia-chat\storage\training_jobs\fa5016cb40
+f143be8f3e77857306c7a4.pause --finish-file D:\Alysia-chat\storage\training_jobs\fa5016cb40f143be8f3e77857306c7a4.finish
+At D:\Alysia-chat\quickstart\train_qwen3.ps1:31 char:9
++         throw "python command failed: $RuntimePython $($Arguments -jo ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (python command ...7306c7a4.finish:String) [], RuntimeException
+    + FullyQualifiedErrorId : python command failed: D:\Alysia-chat\runtime_env\python.exe D:\Alysia-chat\training\qwe 
+   n3\train\train_lora.py --config storage/training_jobs/configs/elysia-20260819-160941.yaml --pause-file D:\Alysia-c  
+  hat\storage\training_jobs\fa5016cb40f143be8f3e77857306c7a4.pause --finish-file D:\Alysia-chat\storage\training_job   
+ s\fa5016cb40f143be8f3e77857306c7a4.finish
+[error] 任务进程退出，退出码 1

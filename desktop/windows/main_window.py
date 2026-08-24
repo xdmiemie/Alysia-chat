@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
         self.chat_page.voice_cancel_requested.connect(self.controller.cancel_voice_recording)
         self.chat_page.regenerate_voice_requested.connect(self.controller.regenerate_voice)
         self.chat_page.playback_changed.connect(self.controller.set_voice_playing)
+        self.training_page.characters_changed.connect(self._refresh_models_after_training)
         self.controller.log_requested.connect(self.open_logs)
         self.controller.state_changed.connect(self.apply_state)
         self.controller.conversations_changed.connect(self._apply_conversations)
@@ -170,8 +171,16 @@ class MainWindow(QMainWindow):
         dialog = ModelSelectionDialog(models, snapshot.qwen_model, snapshot.tts_model, self)
         if dialog.exec():
             self.controller.switch_models(
-                qwen_model=dialog.selected_qwen_model,
-                tts_model=dialog.selected_tts_model,
+                qwen_model=(
+                    dialog.selected_qwen_model
+                    if dialog.selected_qwen_model != snapshot.qwen_model
+                    else None
+                ),
+                tts_model=(
+                    dialog.selected_tts_model
+                    if dialog.selected_tts_model != snapshot.tts_model
+                    else None
+                ),
             )
 
     @Slot()
@@ -200,8 +209,24 @@ class MainWindow(QMainWindow):
         if self._call_dialog is dialog:
             self._call_dialog = None
 
+    @Slot()
+    def _refresh_models_after_training(self) -> None:
+        """Reflect a newly activated Stage 16 model in the active role UI."""
+        snapshot = self.controller.state.snapshot
+        try:
+            from runtime.qwen3 import model_registry
+            active = model_registry.load_character_manifest(snapshot.character_id)
+            model_id = str(active.get("active_model_id") or "")
+            if model_id:
+                self.controller.switch_models(qwen_model=model_id)
+        except (OSError, ValueError, KeyError):
+            # The task view already retains the detailed export log; a refresh
+            # failure must not hide an otherwise completed training job.
+            return
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self.chat_page.playback.stop()
+        self.training_page.shutdown()
         self.controller.shutdown()
         event.accept()
 

@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.qwen3 import model_registry
-from training.qwen3.config import file_sha256, load_training_config
+from training.qwen3.config import file_sha256, load_training_config, trained_model_identity
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,8 +32,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_training_config(args.config)
     run_dir = Path(args.run_dir) if args.run_dir else config.run_dir
-    model_id = args.model_id or f"{config.character_id}-{run_dir.name}"
-    display_name = args.display_name or model_id
+    default_model_id, default_display_name = trained_model_identity(config)
+    model_id = args.model_id or default_model_id
+    display_name = args.display_name or default_display_name
 
     gguf_path = Path(args.gguf_path) if args.gguf_path else None
     adapter_path = Path(args.adapter_path) if args.adapter_path else None
@@ -58,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             export_log=_relative(export_log),
             activate=args.activate,
         )
+        _associate_with_selected_roles(config, entry, activate=args.activate)
         _write_export_log(export_log, entry, gguf_path)
     else:
         if not _is_gguf_file(adapter_path):
@@ -80,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             export_log=_relative(export_log),
             activate=args.activate,
         )
+        _associate_with_selected_roles(config, entry, activate=args.activate)
         _write_export_log(export_log, entry, adapter_path)
 
     print(json.dumps(entry.to_manifest(), ensure_ascii=False, indent=2))
@@ -140,6 +143,43 @@ def _write_export_log(path: Path, entry: model_registry.Qwen3ModelEntry, artifac
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _associate_with_selected_roles(config, entry: model_registry.Qwen3ModelEntry, *, activate: bool) -> None:
+    """Register the same artifact paths for every role selected in training.
+
+    Runtime lookups remain per-character, while each registry entry references
+    the single exported artifact.  A LoRA target also receives the required
+    base entry so ``find_model`` can resolve its runtime base model.
+    """
+    targets = tuple(dict.fromkeys(config.assigned_character_ids or (config.character_id,)))
+    for character_id in targets:
+        if character_id == config.character_id:
+            continue
+        if entry.model_format == "lora":
+            model_registry.register_model(
+                character_id=character_id,
+                model_id=config.base_model.model_id,
+                display_name=config.base_model.model_id,
+                kind="base",
+                model_format="gguf",
+                required_files=[config.base_model.gguf_path],
+                activate=False,
+            )
+        model_registry.register_model(
+            character_id=character_id,
+            model_id=entry.model_id,
+            display_name=entry.display_name,
+            kind=entry.kind,
+            model_format=entry.model_format,
+            required_files=list(entry.required_files),
+            base_model_id=entry.base_model_id,
+            data_hash=entry.data_hash,
+            config_hash=entry.config_hash,
+            source_run=entry.source_run,
+            export_log=entry.export_log,
+            activate=activate,
+        )
 
 
 def _run_manifest_value(run_dir: Path, key: str) -> str | None:

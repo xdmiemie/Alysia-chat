@@ -98,7 +98,7 @@ if (-not [string]::IsNullOrWhiteSpace($Character)) {
     $Config = "training/qwen3/configs/characters/$Character.yaml"
 }
 
-$ConfigInfoJson = & $RuntimePython -c "import json, sys; from pathlib import Path; from training.qwen3.config import load_training_config; c=load_training_config(sys.argv[1]); print(json.dumps({'character_id': c.character_id, 'run_name': c.run_name, 'run_dir': str(c.run_dir), 'hf_path': str(c.base_model.hf_path) if c.base_model.hf_path else '', 'gguf_path': str(c.base_model.gguf_path)}, ensure_ascii=False))" $Config
+$ConfigInfoJson = & $RuntimePython -c "import json, sys; from pathlib import Path; from training.qwen3.config import load_training_config, trained_model_identity; c=load_training_config(sys.argv[1]); model_id, display_name=trained_model_identity(c); print(json.dumps({'character_id': c.character_id, 'run_name': c.run_name, 'run_dir': str(c.run_dir), 'hf_path': str(c.base_model.hf_path) if c.base_model.hf_path else '', 'gguf_path': str(c.base_model.gguf_path), 'trained_model_id': model_id, 'trained_model_display_name': display_name}, ensure_ascii=False))" $Config
 if ($LASTEXITCODE -ne 0) {
     throw "Could not read Qwen3 training config: $Config"
 }
@@ -112,10 +112,10 @@ if ([string]::IsNullOrWhiteSpace($AdapterDir)) {
     $AdapterDir = Join-Path $RunDir "adapter-final"
 }
 if ([string]::IsNullOrWhiteSpace($ModelId)) {
-    $ModelId = "$CharacterId-$RunName-final"
+    $ModelId = [string]$ConfigInfo.trained_model_id
 }
 if ([string]::IsNullOrWhiteSpace($DisplayName)) {
-    $DisplayName = "$CharacterId Qwen3 LoRA final"
+    $DisplayName = [string]$ConfigInfo.trained_model_display_name
 }
 if ([string]::IsNullOrWhiteSpace($HfPath) -or (-not (Test-Path -LiteralPath $HfPath))) {
     throw "Qwen3 HF model is missing. Run quickstart/download_qwen3_training_model.ps1 first."

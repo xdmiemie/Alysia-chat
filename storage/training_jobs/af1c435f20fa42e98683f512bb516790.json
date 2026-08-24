@@ -1,0 +1,19 @@
+{
+  "job_id": "af1c435f20fa42e98683f512bb516790",
+  "kind": "training",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260824-175316.yaml",
+  "state": "CANCELLED",
+  "created_at": "2026-08-24T09:53:28.275339+00:00",
+  "updated_at": "2026-08-24T09:55:40.791293+00:00",
+  "error": "stopped by user; generated artifacts retained",
+  "progress": 0.0,
+  "phase": "loading_model",
+  "detail": "{'train_runtime': 11.5297, 'train_samples_per_second': 693.859, 'train_steps_per_second': 86.732, 'train_loss': 0.025187867383162182, 'epoch': 2.72}",
+  "metrics": {
+    "loss": 0.025187867383162182,
+    "epoch": 2.72,
+    "raw": "{'train_runtime': 11.5297, 'train_samples_per_second': 693.859, 'train_steps_per_second': 86.732, 'train_loss': 0.025187867383162182, 'epoch': 2.72}",
+    "resume_checkpoint": "D:\\Alysia-chat\\training\\qwen3\\outputs\\elysia\\elysia-qwen3-lora-20260824-175316-c877dbd2\\checkpoint-24"
+  }
+}

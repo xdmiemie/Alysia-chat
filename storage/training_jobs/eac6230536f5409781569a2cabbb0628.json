@@ -1,0 +1,14 @@
+{
+  "job_id": "eac6230536f5409781569a2cabbb0628",
+  "kind": "dataset",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260819-155320.yaml",
+  "state": "DATASET_READY",
+  "created_at": "2026-08-19T07:53:20.946010+00:00",
+  "updated_at": "2026-08-19T07:53:22.112407+00:00",
+  "error": "",
+  "progress": 0.0,
+  "phase": "",
+  "detail": "",
+  "metrics": {}
+}

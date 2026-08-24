@@ -353,7 +353,12 @@ JSON, and retries once when the model returns invalid JSON or `<think>`.
 
 ## Stage 7 Qwen3 Role Training
 
-Elysia training data lives under `training/qwen3/datasets/elysia/raw/Elysia.jsonl`.
+New characters default to Quote-to-SFT: place UTF-8 source quotes in the
+generated `training/qwen3/datasets/<character>/raw/quotes.txt`, configure a
+local or remote OpenAI-compatible Teacher in that character's training YAML,
+and the pipeline creates auditable `generated/` artifacts plus final Chat JSONL.
+Existing `instruction/output` or Chat JSONL data remains available through
+`data_source.mode: chat_jsonl`; both modes use the same training/export path.
 Normal quickstart runtime does not install every training package. Install the
 training extras after bootstrap before a real QLoRA run:
 

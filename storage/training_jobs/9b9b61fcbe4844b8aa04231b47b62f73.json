@@ -1,0 +1,10 @@
+{
+  "job_id": "9b9b61fcbe4844b8aa04231b47b62f73",
+  "kind": "dataset",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260817-172318.yaml",
+  "state": "FAILED",
+  "created_at": "2026-08-17T09:23:18.399485+00:00",
+  "updated_at": "2026-08-17T09:23:18.572847+00:00",
+  "error": "任务进程退出，退出码 1"
+}

@@ -1,0 +1,24 @@
+{
+  "job_id": "8f4fbc61d93f4476836bf84a4e7b6991",
+  "kind": "training",
+  "character_id": "fish",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\fish-20260824-101550.yaml",
+  "state": "COMPLETED",
+  "created_at": "2026-08-24T02:44:32.399640+00:00",
+  "updated_at": "2026-08-24T03:57:42.938776+00:00",
+  "error": "",
+  "progress": 100.0,
+  "phase": "training",
+  "detail": "{'train_runtime': 1403.9976, 'train_samples_per_second': 5.698, 'train_steps_per_second': 0.712, 'train_loss': 0.04417831230163574, 'epoch': 38.46}",
+  "metrics": {
+    "train_runtime": 1403.9976,
+    "train_samples_per_second": 5.698,
+    "train_steps_per_second": 0.712,
+    "total_flos": 2.9049113151765504e+17,
+    "train_loss": 0.04417831230163574,
+    "epoch": 38.46,
+    "steps_per_second": 0.712,
+    "loss": 0.04417831230163574,
+    "raw": "{'train_runtime': 1403.9976, 'train_samples_per_second': 5.698, 'train_steps_per_second': 0.712, 'train_loss': 0.04417831230163574, 'epoch': 38.46}"
+  }
+}

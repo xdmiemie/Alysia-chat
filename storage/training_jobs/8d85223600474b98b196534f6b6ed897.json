@@ -1,0 +1,20 @@
+{
+  "job_id": "8d85223600474b98b196534f6b6ed897",
+  "kind": "dataset",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260824-135658.yaml",
+  "state": "CANCELLED",
+  "created_at": "2026-08-24T05:56:58.002627+00:00",
+  "updated_at": "2026-08-24T05:57:22.810359+00:00",
+  "error": "stopped by user; generated artifacts retained",
+  "progress": 37.5,
+  "phase": "scenario",
+  "detail": "场景生成已暂停；已完成场景已保存",
+  "metrics": {
+    "phase": "scenario",
+    "completed": 45,
+    "total": 120,
+    "percent": 37.5,
+    "message": "场景生成已暂停；已完成场景已保存"
+  }
+}

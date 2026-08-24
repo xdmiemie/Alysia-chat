@@ -113,6 +113,33 @@ def test_stage11_character_and_model_choices_follow_registry() -> None:
     controller.shutdown()
 
 
+def test_stage11_changing_qwen_does_not_revalidate_unchanged_tts(monkeypatch) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+    import desktop.controllers.app_controller as controller_module
+    from desktop.controllers import AppController
+
+    app = QApplication.instance() or QApplication([])
+    state = AppState(AppSnapshot(character_id="elysia", qwen_model="qwen-old", tts_model="tts-current"))
+    controller = AppController(state=state)
+    monkeypatch.setattr(controller, "available_models", lambda: [
+        ("qwen", "qwen-new", "Qwen3 · New"), ("tts", "tts-current", "GPT-SoVITS · Current"),
+    ])
+    monkeypatch.setattr(controller_module, "_manifest_selects", lambda _path, _character, model_id: model_id == "tts-current")
+    monkeypatch.setattr(controller_module.qwen_registry, "find_model", lambda *_args: object())
+    monkeypatch.setattr(controller_module.qwen_registry, "activate_model", lambda *_args: object())
+    verified: list[tuple[str | None, str | None]] = []
+    monkeypatch.setattr(controller_module, "_verify_active_models", lambda _character, qwen, tts: verified.append((qwen, tts)))
+
+    controller.switch_models(qwen_model="qwen-new", tts_model="tts-current")
+
+    assert verified == [("qwen-new", None)]
+    assert controller.state.snapshot.qwen_model == "qwen-new"
+    assert controller.state.snapshot.tts_model == "tts-current"
+    controller.shutdown()
+
+
 def test_stage11_selection_dialogs_expose_separate_model_controls() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")

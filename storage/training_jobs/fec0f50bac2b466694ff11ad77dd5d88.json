@@ -1,0 +1,20 @@
+{
+  "job_id": "fec0f50bac2b466694ff11ad77dd5d88",
+  "kind": "dataset",
+  "character_id": "fish",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\fish-20260824-100856.yaml",
+  "state": "CANCELLED",
+  "created_at": "2026-08-24T02:08:56.531109+00:00",
+  "updated_at": "2026-08-24T02:15:23.224397+00:00",
+  "error": "stopped by user; generated artifacts retained",
+  "progress": 113.3,
+  "phase": "scenario",
+  "detail": "场景生成已暂停；已完成场景已保存",
+  "metrics": {
+    "phase": "scenario",
+    "completed": 340,
+    "total": 300,
+    "percent": 113.3,
+    "message": "场景生成已暂停；已完成场景已保存"
+  }
+}

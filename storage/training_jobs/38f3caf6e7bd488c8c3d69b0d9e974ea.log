@@ -1,0 +1,45 @@
+[job:38f3caf6] 已启动 training 任务。
+Using unified runtime Python: D:\Alysia-chat\runtime_env\python.exe
+Using Qwen3 training config: storage/training_jobs/configs/elysia-20260824-134647.yaml
+Step 1/4: build Quote-to-SFT dataset
+[progress] {"phase": "finalize", "completed": 0, "total": 1, "percent": 0.0, "message": "已找到已生成的候选，正在复用并校验训练集"}
+[progress] {"phase": "complete", "completed": 1, "total": 1, "percent": 100.0, "message": "训练集已就绪，可开始训练"}
+generated 559 SFT examples
+Step 2/4: split included in Quote-to-SFT dataset build
+Step 3/4: validate dataset
+validated 559 examples -> training\qwen3\outputs\elysia\elysia-qwen3-lora\dataset_manifest.json
+Step 4/4: train Qwen3 LoRA
+W0824 13:47:10.624000 27604 runtime_env\Lib\site-packages\torch\utils\flop_counter.py:29] triton not found; flop counting will not work for triton kernels
+resume: no compatible checkpoint found; starting from scratch
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]
+Loading checkpoint shards:  20%|██        | 1/5 [00:05<00:20,  5.13s/it]
+Loading checkpoint shards:  40%|████      | 2/5 [00:10<00:15,  5.07s/it]
+Loading checkpoint shards:  60%|██████    | 3/5 [00:14<00:09,  4.80s/it]
+Loading checkpoint shards:  80%|████████  | 4/5 [00:18<00:04,  4.34s/it]
+Loading checkpoint shards: 100%|██████████| 5/5 [00:19<00:00,  3.22s/it]Loading checkpoint shards: 100%|██████████| 5/5 [00:19<00:00,  3.90s/it]
+Generating train split: 0 examples [00:00, ? examples/s]
+Generating train split: 503 examples [00:00, 47830.03 examples/s]
+Generating validation split: 0 examples [00:00, ? examples/s]
+Generating validation split: 56 examples [00:00, 10147.36 examples/s]
+Map:   0%|          | 0/503 [00:00<?, ? examples/s]
+Map:  14%|█▍        | 71/503 [00:00<00:00, 701.33 examples/s]
+Map:  31%|███       | 157/503 [00:00<00:00, 789.95 examples/s]
+Map:  48%|████▊     | 239/503 [00:00<00:00, 800.77 examples/s]
+Map:  64%|██████▍   | 323/503 [00:00<00:00, 813.61 examples/s]
+Map:  81%|████████▏ | 409/503 [00:00<00:00, 825.04 examples/s]
+Map:  99%|█████████▊| 496/503 [00:00<00:00, 837.22 examples/s]
+Map: 100%|██████████| 503/503 [00:00<00:00, 758.98 examples/s]
+Map:   0%|          | 0/56 [00:00<?, ? examples/s]
+Map: 100%|██████████| 56/56 [00:00<00:00, 698.84 examples/s]
+  0%|          | 0/1000 [00:00<?, ?it/s]
+  0%|          | 1/1000 [00:04<1:11:24,  4.29s/it]
+  0%|          | 2/1000 [00:07<1:04:12,  3.86s/it]
+  0%|          | 3/1000 [00:11<1:02:21,  3.75s/it]
+  0%|          | 4/1000 [00:15<1:01:12,  3.69s/it]
+[pause] 已请求在当前安全边界暂停；已完成的数据会保留。
+  0%|          | 5/1000 [00:18<1:00:14,  3.63s/it]
+[training_progress] {"phase": "training", "completed": 5, "total": 1000, "percent": 0.5, "metrics": {"train_runtime": 19.1058, "train_samples_per_second": 418.722, "train_steps_per_second": 52.34, "total_flos": 761951229143040.0, "train_loss": 1.5046894073486328, "epoch": 0.07952286282306163}, "steps_per_second": 0.262}
+                                                    0%|          | 5/1000 [00:19<1:00:14,  3.63s/it]  0%|          | 5/1000 [00:19<1:03:21,  3.82s/it]
+{'train_runtime': 19.1058, 'train_samples_per_second': 418.722, 'train_steps_per_second': 52.34, 'train_loss': 1.5046894073486328, 'epoch': 0.08}
+TRAINING_PAUSED: checkpoint saved; adapter export was intentionally skipped
+Training paused safely. Resume from the task control page to continue from the latest checkpoint.

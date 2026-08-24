@@ -13,21 +13,21 @@
       "created_at": "2026-07-26T11:02:34.7009679+00:00"
     },
     {
-      "id": "fish-fish-qwen3-lora-final",
-      "display_name": "fish Qwen3 LoRA final",
+      "id": "fish-qiyu-1-d6b3aa33-final",
+      "display_name": "QIYU-1",
       "kind": "trained",
       "format": "lora",
       "required_files": [
         "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf",
-        "model_store/registry/qwen3/fish/fish-fish-qwen3-lora-final/adapter_model.gguf"
+        "model_store/registry/qwen3/fish/fish-qiyu-1-d6b3aa33-final/adapter_model.gguf"
       ],
-      "created_at": "2026-07-26T14:06:17.115232+00:00",
+      "created_at": "2026-08-24T03:57:42.825158+00:00",
       "base_model_id": "qwen3-8b-q4-k-m-base-v1",
-      "data_hash": "cdb0b6f4897931f36b0f96367f4d954b1e15aa5f11b5366cebcd13afa4abc9aa",
-      "config_hash": "8b886fdde0114784eaebdf50f4d9344df5d7362fcb1aefbb921cc42693825485",
+      "data_hash": "34711007a04a2fed1dcd0996fb215e641ed7dce59f6271e375fa638153f13a9b",
+      "config_hash": "4ef70e7af9e15e4e270d77073aef96b2064b7d9f8ab2380c1f5e54d9b6b517d1",
       "source_run": "training/qwen3/outputs/fish/fish-qwen3-lora",
       "export_log": "training/qwen3/outputs/fish/fish-qwen3-lora/export_log.json"
     }
   ],
-  "activated_at": "2026-08-15T09:57:01.687441+00:00"
+  "activated_at": "2026-08-24T05:42:42.086900+00:00"
 }

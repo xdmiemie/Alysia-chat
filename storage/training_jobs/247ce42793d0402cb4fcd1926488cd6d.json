@@ -1,0 +1,23 @@
+{
+  "job_id": "247ce42793d0402cb4fcd1926488cd6d",
+  "kind": "training",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260824-164332.yaml",
+  "state": "CANCELLED",
+  "created_at": "2026-08-24T08:58:15.979871+00:00",
+  "updated_at": "2026-08-24T09:01:51.779439+00:00",
+  "error": "stopped by user; generated artifacts retained",
+  "progress": 100.0,
+  "phase": "complete",
+  "detail": "{'train_runtime': 11.6098, 'train_samples_per_second': 689.071, 'train_steps_per_second': 86.134, 'train_loss': 0.0017698820607334959, 'epoch': 116.57}",
+  "metrics": {
+    "phase": "complete",
+    "completed": 1,
+    "total": 1,
+    "percent": 100.0,
+    "message": "训练集已就绪，可开始训练",
+    "loss": 0.0017698820607334959,
+    "epoch": 116.57,
+    "raw": "{'train_runtime': 11.6098, 'train_samples_per_second': 689.071, 'train_steps_per_second': 86.134, 'train_loss': 0.0017698820607334959, 'epoch': 116.57}"
+  }
+}

@@ -41,6 +41,17 @@ def normalize_jsonl(source: Path, output: Path, system_prompt: str) -> int:
             if not line.strip():
                 continue
             raw = json.loads(line)
+            existing_messages = raw.get("messages")
+            if isinstance(existing_messages, list):
+                # Chat JSONL is already the canonical format.  Preserve its
+                # author-supplied system context and auditable metadata rather
+                # than rebuilding a second, divergent training representation.
+                record = {"messages": existing_messages}
+                if isinstance(raw.get("metadata"), dict):
+                    record["metadata"] = raw["metadata"]
+                output_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                count += 1
+                continue
             user_text = _user_text(raw)
             assistant_text = _assistant_text(raw)
             if not user_text or not assistant_text:

@@ -1,0 +1,15 @@
+[job:b0ef7fb2] 已启动 dataset 任务。
+[progress] {"phase": "persona", "completed": 0, "total": 1, "percent": 0.0, "message": "正在提取角色 Persona"}
+[progress] {"phase": "persona", "completed": 1, "total": 1, "percent": 100.0, "message": "Persona 已完成"}
+[progress] {"phase": "analysis", "completed": 0, "total": 30, "percent": 0.0, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 1, "total": 30, "percent": 3.3, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 2, "total": 30, "percent": 6.7, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 3, "total": 30, "percent": 10.0, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 4, "total": 30, "percent": 13.3, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 5, "total": 30, "percent": 16.7, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 6, "total": 30, "percent": 20.0, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 7, "total": 30, "percent": 23.3, "message": "正在分析原始语录"}
+[pause] 已请求在当前安全边界暂停；已完成的数据会保留。
+[progress] {"phase": "analysis", "completed": 8, "total": 30, "percent": 26.7, "message": "正在分析原始语录"}
+[progress] {"phase": "analysis", "completed": 8, "total": 30, "percent": 26.7, "message": "构造已暂停"}
+DATASET_PAUSED: saved candidates can be resumed from Judge

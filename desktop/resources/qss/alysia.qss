@@ -698,6 +698,82 @@ QTabBar::tab:selected {
     border-bottom: 2px solid #ee6fad;
 }
 
+/* Stage 16: tab pages are plain QWidget instances.  They do not inherit a
+   stylesheet background from the training shell on every Qt platform, so set
+   all four surfaces explicitly instead of allowing the white native fallback. */
+#qwen3TrainingTabs, #qwen3TrainingTabs::pane,
+#trainingPageScroll, #trainingPageScroll > QWidget > QWidget,
+#qwenSourceTabScroll, #qwenSettingsTabScroll, #qwenPreviewTabScroll, #qwenTaskTabScroll,
+#qwenSourceTab, #qwenSettingsTab, #qwenPreviewTab, #qwenTaskTab {
+    background: #17182d;
+    color: #eeeaf8;
+}
+
+#trainingPageScroll > QWidget > QWidget,
+#qwenSourceTabScroll > QWidget > QWidget,
+#qwenSettingsTabScroll > QWidget > QWidget,
+#qwenPreviewTabScroll > QWidget > QWidget,
+#qwenTaskTabScroll > QWidget > QWidget {
+    background: #17182d;
+}
+
+#qwen3TrainingTabs::pane {
+    border: 1px solid #30314d;
+    border-radius: 10px;
+    top: -1px;
+}
+
+#qwen3TrainingTabs QLineEdit,
+#qwen3TrainingTabs QTextEdit,
+#qwen3TrainingTabs QSpinBox,
+#qwen3TrainingTabs QDoubleSpinBox,
+#qwen3TrainingTabs QComboBox {
+    background: #25263f;
+    color: #f1edf8;
+    border: 1px solid #454663;
+    border-radius: 8px;
+    padding: 6px 10px;
+    selection-background-color: #70405f;
+    selection-color: #ffffff;
+}
+
+#fixedTeacherModel {
+    background: #202136;
+    color: #c5e6d8;
+    border: 1px solid #365b52;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-weight: 600;
+}
+
+#qwen3TrainingTabs QLineEdit:focus,
+#qwen3TrainingTabs QTextEdit:focus,
+#qwen3TrainingTabs QSpinBox:focus,
+#qwen3TrainingTabs QDoubleSpinBox:focus,
+#qwen3TrainingTabs QComboBox:focus {
+    background: #2b2c47;
+    border-color: #e96ca9;
+}
+
+#qwen3TrainingTabs QCheckBox {
+    background: transparent;
+    color: #eeeaf8;
+    spacing: 9px;
+}
+
+#qwen3TrainingTabs QCheckBox::indicator {
+    width: 17px;
+    height: 17px;
+    background: #24253d;
+    border: 1px solid #575873;
+    border-radius: 4px;
+}
+
+#qwen3TrainingTabs QCheckBox::indicator:checked {
+    background: #e967a7;
+    border-color: #f08abb;
+}
+
 #voiceCallDialog {
     background: #15162a;
 }

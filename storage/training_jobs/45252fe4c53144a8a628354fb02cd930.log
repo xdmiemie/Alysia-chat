@@ -1,0 +1,40 @@
+[job:45252fe4] 已启动 training 任务。
+Using unified runtime Python: D:\Alysia-chat\runtime_env\python.exe
+Using Qwen3 training config: storage/training_jobs/configs/elysia-20260824-094221.yaml
+Step 1/4: build Quote-to-SFT dataset
+generated 559 SFT examples
+Step 2/4: split included in Quote-to-SFT dataset build
+Step 3/4: validate dataset
+validated 559 examples -> training\qwen3\outputs\elysia\elysia-qwen3-lora\dataset_manifest.json
+Step 4/4: train Qwen3 LoRA
+[pause] 已请求在当前安全边界暂停；已完成的数据会保留。
+W0824 09:59:39.232000 19296 runtime_env\Lib\site-packages\torch\utils\flop_counter.py:29] triton not found; flop counting will not work for triton kernels
+resume: no compatible checkpoint found; starting from scratch
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]
+Loading checkpoint shards:  20%|██        | 1/5 [00:04<00:18,  4.53s/it]
+Loading checkpoint shards:  40%|████      | 2/5 [00:09<00:13,  4.54s/it]
+Loading checkpoint shards:  60%|██████    | 3/5 [00:13<00:09,  4.54s/it]
+Loading checkpoint shards:  80%|████████  | 4/5 [00:17<00:04,  4.20s/it]
+Loading checkpoint shards: 100%|██████████| 5/5 [00:18<00:00,  3.15s/it]
+Loading checkpoint shards: 100%|██████████| 5/5 [00:18<00:00,  3.72s/it]
+Generating train split: 0 examples [00:00, ? examples/s]
+Generating train split: 503 examples [00:00, 17618.56 examples/s]
+Generating validation split: 0 examples [00:00, ? examples/s]
+Generating validation split: 56 examples [00:00, 11236.71 examples/s]
+Map:   0%|          | 0/503 [00:00<?, ? examples/s]
+Map:  12%|█▏        | 62/503 [00:00<00:00, 607.20 examples/s]
+Map:  29%|██▊       | 144/503 [00:00<00:00, 724.36 examples/s]
+Map:  45%|████▌     | 227/503 [00:00<00:00, 764.14 examples/s]
+Map:  61%|██████▏   | 309/503 [00:00<00:00, 782.74 examples/s]
+Map:  78%|███████▊  | 390/503 [00:00<00:00, 790.63 examples/s]
+Map:  95%|█████████▌| 478/503 [00:00<00:00, 811.22 examples/s]
+Map: 100%|██████████| 503/503 [00:00<00:00, 720.97 examples/s]
+Map:   0%|          | 0/56 [00:00<?, ? examples/s]
+Map: 100%|██████████| 56/56 [00:00<00:00, 657.38 examples/s]
+  0%|          | 0/1000 [00:00<?, ?it/s]
+  0%|          | 1/1000 [00:04<1:14:46,  4.49s/it]
+[training_progress] {"phase": "training", "completed": 1, "total": 1000, "percent": 0.1, "metrics": {"train_runtime": 5.0179, "train_samples_per_second": 1594.29, "train_steps_per_second": 199.286, "total_flos": 152865237903360.0, "train_loss": 3.30814266204834, "epoch": 0.015904572564612324}, "steps_per_second": 0.199}
+                                                    0%|          | 1/1000 [00:05<1:14:46,  4.49s/it]  0%|          | 1/1000 [00:05<1:23:30,  5.02s/it]
+{'train_runtime': 5.0179, 'train_samples_per_second': 1594.29, 'train_steps_per_second': 199.286, 'train_loss': 3.30814266204834, 'epoch': 0.02}
+TRAINING_PAUSED: checkpoint saved; adapter export was intentionally skipped
+Training paused safely. Resume from the task control page to continue from the latest checkpoint.

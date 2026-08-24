@@ -1,0 +1,14 @@
+{
+  "job_id": "fa5016cb40f143be8f3e77857306c7a4",
+  "kind": "training",
+  "character_id": "elysia",
+  "config_path": "D:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20260819-160941.yaml",
+  "state": "FAILED",
+  "created_at": "2026-08-19T08:09:49.144746+00:00",
+  "updated_at": "2026-08-19T08:10:10.683729+00:00",
+  "error": "任务进程退出，退出码 1",
+  "progress": 0.0,
+  "phase": "",
+  "detail": "",
+  "metrics": {}
+}

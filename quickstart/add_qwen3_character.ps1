@@ -43,7 +43,7 @@ if ([string]::IsNullOrWhiteSpace($DisplayName)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($DatasetFileName)) {
-    $DatasetFileName = "$Character.jsonl"
+    $DatasetFileName = "quotes.txt"
 }
 
 $CharacterConfigDir = Join-Path $ProjectRoot "configs\characters\$Character"
@@ -123,12 +123,44 @@ base_model:
   gguf_path: $BaseGgufPath
   hf_path: $HfPath
 
+data_source:
+  mode: quotes
+  quotes: training/qwen3/datasets/$Character/raw/$DatasetFileName
+  optional_profile: null
+
 dataset:
   raw: training/qwen3/datasets/$Character/raw/$DatasetFileName
-  normalized: training/qwen3/datasets/$Character/normalized.jsonl
-  train: training/qwen3/datasets/$Character/train.jsonl
-  validation: training/qwen3/datasets/$Character/validation.jsonl
+  normalized: training/qwen3/datasets/$Character/generated/normalized_quotes.jsonl
+  generated_dir: training/qwen3/datasets/$Character/generated
+  train: training/qwen3/datasets/$Character/final/train.jsonl
+  validation: training/qwen3/datasets/$Character/final/validation.jsonl
   validation_ratio: 0.1
+
+teacher:
+  generator:
+    provider: openai_compatible
+    model: ""
+    base_url: http://127.0.0.1:8080/v1
+  judge:
+    provider: openai_compatible
+    model: ""
+    base_url: http://127.0.0.1:8080/v1
+
+generation:
+  target_samples: 3000
+  candidates_per_scene: 3
+  max_regenerate: 2
+  seed: 7
+  keep_metadata: true
+  auto_balance: true
+  min_persona_score: 0.70
+  min_relevance_score: 0.70
+  min_naturalness_score: 0.65
+  min_behavior_score: 0.65
+  max_copy_score: 0.30
+  max_assistant_like_penalty: 0.25
+  max_catchphrase_penalty: 0.35
+  max_near_duplicate_ratio: 0.92
 
 training:
   method: qlora
@@ -143,20 +175,27 @@ training:
   lora_r: 16
   lora_alpha: 32
   lora_dropout: 0.05
+  assistant_only_loss: true
+  sequence_length: 2048
+  seed: 7
+  gradient_checkpointing: true
+  bf16: false
+  fp16: true
 "@
 Write-TextFile -Path $TrainingConfigPath -Content $TrainingYaml
 
 $DatasetReadme = @"
-Put $DisplayName Qwen3 role training data here:
+Put $DisplayName source quotes here (one UTF-8 quote per line, or change the
+config to a `.jsonl` file with `text` and optional source/context metadata):
 
 $($RawDatasetPath.Substring($ProjectRoot.Length + 1))
 
-Expected source JSONL formats:
-{"instruction":"user text","input":"","output":"assistant text"}
+Before the first run, set `teacher.generator.model` and `teacher.judge.model`
+in the character training config. The default endpoint is a local
+OpenAI-compatible server at http://127.0.0.1:8080/v1.
 
-or
-
-{"user":"user text","assistant":{"reply":"assistant text","emotion":"neutral","intensity":0.5,"speed":1.0}}
+For an already prepared Chat JSONL dataset, set `data_source.mode: chat_jsonl`
+and point `dataset.raw` at the JSONL file instead.
 "@
 Write-TextFile -Path (Join-Path $RawDatasetDir "README.txt") -Content $DatasetReadme
 
