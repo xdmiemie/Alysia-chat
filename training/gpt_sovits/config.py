@@ -20,6 +20,7 @@ class DatasetConfig:
     max_duration_seconds: float = 12.0
     target_sample_rate: int = 32000
     allowed_extensions: tuple[str, ...] = (".wav", ".flac", ".mp3", ".m4a")
+    validation_ratio: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,11 @@ class StageConfig:
     save_steps: int
     save_total_limit: int
     best_checkpoint_name: str
+    batch_size: int = 8
+    learning_rate: float = 0.0001
+    num_workers: int = 0
+    precision: str = "fp16"
+    epochs: int | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +107,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
             max_duration_seconds=float(dataset_raw.get("max_duration_seconds", 12.0)),
             target_sample_rate=int(dataset_raw.get("target_sample_rate", 32000)),
             allowed_extensions=_split_extensions(str(dataset_raw.get("allowed_extensions", ".wav,.flac,.mp3,.m4a"))),
+            validation_ratio=float(dataset_raw.get("validation_ratio", 0.1)),
         ),
         base_model=BaseModelConfig(
             model_id=str(base_raw.get("model_id", "gpt-sovits-pretrained-v2")),
@@ -154,6 +161,11 @@ def _stage_config(raw: dict[str, Any], *, default_command: str) -> StageConfig:
         save_steps=int(raw.get("save_steps", 200)),
         save_total_limit=int(raw.get("save_total_limit", 5)),
         best_checkpoint_name=str(raw.get("best_checkpoint_name", "best")),
+        batch_size=int(raw.get("batch_size", 8)),
+        learning_rate=float(raw.get("learning_rate", 0.0001)),
+        num_workers=int(raw.get("num_workers", 0)),
+        precision=str(raw.get("precision", "fp16")),
+        epochs=int(raw["epochs"]) if raw.get("epochs") is not None else None,
     )
 
 

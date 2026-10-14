@@ -18,6 +18,7 @@ from desktop.state import AppSnapshot
 from desktop.widgets import LogConsole
 from desktop.controllers.training_worker import Qwen3Job, Qwen3JobState, Qwen3TrainingWorker, load_incomplete_jobs
 from desktop.controllers.teacher_service import FixedTeacherService, TEACHER_BASE_URL, TEACHER_MODEL_NAME
+from desktop.pages.voice_training_page import VoiceTrainingPage
 from training.qwen3.config import load_training_config
 from training.qwen3.generate.pipeline import normalize_quotes
 
@@ -89,7 +90,10 @@ class TrainingPage(QWidget):
         self.qwen_card_button.setObjectName("primaryButton")
         self.qwen_card_button.clicked.connect(self._open_qwen_training)
         cards.addWidget(self._task_card("Qwen3 角色训练", "语录构造、LoRA 参数、导出与激活流程", self.qwen_card_button), 0, 0)
-        cards.addWidget(self._task_card("GPT-SoVITS 训练", "参考音频、切片与两阶段训练", "Stage 17 开放"), 0, 1)
+        self.voice_card_button = QPushButton("配置 GPT-SoVITS 训练")
+        self.voice_card_button.setObjectName("primaryButton")
+        self.voice_card_button.clicked.connect(self._open_voice_training)
+        cards.addWidget(self._task_card("GPT-SoVITS 训练", "音频校验、S1/S2 训练、试听与自动应用", self.voice_card_button), 0, 1)
         root.addLayout(cards)
 
         self.training_worker = Qwen3TrainingWorker(self)
@@ -103,6 +107,9 @@ class TrainingPage(QWidget):
         self.training_tabs.addTab(self._build_settings_tab(), "Teacher 与 LoRA")
         self.training_tabs.addTab(self._build_preview_tab(), "数据预览")
         self.training_tabs.addTab(self._build_task_tab(), "任务控制")
+        self.voice_training_page = VoiceTrainingPage(self)
+        self.voice_training_page.models_changed.connect(self.characters_changed)
+        self.training_tabs.addTab(self.voice_training_page, "GPT-SoVITS · 语音训练")
         root.addWidget(self.training_tabs)
 
         log_header = QLabel("任务日志")
@@ -256,6 +263,7 @@ class TrainingPage(QWidget):
 
     def apply_state(self, _snapshot: AppSnapshot) -> None:
         self._active_character_id = _snapshot.character_id
+        self.voice_training_page.set_runtime_busy(_snapshot.model_service_running)
         current = self.character_combo.findData(_snapshot.character_id)
         if current >= 0 and current != self.character_combo.currentIndex():
             self.character_combo.setCurrentIndex(current)
@@ -297,6 +305,8 @@ class TrainingPage(QWidget):
 
     def _load_character_training_config(self, *_args) -> None:
         character_id = self._selected_id()
+        if hasattr(self, "voice_training_page"):
+            self.voice_training_page.set_character_id(character_id)
         self._sync_model_roles(character_id)
         if not character_id:
             return
@@ -511,6 +521,9 @@ training:
     def _open_qwen_training(self) -> None:
         self.training_tabs.setCurrentIndex(0)
 
+    def _open_voice_training(self) -> None:
+        self.training_tabs.setCurrentWidget(self.voice_training_page)
+
     @Slot(str)
     def _on_teacher_status(self, message: str) -> None:
         self.teacher_status_label.setText(message)
@@ -533,6 +546,7 @@ training:
 
     def shutdown(self) -> None:
         self.teacher_service.stop()
+        self.voice_training_page.shutdown()
 
     @Slot(object)
     def _apply_job_state(self, job: Qwen3Job) -> None:

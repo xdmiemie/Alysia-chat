@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from training.gpt_sovits.config import TrainingConfig, file_sha256, load_training_config
-from training.gpt_sovits.preprocess.dataset_manifest import DatasetValidation, validate_dataset
+from training.gpt_sovits.preprocess.dataset_manifest import DatasetValidation, split_items, validate_dataset
 
 
 UPSTREAM_ROOT = PROJECT_ROOT / "third_party" / "GPT-SoVITS"
@@ -101,11 +101,22 @@ def build_recipe(config: TrainingConfig, validation: DatasetValidation) -> Recip
 
     lines: list[str] = []
     mapping: list[dict[str, str]] = []
-    for index, item in enumerate(validation.items, start=1):
+    train_items, _holdout = split_items(validation.items, config.dataset.validation_ratio)
+    for index, item in enumerate(train_items, start=1):
         generated_name = f"{index:06d}_{item.audio_hash[:12]}.wav"
         destination = recipe.audio_dir / generated_name
-        if not destination.exists() or file_sha256(destination) != item.audio_hash:
-            shutil.copy2(item.resolved_audio_path, destination)
+        if not destination.exists():
+            if item.resolved_audio_path.suffix.lower() == ".wav" and item.sample_rate == config.dataset.target_sample_rate and item.channels == 1:
+                shutil.copy2(item.resolved_audio_path, destination)
+            else:
+                ffmpeg = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+                if not ffmpeg.exists():
+                    raise FileNotFoundError(f"audio normalization requires project FFmpeg: {ffmpeg}")
+                completed = subprocess.run([str(ffmpeg), "-y", "-v", "error", "-i", str(item.resolved_audio_path),
+                                            "-ac", "1", "-ar", str(config.dataset.target_sample_rate),
+                                            "-c:a", "pcm_s16le", str(destination)], check=False)
+                if completed.returncode:
+                    raise RuntimeError(f"could not normalize audio: {item.audio_path}")
         text = _clean_field(item.text)
         speaker = _clean_field(item.speaker or config.speaker)
         language = _gpt_sovits_language(item.language or config.language)
@@ -194,21 +205,23 @@ def write_s1_config(config: TrainingConfig, validation: DatasetValidation, recip
     version = detect_version(config)
     template_name = "s1longer.yaml" if version == "v1" else "s1longer-v2.yaml"
     data = _load_simple_yaml(GPT_SOVITS_ROOT / "configs" / template_name)
-    batch_size = _env_int("ALYSIA_GPT_SOVITS_S1_BATCH_SIZE", 8)
-    steps_per_epoch = max(1, ceil(len(validation.items) / batch_size))
+    batch_size = _env_int("ALYSIA_GPT_SOVITS_S1_BATCH_SIZE", config.s1.batch_size)
+    steps_per_epoch = max(1, ceil(_recipe_item_count(recipe.input_text) / batch_size))
     data.setdefault("train", {})
     data["train"]["seed"] = config.seed
     data["train"]["batch_size"] = batch_size
-    data["train"]["epochs"] = _epochs_from_steps(config.s1.max_steps, steps_per_epoch)
-    data["train"]["save_every_n_epoch"] = _epochs_from_steps(config.s1.save_steps, steps_per_epoch)
+    data["train"]["epochs"] = min(config.s1.epochs or _epochs_from_steps(config.s1.max_steps, steps_per_epoch), _env_int("ALYSIA_GPT_SOVITS_EPOCH_LIMIT", 2**31 - 1))
+    data["train"]["save_every_n_epoch"] = _env_int("ALYSIA_GPT_SOVITS_SAVE_EPOCH_INTERVAL", _epochs_from_steps(config.s1.save_steps, steps_per_epoch))
     data["train"]["pretrained_s1"] = str(config.base_model.s1_checkpoint)
+    data["optimizer"]["lr_init"] = config.s1.learning_rate
+    data["train"]["precision"] = "32" if config.s1.precision == "fp32" else "bf16-mixed" if config.s1.precision == "bf16" else "16-mixed"
     data["pretrained_s1"] = str(config.base_model.s1_checkpoint)
     data["train"]["if_save_every_weights"] = True
     data["train"]["if_save_latest"] = False
     data["train"]["if_dpo"] = False
     data.setdefault("data", {})
     default_num_workers = 0 if os.name == "nt" else int(data["data"].get("num_workers", 4))
-    data["data"]["num_workers"] = _env_int_allow_zero("ALYSIA_GPT_SOVITS_S1_NUM_WORKERS", default_num_workers)
+    data["data"]["num_workers"] = _env_int_allow_zero("ALYSIA_GPT_SOVITS_S1_NUM_WORKERS", config.s1.num_workers if config.s1.num_workers >= 0 else default_num_workers)
     half_weights_save_dir = config.run_dir / "weights" / _gpt_weight_dir(version)
     output_dir = config.run_dir / "s1"
     half_weights_save_dir.mkdir(parents=True, exist_ok=True)
@@ -228,16 +241,19 @@ def write_s2_config(config: TrainingConfig, validation: DatasetValidation, recip
     if version in {"v2Pro", "v2ProPlus"}:
         template = f"s2{version}.json"
     data = json.loads((GPT_SOVITS_ROOT / "configs" / template).read_text(encoding="utf-8"))
-    batch_size = _env_int("ALYSIA_GPT_SOVITS_S2_BATCH_SIZE", 4)
-    steps_per_epoch = max(1, ceil(len(validation.items) / batch_size))
+    batch_size = _env_int("ALYSIA_GPT_SOVITS_S2_BATCH_SIZE", config.s2.batch_size)
+    steps_per_epoch = max(1, ceil(_recipe_item_count(recipe.input_text) / batch_size))
     data["train"]["seed"] = config.seed
     data["train"]["batch_size"] = batch_size
-    data["train"]["epochs"] = _epochs_from_steps(config.s2.max_steps, steps_per_epoch)
+    data["train"]["epochs"] = min(config.s2.epochs or _epochs_from_steps(config.s2.max_steps, steps_per_epoch), _env_int("ALYSIA_GPT_SOVITS_EPOCH_LIMIT", 2**31 - 1))
+    data["train"]["learning_rate"] = config.s2.learning_rate
+    data["train"]["fp16_run"] = config.s2.precision != "fp32"
+    data["data"]["num_workers"] = config.s2.num_workers
     data["train"]["pretrained_s2G"] = str(config.base_model.s2_checkpoint)
     data["train"]["pretrained_s2D"] = str(_default_s2d_checkpoint(config, version))
     data["train"]["if_save_latest"] = False
     data["train"]["if_save_every_weights"] = True
-    data["train"]["save_every_epoch"] = _epochs_from_steps(config.s2.save_steps, steps_per_epoch)
+    data["train"]["save_every_epoch"] = _env_int("ALYSIA_GPT_SOVITS_SAVE_EPOCH_INTERVAL", _epochs_from_steps(config.s2.save_steps, steps_per_epoch))
     data["train"]["gpu_numbers"] = os.environ.get("ALYSIA_GPT_SOVITS_GPUS", "0")
     data["train"]["grad_ckpt"] = os.environ.get("ALYSIA_GPT_SOVITS_GRAD_CKPT", "false").lower() == "true"
     data["model"]["version"] = version

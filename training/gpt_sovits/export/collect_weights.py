@@ -42,11 +42,6 @@ def main(argv: list[str] | None = None) -> int:
         run=config.run_name,
         timestamp=timestamp,
     )
-    registry_dir = config.export.registry_root / config.character_id / model_id
-    references_target = registry_dir / "references"
-    registry_dir.mkdir(parents=True, exist_ok=True)
-    references_target.mkdir(parents=True, exist_ok=True)
-
     gpt_weight = _project_path(args.gpt_weight) if args.gpt_weight else discover_latest_gpt_weight(config.run_dir)
     sovits_weight = _project_path(args.sovits_weight) if args.sovits_weight else discover_latest_sovits_weight(config.run_dir)
     references_dir = _project_path(args.references_dir) if args.references_dir else config.run_dir / "references"
@@ -56,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(f"--sovits-weight must be a .pth file: {sovits_weight}")
     if not references_dir.exists():
         raise FileNotFoundError(f"references directory does not exist: {references_dir}")
+    registry_dir = config.export.registry_root / config.character_id / model_id
+    references_target = registry_dir / "references"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    references_target.mkdir(parents=True, exist_ok=True)
 
     registered_gpt = registry_dir / gpt_weight.name
     registered_sovits = registry_dir / sovits_weight.name
@@ -70,6 +69,16 @@ def main(argv: list[str] | None = None) -> int:
                 reference_files.append(target)
     if not reference_files:
         raise RuntimeError("at least one reference audio file is required")
+
+    shutil.copy2(config_path, registry_dir / "training_config.yaml")
+    (registry_dir / "dataset_hash.txt").write_text(validation.dataset_hash + "\n", encoding="utf-8")
+    (registry_dir / "metadata.json").write_text(json.dumps({
+        "character_id": config.character_id, "model_id": model_id,
+        "source_run": _relative(config.run_dir), "dataset_hash": validation.dataset_hash,
+        "config_hash": config_hash(config_path),
+        "gpt_weight": registered_gpt.name, "sovits_weight": registered_sovits.name,
+        "references": [path.name for path in reference_files],
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     export_log = config.run_dir / "export_log.json"
     entry = model_registry.register_model(

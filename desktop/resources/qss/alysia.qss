@@ -406,6 +406,17 @@ QPushButton:focus {
     color: #ffffff;
 }
 
+#secondaryButton:pressed {
+    background: #454663;
+    border-color: #e967a7;
+}
+
+#secondaryButton:disabled {
+    background: #28283c;
+    color: #686678;
+    border-color: #333349;
+}
+
 #logConsole {
     background: #0c0d1a;
     color: #b9d8cf;

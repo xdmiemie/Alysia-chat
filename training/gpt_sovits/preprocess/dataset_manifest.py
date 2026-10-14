@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import audioop
 import json
+import subprocess
 import sys
 import wave
 from collections import Counter
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +62,7 @@ class DatasetValidation:
     warnings: tuple[str, ...]
     dataset_hash: str
     total_duration_seconds: float
+    stats: dict[str, object] = field(default_factory=dict)
 
     def to_report(self) -> dict[str, object]:
         return {
@@ -71,6 +74,7 @@ class DatasetValidation:
             "dataset_hash": self.dataset_hash,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
+            "stats": self.stats,
         }
 
 
@@ -185,6 +189,8 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
     errors: list[str] = []
     warnings: list[str] = []
     items: list[DatasetItem] = []
+    stats: dict[str, object] = {"total_samples": 0, "too_short": 0, "too_long": 0,
+                                "empty_text": 0, "damaged": 0, "duplicates": 0}
 
     if not manifest.exists():
         errors.append(
@@ -192,7 +198,10 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
             f"{_relative(manifest)}. Put WAV files under {_relative(config.dataset.raw_audio_dir)} "
             "and run this command with --prepare, or use quickstart/train_gpt_sovits.ps1."
         )
-        return _validation(config, items, errors, warnings)
+        validation = _validation(config, items, errors, warnings, stats)
+        config.dataset.validation_report.parent.mkdir(parents=True, exist_ok=True)
+        config.dataset.validation_report.write_text(json.dumps(validation.to_report(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return validation
 
     seen_audio_hashes: dict[str, str] = {}
     for line_number, raw_line in enumerate(manifest.read_text(encoding="utf-8-sig").splitlines(), start=1):
@@ -206,6 +215,7 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
         if not isinstance(record, dict):
             errors.append(f"line {line_number}: record must be a JSON object")
             continue
+        stats["total_samples"] = int(stats["total_samples"]) + 1
         missing = sorted(REQUIRED_FIELDS - set(record))
         if missing:
             errors.append(f"line {line_number}: missing required field(s): {', '.join(missing)}")
@@ -213,11 +223,15 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
 
         text = str(record.get("text", "")).strip()
         if not text:
-            errors.append(f"line {line_number}: text must not be empty")
+            stats["empty_text"] = int(stats["empty_text"]) + 1
+            errors.append(f"line {line_number} ({record.get('audio_path', '')}): text must not be empty")
         audio_rel = str(record.get("audio_path", "")).strip()
         audio_path = (config.dataset.raw_audio_dir / audio_rel).resolve()
         if not audio_rel:
             errors.append(f"line {line_number}: audio_path must not be empty")
+            continue
+        if config.dataset.raw_audio_dir.resolve() not in audio_path.parents:
+            errors.append(f"line {line_number}: audio_path escapes the raw audio directory: {audio_rel}")
             continue
         if not audio_path.exists():
             errors.append(f"line {line_number}: audio file missing: {audio_rel}")
@@ -232,36 +246,48 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
         audio_hash = file_sha256(audio_path)
         duplicate = seen_audio_hashes.get(audio_hash)
         if duplicate:
-            errors.append(f"line {line_number}: duplicate audio content also used by {duplicate}")
+            stats["duplicates"] = int(stats["duplicates"]) + 1
+            errors.append(f"line {line_number} ({audio_rel}): duplicate audio content also used by {duplicate}")
         else:
             seen_audio_hashes[audio_hash] = audio_rel
 
         duration, sample_rate, channels, audio_warnings = inspect_audio(audio_path)
-        warnings.extend(f"line {line_number}: {warning}" for warning in audio_warnings)
+        warnings.extend(f"line {line_number} ({audio_rel}): {warning}" for warning in audio_warnings)
+        if duration <= 0 or any("could not" in warning for warning in audio_warnings):
+            stats["damaged"] = int(stats["damaged"]) + 1
+            errors.append(f"line {line_number} ({audio_rel}): audio cannot be decoded")
+            continue
+        for key in ("speaker", "emotion", "language", "source"):
+            if not str(record.get(key, "")).strip():
+                errors.append(f"line {line_number} ({audio_rel}): {key} must not be empty")
+        if str(record.get("speaker", "")).strip() != config.speaker:
+            errors.append(f"line {line_number} ({audio_rel}): speaker must match training character '{config.speaker}'")
         declared_duration = _optional_float(record.get("duration"))
         if declared_duration is not None and abs(declared_duration - duration) > 0.5:
             warnings.append(
-                f"line {line_number}: declared duration {declared_duration:.3f}s differs from measured {duration:.3f}s"
+                f"line {line_number} ({audio_rel}): declared duration {declared_duration:.3f}s differs from measured {duration:.3f}s"
             )
         if duration < config.dataset.min_duration_seconds:
+            stats["too_short"] = int(stats["too_short"]) + 1
             warnings.append(
-                f"line {line_number}: skipped audio shorter than {config.dataset.min_duration_seconds:.3f}s: "
+                f"line {line_number} ({audio_rel}): skipped audio shorter than {config.dataset.min_duration_seconds:.3f}s: "
                 f"{duration:.3f}s"
             )
             continue
         if duration > config.dataset.max_duration_seconds:
+            stats["too_long"] = int(stats["too_long"]) + 1
             warnings.append(
-                f"line {line_number}: skipped audio longer than {config.dataset.max_duration_seconds:.3f}s: "
+                f"line {line_number} ({audio_rel}): skipped audio longer than {config.dataset.max_duration_seconds:.3f}s: "
                 f"{duration:.3f}s"
             )
             continue
         if sample_rate is not None and sample_rate != config.dataset.target_sample_rate:
             warnings.append(
-                f"line {line_number}: sample rate is {sample_rate}, target is {config.dataset.target_sample_rate}; "
+                f"line {line_number} ({audio_rel}): sample rate is {sample_rate}, target is {config.dataset.target_sample_rate}; "
                 "convert before real training"
             )
         if channels is not None and channels != 1:
-            warnings.append(f"line {line_number}: audio has {channels} channels; mono is recommended")
+            warnings.append(f"line {line_number} ({audio_rel}): audio has {channels} channels; mono is recommended")
 
         items.append(
             DatasetItem(
@@ -279,7 +305,9 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
             )
         )
 
-    validation = _validation(config, items, errors, warnings)
+    stats["emotion_counts"] = dict(Counter(item.emotion for item in items))
+    stats["average_duration_seconds"] = round(sum(item.duration for item in items) / len(items), 3) if items else 0.0
+    validation = _validation(config, items, errors, warnings, stats)
     config.dataset.validation_report.parent.mkdir(parents=True, exist_ok=True)
     config.dataset.validation_report.write_text(
         json.dumps(validation.to_report(), ensure_ascii=False, indent=2) + "\n",
@@ -291,12 +319,40 @@ def validate_dataset(config: TrainingConfig, *, write_normalized: bool = True) -
             "\n".join(json.dumps(item.to_json_record(), ensure_ascii=False) for item in validation.items) + "\n",
             encoding="utf-8",
         )
+        train, holdout = split_items(validation.items, config.dataset.validation_ratio)
+        for label, subset in (("train", train), ("validation", holdout)):
+            target = config.dataset.normalized_manifest.with_name(f"manifest.{label}.jsonl")
+            target.write_text("\n".join(json.dumps(item.to_json_record(), ensure_ascii=False) for item in subset)
+                              + ("\n" if subset else ""), encoding="utf-8")
     return validation
+
+
+def split_items(items: tuple[DatasetItem, ...], ratio: float) -> tuple[tuple[DatasetItem, ...], tuple[DatasetItem, ...]]:
+    """Stable holdout split: path/hash ordering does not depend on manifest row order."""
+    ordered = sorted(items, key=lambda item: (item.audio_hash, item.audio_path))
+    holdout_count = min(len(ordered) - 1, max(1, round(len(ordered) * ratio))) if len(ordered) > 1 else 0
+    return tuple(ordered[holdout_count:]), tuple(ordered[:holdout_count])
 
 
 def inspect_audio(path: Path) -> tuple[float, int | None, int | None, list[str]]:
     if path.suffix.lower() != ".wav":
-        return _optional_duration_from_file_size(path), None, None, ["non-WAV audio cannot be deeply inspected yet"]
+        ffprobe = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffprobe.exe"
+        ffmpeg = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+        if not ffprobe.exists() or not ffmpeg.exists():
+            return 0.0, None, None, ["could not decode non-WAV audio without project FFmpeg"]
+        probe = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "a:0", "-show_entries",
+                                "stream=sample_rate,channels:format=duration", "-of", "json", str(path)],
+                               capture_output=True, text=True, check=False)
+        decoded = subprocess.run([str(ffmpeg), "-v", "error", "-i", str(path), "-f", "null", "-"],
+                                 capture_output=True, text=True, check=False)
+        if probe.returncode or decoded.returncode:
+            return 0.0, None, None, [f"could not decode audio: {(probe.stderr or decoded.stderr).strip()[:180]}"]
+        try:
+            data = json.loads(probe.stdout)
+            stream = data["streams"][0]
+            return float(data["format"]["duration"]), int(stream["sample_rate"]), int(stream["channels"]), []
+        except (ValueError, KeyError, IndexError, TypeError):
+            return 0.0, None, None, ["could not read audio metadata"]
     try:
         with wave.open(str(path), "rb") as handle:
             frames = handle.getnframes()
@@ -306,8 +362,30 @@ def inspect_audio(path: Path) -> tuple[float, int | None, int | None, list[str]]
             warnings: list[str] = []
             if handle.getsampwidth() not in {2, 4}:
                 warnings.append(f"sample width is {handle.getsampwidth()} bytes; 16-bit PCM is recommended")
+            if frames == 0:
+                warnings.append("could not decode empty WAV")
+            elif handle.getsampwidth() in {2, 4}:
+                width = handle.getsampwidth()
+                peak = 0
+                quiet_frames = 0
+                inspected_frames = 0
+                while True:
+                    data = handle.readframes(4096)
+                    if not data:
+                        break
+                    peak = max(peak, audioop.max(data, width))
+                    count = len(data) // (width * channels)
+                    inspected_frames += count
+                    if audioop.rms(data, width) < (2 ** (width * 8 - 1)) * 0.005:
+                        quiet_frames += count
+                if inspected_frames < frames:
+                    warnings.append("could not decode complete WAV data")
+                if inspected_frames and quiet_frames / inspected_frames > 0.8:
+                    warnings.append(f"silence ratio {quiet_frames / inspected_frames:.1%} exceeds 80%")
+                if peak >= (2 ** (width * 8 - 1)) * 0.99:
+                    warnings.append("clipping detected near full scale")
             return duration, sample_rate, channels, warnings
-    except wave.Error as exc:
+    except (wave.Error, EOFError, OSError, ZeroDivisionError) as exc:
         return 0.0, None, None, [f"could not parse WAV header: {exc}"]
 
 
@@ -316,7 +394,12 @@ def _validation(
     items: list[DatasetItem],
     errors: list[str],
     warnings: list[str],
+    stats: dict[str, object] | None = None,
 ) -> DatasetValidation:
+    stats = dict(stats or {})
+    train, holdout = split_items(tuple(items), config.dataset.validation_ratio)
+    stats["train_samples"] = len(train)
+    stats["validation_samples"] = len(holdout)
     hash_values = [
         item.audio_path
         + "|"
@@ -342,6 +425,7 @@ def _validation(
         warnings=tuple(warnings),
         dataset_hash=dataset_hash,
         total_duration_seconds=sum(item.duration for item in items),
+        stats=stats,
     )
 
 

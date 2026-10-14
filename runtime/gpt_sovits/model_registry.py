@@ -291,7 +291,14 @@ def prune_trained_models(character_id: str, keep: int = TRAINED_MODEL_LIMIT) -> 
     data = load_character_manifest(character_id)
     trained = [raw for raw in data.get("models", []) if raw.get("kind") == "trained"]
     trained.sort(key=lambda raw: str(raw.get("created_at", "")), reverse=True)
-    to_remove = trained[keep:]
+    # Candidate registration happens before Stage 17 smoke validation.  The
+    # previously active voice must remain available even when it is older than
+    # the regular retention window.
+    active_id = str(data.get("active_model_id") or "")
+    protected = [raw for raw in trained if str(raw.get("id")) == active_id]
+    newest = [raw for raw in trained if str(raw.get("id")) != active_id]
+    retained_ids = {str(raw.get("id")) for raw in [*protected, *newest[:max(0, keep - len(protected))]]}
+    to_remove = [raw for raw in trained if str(raw.get("id")) not in retained_ids]
     if not to_remove:
         return
 

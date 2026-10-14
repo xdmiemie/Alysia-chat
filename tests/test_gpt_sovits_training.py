@@ -296,7 +296,7 @@ def test_gpt_sovits_recipe_preflights_japanese_dependency(tmp_path, monkeypatch)
         ensure_language_dependencies(validation)
 
 
-def test_gpt_sovits_registry_keeps_base_and_latest_five_trained_models(tmp_path, monkeypatch):
+def test_gpt_sovits_registry_keeps_base_active_voice_and_latest_other_models(tmp_path, monkeypatch):
     monkeypatch.setattr(model_registry, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(model_registry, "REGISTRY_ROOT", tmp_path / "model_store" / "registry" / "gpt_sovits")
     monkeypatch.setattr(model_registry, "ACTIVE_ROOT", tmp_path / "model_store" / "active")
@@ -328,10 +328,10 @@ def test_gpt_sovits_registry_keeps_base_and_latest_five_trained_models(tmp_path,
 
     manifest = json.loads((model_registry.REGISTRY_ROOT / "elysia" / "models.json").read_text(encoding="utf-8"))
     trained_ids = [item["id"] for item in manifest["models"] if item["kind"] == "trained"]
-    assert trained_ids == ["trained-1", "trained-2", "trained-3", "trained-4", "trained-5"]
+    assert trained_ids == ["trained-0", "trained-2", "trained-3", "trained-4", "trained-5"]
     assert json.loads((model_registry.ACTIVE_ROOT / "gpt_sovits_elysia.json").read_text(encoding="utf-8"))[
         "model_id"
-    ] == "base-v1"
+    ] == "trained-0"
 
 
 def test_gpt_sovits_registry_backfills_base_when_trained_exists(tmp_path, monkeypatch):

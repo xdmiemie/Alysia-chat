@@ -211,14 +211,14 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _refresh_models_after_training(self) -> None:
-        """Reflect a newly activated Stage 16 model in the active role UI."""
+        """Reflect newly activated text or voice models in the active role UI."""
         snapshot = self.controller.state.snapshot
         try:
-            from runtime.qwen3 import model_registry
-            active = model_registry.load_character_manifest(snapshot.character_id)
-            model_id = str(active.get("active_model_id") or "")
-            if model_id:
-                self.controller.switch_models(qwen_model=model_id)
+            from runtime.qwen3 import model_registry as qwen_registry
+            from runtime.gpt_sovits import model_registry as voice_registry
+            qwen = str(qwen_registry.load_character_manifest(snapshot.character_id).get("active_model_id") or "")
+            voice = str(voice_registry.load_character_manifest(snapshot.character_id).get("active_model_id") or "")
+            self.controller.switch_models(qwen_model=qwen or None, tts_model=voice or None)
         except (OSError, ValueError, KeyError):
             # The task view already retains the detailed export log; a refresh
             # failure must not hide an otherwise completed training job.

@@ -1,0 +1,19 @@
+[voice:fb9c0dfd] prepare 已启动
+[preprocessing] 正在扫描音频并准备转写
+GPT-SoVITS dataset already processed: training/gpt_sovits/datasets/elysia/work/manifest.jsonl
+[preprocessing] 正在标准化音频并构造 GPT-SoVITS 特征
+Traceback (most recent call last):
+File "E:\Alysia-chat\third_party\GPT-SoVITS\GPT_SoVITS\prepare_datasets\1-get-text.py", line 14, in <module>
+import torch
+ModuleNotFoundError: No module named 'torch'
+[voice_error] GPT-SoVITS upstream command failed with exit code 1: GPT_SoVITS/prepare_datasets/1-get-text.py
+Traceback (most recent call last):
+File "E:\Alysia-chat\training\gpt_sovits\desktop_job.py", line 203, in <module>
+raise SystemExit(main())
+File "E:\Alysia-chat\training\gpt_sovits\desktop_job.py", line 60, in main
+ensure_upstream_prepared(config, recipe, s2_config, include_semantic=True)
+File "E:\Alysia-chat\training\gpt_sovits\train\run_recipe.py", line 172, in ensure_upstream_prepared
+run_upstream(
+File "E:\Alysia-chat\training\gpt_sovits\train\run_recipe.py", line 289, in run_upstream
+raise RuntimeError(f"GPT-SoVITS upstream command failed with exit code {completed.returncode}: {' '.join(args)}")
+RuntimeError: GPT-SoVITS upstream command failed with exit code 1: GPT_SoVITS/prepare_datasets/1-get-text.py

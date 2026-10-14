@@ -1,0 +1,51 @@
+character_id: elysia
+run_name: elysia-gpt-sovits-20261014-145901-188623
+speaker: elysia
+language: zh
+outputs_dir: E:\Alysia-chat\training\gpt_sovits\outputs
+resume_from: auto
+seed: 20260727
+base_model:
+  model_id: gpt-sovits-pretrained-v2
+  pretrained_root: third_party/GPT-SoVITS/GPT_SoVITS/pretrained_models
+  s1_checkpoint: E:\Alysia-chat\third_party\GPT-SoVITS\GPT_SoVITS\pretrained_models\s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt
+  s2_checkpoint: E:\Alysia-chat\third_party\GPT-SoVITS\GPT_SoVITS\pretrained_models\s2G488k.pth
+dataset:
+  root: E:\Alysia-chat\training\gpt_sovits\datasets\elysia
+  raw_audio_dir: E:\Alysia-chat\training\gpt_sovits\datasets\elysia\raw
+  raw_manifest: E:\Alysia-chat\training\gpt_sovits\datasets\elysia\work\manifest.jsonl
+  normalized_manifest: E:\Alysia-chat\training\gpt_sovits\datasets\elysia\work\manifest.normalized.jsonl
+  validation_report: E:\Alysia-chat\training\gpt_sovits\datasets\elysia\work\validation_report.json
+  min_duration_seconds: 1.0
+  max_duration_seconds: 12.0
+  target_sample_rate: 32000
+  allowed_extensions: .wav,.flac,.mp3,.m4a
+  validation_ratio: 0.1
+s1:
+  enabled: true
+  command: '{python} -m training.gpt_sovits.train.run_recipe --stage s1 --config {config}'
+  batch_size: 8
+  max_steps: 4641
+  save_steps: 250
+  save_total_limit: 10
+  best_checkpoint_name: best
+  epochs: 17
+  learning_rate: 0.0001
+  num_workers: 0
+  precision: fp16
+s2:
+  enabled: true
+  command: '{python} -m training.gpt_sovits.train.run_recipe --stage s2 --config {config}'
+  batch_size: 8
+  max_steps: 2730
+  save_steps: 250
+  save_total_limit: 10
+  best_checkpoint_name: best
+  epochs: 10
+  learning_rate: 0.0001
+  num_workers: 0
+  precision: fp16
+export:
+  registry_root: model_store/registry/gpt_sovits
+  model_id_template: '{character}-gpt-sovits-{timestamp}'
+  references_emotion: neutral
