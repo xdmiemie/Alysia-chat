@@ -10,7 +10,8 @@
       "required_files": [
         "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf"
       ],
-      "created_at": "2026-07-26T06:11:36+00:00"
+      "created_at": "2026-07-26T06:11:36+00:00",
+      "status": "active"
     },
     {
       "id": "elysia-qwen3-lora-final",
@@ -29,5 +30,5 @@
       "export_log": "training/qwen3/outputs/elysia/elysia-qwen3-lora/export_log.json"
     }
   ],
-  "activated_at": "2026-10-15T07:21:11.903069+00:00"
+  "activated_at": "2026-10-15T09:21:12.069049+00:00"
 }

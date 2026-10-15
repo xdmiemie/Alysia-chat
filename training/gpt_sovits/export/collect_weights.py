@@ -52,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     if not references_dir.exists():
         raise FileNotFoundError(f"references directory does not exist: {references_dir}")
     registry_dir = config.export.registry_root / config.character_id / model_id
+    if registry_dir.exists() and any(registry_dir.iterdir()):
+        raise FileExistsError(f"模型版本已存在，拒绝覆盖权重：{registry_dir}")
     references_target = registry_dir / "references"
     registry_dir.mkdir(parents=True, exist_ok=True)
     references_target.mkdir(parents=True, exist_ok=True)
@@ -74,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
     (registry_dir / "dataset_hash.txt").write_text(validation.dataset_hash + "\n", encoding="utf-8")
     (registry_dir / "metadata.json").write_text(json.dumps({
         "character_id": config.character_id, "model_id": model_id,
+        "model_type": "gpt_sovits", "base_model": config.base_model.model_id,
+        "training_config": "training_config.yaml", "status": "registered",
         "source_run": _relative(config.run_dir), "dataset_hash": validation.dataset_hash,
         "config_hash": config_hash(config_path),
         "gpt_weight": registered_gpt.name, "sovits_weight": registered_sovits.name,
@@ -87,12 +91,16 @@ def main(argv: list[str] | None = None) -> int:
         display_name=args.display_name or f"{config.character_id} GPT-SoVITS {timestamp}",
         kind="trained",
         required_files=[registered_gpt, registered_sovits, *reference_files],
+        base_model_id=config.base_model.model_id,
         data_hash=validation.dataset_hash,
         config_hash=config_hash(config_path),
         source_run=_relative(config.run_dir),
         export_log=_relative(export_log),
-        activate=args.activate,
+        activate=False,
     )
+    if args.activate:
+        from runtime.core.model_smoke import smoke_test_voice
+        entry = model_registry.activate_model(config.character_id, model_id, smoke_test=smoke_test_voice)
     export_log.parent.mkdir(parents=True, exist_ok=True)
     export_log.write_text(json.dumps(entry.to_manifest(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(entry.to_manifest(), ensure_ascii=False, indent=2))

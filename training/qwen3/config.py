@@ -199,14 +199,19 @@ def trained_model_identity(config: TrainingConfig) -> tuple[str, str]:
     """Return the stable registry id and visible name for a trained adapter."""
     custom_name = config.model_name.strip()
     if not custom_name:
-        model_id = f"{config.character_id}-{config.run_name}-final"
+        run_slug = re.sub(r"[^a-z0-9]+", "-", config.run_name.lower()).strip("-") or "run"
+        model_id = f"{config.character_id}-{run_slug[:max(1, 128 - len(config.character_id) - 7)]}-final"
         return model_id, f"{config.character_id} Qwen3 LoRA final"
 
     # The visible name may be Chinese or contain punctuation; the registry
     # folder/id must remain filesystem-safe. The digest keeps such names unique.
     slug = re.sub(r"[^a-z0-9]+", "-", custom_name.lower()).strip("-") or "custom-model"
-    digest = hashlib.sha256(custom_name.encode("utf-8")).hexdigest()[:8]
-    return f"{config.character_id}-{slug}-{digest}-final", custom_name
+    run_slug = re.sub(r"[^a-z0-9]+", "-", config.run_name.lower()).strip("-") or "run"
+    digest = hashlib.sha256(f"{config.run_name}\0{custom_name}".encode("utf-8")).hexdigest()[:8]
+    available = max(2, 128 - len(config.character_id) - len(digest) - 9)
+    slug = slug[:min(32, available // 2)]
+    run_slug = run_slug[:available - len(slug)]
+    return f"{config.character_id}-{slug}-{run_slug}-{digest}-final", custom_name
 
 
 def _project_path(path: str | Path) -> Path:

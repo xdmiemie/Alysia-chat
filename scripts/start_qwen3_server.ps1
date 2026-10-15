@@ -3,7 +3,8 @@ param(
     [string]$Character = "",
     [string]$ModelVersion = "",
     [switch]$Interactive,
-    [switch]$Background
+    [switch]$Background,
+    [switch]$SkipActivation
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +20,8 @@ $Python = Resolve-AlysiaRuntimePython
 $ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json")
 $PromptForModel = $Interactive -or ((-not $Background) -and [string]::IsNullOrWhiteSpace($Character) -and [string]::IsNullOrWhiteSpace($ModelVersion))
 if ($PromptForModel) {
-    $ResolveArgs += @("--interactive", "--activate")
+    $ResolveArgs += "--interactive"
+    if (-not $SkipActivation) { $ResolveArgs += "--activate" }
     if (-not [string]::IsNullOrWhiteSpace($Character)) {
         $ResolveArgs += @("--character", $Character)
     }
@@ -30,7 +32,7 @@ if ($PromptForModel) {
     if (-not [string]::IsNullOrWhiteSpace($ModelVersion)) {
         $ResolveArgs += @("--model", $ModelVersion)
     }
-    if (-not [string]::IsNullOrWhiteSpace($Character) -or -not [string]::IsNullOrWhiteSpace($ModelVersion)) {
+    if ((-not $SkipActivation) -and ((-not [string]::IsNullOrWhiteSpace($Character)) -or (-not [string]::IsNullOrWhiteSpace($ModelVersion)))) {
         $ResolveArgs += "--activate"
     }
 }

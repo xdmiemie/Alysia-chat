@@ -31,6 +31,7 @@ def build_system_prompt(profile: CharacterProfile, prompt_path: str | Path) -> s
 
     personality = ", ".join(profile.personality) or "warm, concise"
     forbidden = ", ".join(profile.forbidden) or "chain-of-thought, markdown"
+    speaking_style = getattr(profile, "speaking_style_text", "").strip()
     schema_text = json.dumps(REPLY_SCHEMA, ensure_ascii=False)
     return "\n".join(
         part
@@ -39,6 +40,7 @@ def build_system_prompt(profile: CharacterProfile, prompt_path: str | Path) -> s
             base_prompt,
             f"Character: {profile.name} ({profile.character_id}).",
             f"Personality: {personality}.",
+            f"Speaking style: {speaking_style}" if speaking_style else "",
             f"Forbidden behavior: {forbidden}.",
             f"Keep reply within {profile.max_sentences} short spoken sentences.",
             "Return only valid JSON. No markdown, no code fences, no extra text.",

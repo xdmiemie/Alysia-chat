@@ -22,16 +22,27 @@ def test_shared_qwen_model_is_retained_until_its_last_role_is_removed(tmp_path: 
         "qwen3", "summer-chat-v1", "Summer chat", ["violet", "iris"], [incoming], model_format="gguf"
     )
     owned_file = model.required_files[0]
+    metadata = owned_file.parent / "metadata.json"
+    metadata.write_text("{}", encoding="utf-8")
     assert owned_file.is_file()
     assert set(model.character_ids) == {"violet", "iris"}
+
+    replacement = tmp_path / "replacement.gguf"
+    replacement.write_bytes(b"GGUF")
+    manager.add_shared_model("qwen3", "replacement-v1", "Replacement", ["violet", "iris"], [replacement])
+    for role_id in ("violet", "iris"):
+        manifest = manager._load_model_manifest("qwen3", role_id)
+        manifest["active_model_id"] = "replacement-v1"
+        manager._save_model_manifest("qwen3", role_id, manifest)
 
     assert manager.remove_model_association("qwen3", model.registry_key, "violet") is False
     assert owned_file.is_file()
     remaining = manager.list_shared_models("qwen3")
-    assert remaining[0].character_ids == ("iris",)
+    assert next(item for item in remaining if item.registry_key == model.registry_key).character_ids == ("iris",)
 
     assert manager.remove_model_association("qwen3", model.registry_key, "iris") is True
     assert not owned_file.exists()
+    assert not metadata.exists()
 
 
 def test_training_config_reads_multi_role_assignment(tmp_path: Path) -> None:

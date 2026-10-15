@@ -57,9 +57,9 @@ def main(argv: list[str] | None = None) -> int:
             config_hash=_run_manifest_value(run_dir, "config_hash"),
             source_run=_relative(run_dir),
             export_log=_relative(export_log),
-            activate=args.activate,
+            activate=False,
         )
-        _associate_with_selected_roles(config, entry, activate=args.activate)
+        _associate_with_selected_roles(config, entry, activate=False)
         _write_export_log(export_log, entry, gguf_path)
     else:
         if not _is_gguf_file(adapter_path):
@@ -80,11 +80,16 @@ def main(argv: list[str] | None = None) -> int:
             config_hash=_run_manifest_value(run_dir, "config_hash"),
             source_run=_relative(run_dir),
             export_log=_relative(export_log),
-            activate=args.activate,
+            activate=False,
         )
-        _associate_with_selected_roles(config, entry, activate=args.activate)
+        _associate_with_selected_roles(config, entry, activate=False)
         _write_export_log(export_log, entry, adapter_path)
 
+    if args.activate:
+        from runtime.core.model_smoke import smoke_test_qwen
+        smoke_test_qwen(entry)
+        for character_id in dict.fromkeys((config.character_id, *config.assigned_character_ids)):
+            model_registry.activate_model(character_id, entry.model_id, smoke_test=lambda _model: None)
     print(json.dumps(entry.to_manifest(), ensure_ascii=False, indent=2))
     return 0
 
@@ -118,6 +123,8 @@ def _install_artifact(path: Path | None, character_id: str, model_id: str) -> Pa
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / source.name
     if source.resolve() != target.resolve():
+        if target.exists():
+            raise FileExistsError(f"模型版本已存在，拒绝覆盖权重：{target}")
         target.write_bytes(source.read_bytes())
     return target
 
@@ -152,7 +159,7 @@ def _associate_with_selected_roles(config, entry: model_registry.Qwen3ModelEntry
     the single exported artifact.  A LoRA target also receives the required
     base entry so ``find_model`` can resolve its runtime base model.
     """
-    targets = tuple(dict.fromkeys(config.assigned_character_ids or (config.character_id,)))
+    targets = tuple(dict.fromkeys((config.character_id, *config.assigned_character_ids)))
     for character_id in targets:
         if character_id == config.character_id:
             continue

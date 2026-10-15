@@ -177,13 +177,13 @@ def test_secondary_windows_share_frameless_title_bar_and_dark_theme(tmp_path, mo
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
-    from desktop.app import THEME_PATH
+    from desktop.app import load_theme_stylesheet
     import desktop.windows.settings_dialog as settings_module
     from desktop.windows.selection_dialogs import ModelSelectionDialog
     from desktop.windows.voice_call_dialog import VoiceCallDialog
 
     app = QApplication.instance() or QApplication([])
-    app.setStyleSheet(THEME_PATH.read_text(encoding="utf-8"))
+    app.setStyleSheet(load_theme_stylesheet())
     monkeypatch.setattr(settings_module, "SETTINGS_PATH", tmp_path / "settings.json")
     settings = settings_module.SettingsDialog(tmp_path / "missing.log")
     model = ModelSelectionDialog(

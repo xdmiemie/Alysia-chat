@@ -62,9 +62,9 @@ class CharacterDraft:
     personality: str = ""
     speaking_style: str = ""
     forbidden_behavior: str = ""
-    temperature: float = 0.8
+    temperature: float = 0.7
     top_p: float = 0.9
-    max_tokens: int = 512
+    max_tokens: int = 256
     tts_model: str = ""
     default_emotion: str = "neutral"
     speed: float = 1.0
@@ -141,14 +141,14 @@ class CharacterManager:
         # Legacy character folders predate Stage 15 and do not carry default
         # model IDs in character.yaml.  Their per-character registries remain
         # the source of truth, so surface the active model in the editor.
-        draft.qwen_model = str(raw.get("qwen3_default_model") or self._active_model_id("qwen3", character_id))
-        draft.tts_model = str(raw.get("gpt_sovits_default_model") or self._active_model_id("gpt_sovits", character_id))
+        draft.qwen_model = str(self._active_model_id("qwen3", character_id) or raw.get("qwen3_default_model") or "")
+        draft.tts_model = str(self._active_model_id("gpt_sovits", character_id) or raw.get("gpt_sovits_default_model") or "")
         draft.default_emotion = str(raw.get("default_emotion") or "neutral")
         draft.speed = _number(raw.get("speed"), 1.0, float)
         draft.text_language = str(raw.get("text_language") or draft.language)
-        draft.temperature = _number(raw.get("temperature"), 0.8, float)
+        draft.temperature = _number(raw.get("temperature"), 0.7, float)
         draft.top_p = _number(raw.get("top_p"), 0.9, float)
-        draft.max_tokens = _number(raw.get("max_tokens"), 512, int)
+        draft.max_tokens = _number(raw.get("max_tokens"), 256, int)
         draft.personality = str(raw.get("personality_text") or "")
         draft.speaking_style = str(raw.get("speaking_style_text") or "")
         draft.forbidden_behavior = str(raw.get("forbidden_behavior") or "")
@@ -269,6 +269,10 @@ class CharacterManager:
             ))
         return sorted(models, key=lambda item: (item.kind != "base", item.display_name.lower(), item.model_id))
 
+    def list_character_models(self, model_type: str, character_id: str) -> list[SharedModel]:
+        """Use the same per-character registry as the runtime selectors."""
+        return [model for model in self.list_shared_models(model_type) if character_id in model.character_ids]
+
     def associate_model(self, model_type: str, model_key: str, character_ids: Iterable[str]) -> SharedModel:
         """Associate an existing model with roles, reusing its physical files."""
         self._check_model_type(model_type)
@@ -279,6 +283,10 @@ class CharacterManager:
             raise ValueError("请至少选择一个角色。")
         for character_id in ids:
             manifest = self._load_model_manifest(model_type, character_id)
+            if any(str(item.get("id")) == source.model_id and
+                   self._model_registry_key(str(item.get("id") or ""), item.get("required_files", [])) != model_key
+                   for item in manifest["models"]):
+                raise ValueError(f"角色“{character_id}”已有同 ID 的不同模型。")
             models = [item for item in manifest["models"] if self._model_registry_key(str(item.get("id") or ""), item.get("required_files", [])) != model_key]
             models.append(dict(source.raw))
             manifest["models"] = models
@@ -320,6 +328,8 @@ class CharacterManager:
             raise ValueError("Qwen 模型需要至少一个 .gguf、.bin 或 .safetensors 文件。")
 
         target_dir = self.registry_dir / model_type / "_shared" / model_id
+        if target_dir.exists() and any(target_dir.iterdir()):
+            raise FileExistsError(f"模型目录已存在，拒绝覆盖文件：{target_dir}")
         target_dir.mkdir(parents=True, exist_ok=True)
         copied: list[Path] = []
         for source in files:
@@ -358,10 +368,17 @@ class CharacterManager:
         if not removed:
             raise ValueError(f"角色“{character_id}”未使用该模型。")
         model_id = str(removed[0].get("id") or "")
+        if model_id in {str(manifest.get("active_model_id") or ""),
+                        str(manifest.get("previous_model_id") or "")}:
+            raise ValueError("当前模型或上一回滚版本不能删除；请先切换并建立新的回滚版本。")
         manifest["models"] = [item for item in manifest["models"] if self._model_registry_key(str(item.get("id") or ""), item.get("required_files", [])) != model_key]
-        if str(manifest.get("active_model_id") or "") == model_id:
-            manifest["active_model_id"] = str(manifest["models"][0].get("id")) if manifest["models"] else None
         self._save_model_manifest(model_type, character_id, manifest)
+        config_path = self._root_for(character_id) / "character.yaml"
+        field = "qwen3_default_model" if model_type == "qwen3" else "gpt_sovits_default_model"
+        if config_path.is_file() and str(load_flat_yaml(config_path).get(field) or "") == model_id:
+            contents = config_path.read_text(encoding="utf-8-sig")
+            replacement = f"{field}: {_yaml(str(manifest.get('active_model_id') or ''))}"
+            self._atomic_text(config_path, re.sub(rf"(?m)^{field}:.*$", replacement, contents))
 
         still_used = any(model.registry_key == model_key for model in self.list_shared_models(model_type))
         if still_used:
@@ -369,14 +386,25 @@ class CharacterManager:
         referenced = {
             path.resolve() for model in self.list_shared_models(model_type) for path in model.required_files
         }
+        owned_root = (self.registry_dir / model_type).resolve()
+        owned_directories: set[Path] = set()
         for raw in removed:
             for value in raw.get("required_files", []):
                 path = self._project_model_path(value)
+                for directory in path.resolve().parents:
+                    if directory == owned_root:
+                        break
+                    if directory.name == model_id and owned_root in directory.parents:
+                        owned_directories.add(directory)
+                        break
                 if path.resolve() not in referenced:
                     self._remove_owned_model_file(model_type, path)
+        for directory in owned_directories:
+            if directory.is_dir() and not any(path == directory or directory in path.parents for path in referenced):
+                shutil.rmtree(directory)
         return True
 
-    def export_bundle(self, character_id: str, destination: str | Path) -> Path:
+    def export_bundle(self, character_id: str, destination: str | Path, *, include_models: bool = False) -> Path:
         root = self._root_for(character_id)
         if not root.is_dir():
             raise FileNotFoundError(f"角色不存在：{character_id}")
@@ -388,6 +416,29 @@ class CharacterManager:
             for path in root.rglob("*"):
                 if path.is_file():
                     archive.write(path, path.relative_to(root.parent).as_posix())
+            model_files: dict[str, str] = {}
+            for model_type in ("qwen3", "gpt_sovits"):
+                manifest = self._load_model_manifest(model_type, character_id)
+                archive.writestr(f"{character_id}/model_manifests/{model_type}.json",
+                                 json.dumps(manifest, ensure_ascii=False, indent=2))
+                if include_models:
+                    for raw in manifest["models"]:
+                        model_id = str(raw.get("id") or "")
+                        if not _VALID_ID.fullmatch(model_id):
+                            raise ValueError(f"模型 ID 不合法：{model_id}")
+                        for index, value in enumerate(raw.get("required_files", [])):
+                            source = self._project_model_path(value)
+                            if not source.is_file():
+                                raise FileNotFoundError(f"模型文件缺失：{source}")
+                            key = str(value)
+                            if key not in model_files:
+                                bundled = f"{character_id}/model_files/{model_type}/{model_id}/{index}_{source.name}"
+                                archive.write(source, bundled)
+                                model_files[key] = bundled
+            archive.writestr(f"{character_id}/bundle_metadata.json", json.dumps({
+                "format": 2, "character_id": character_id, "includes_models": include_models,
+                "model_files": model_files,
+            }, ensure_ascii=False, indent=2))
         return bundle
 
     def import_bundle(self, bundle: str | Path, *, replace: bool = False) -> CharacterDraft:
@@ -405,6 +456,9 @@ class CharacterManager:
             target = self._root_for(character_id)
             if target.exists() and not replace:
                 raise FileExistsError(f"角色已存在：{character_id}")
+            if not replace and any((self.registry_dir / kind / character_id / "models.json").exists()
+                                   for kind in ("qwen3", "gpt_sovits")):
+                raise FileExistsError(f"角色“{character_id}”的模型清单已存在。")
             with tempfile.TemporaryDirectory(prefix="alysia-character-") as temporary:
                 temporary_root = Path(temporary)
                 for name in names:
@@ -415,7 +469,40 @@ class CharacterManager:
                 imported = temporary_root / character_id
                 if target.exists():
                     shutil.rmtree(target)
-                shutil.copytree(imported, target)
+                shutil.copytree(imported, target,
+                                ignore=shutil.ignore_patterns("model_manifests", "model_files", "bundle_metadata.json"))
+                metadata_path = imported / "bundle_metadata.json"
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+                bundled_files = metadata.get("model_files") or {}
+                installed_files: dict[str, str] = {}
+                for model_type in ("qwen3", "gpt_sovits"):
+                    manifest_path = imported / "model_manifests" / f"{model_type}.json"
+                    if not manifest_path.is_file():
+                        continue
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    for raw in manifest.get("models", []):
+                        model_id = str(raw.get("id") or "")
+                        if not _VALID_ID.fullmatch(model_id):
+                            raise ValueError(f"模型 ID 不合法：{model_id}")
+                        restored: list[str] = []
+                        for index, value in enumerate(raw.get("required_files", [])):
+                            bundled = bundled_files.get(str(value))
+                            if bundled:
+                                if bundled in installed_files:
+                                    restored.append(installed_files[bundled])
+                                    continue
+                                source = temporary_root / bundled
+                                if not source.is_file() or temporary_root.resolve() not in source.resolve().parents:
+                                    raise ValueError("角色包模型路径不安全或文件缺失。")
+                                destination = self.registry_dir / model_type / character_id / model_id / f"{index}_{source.name}"
+                                destination.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(source, destination)
+                                installed_files[bundled] = self._relative_model_path(destination)
+                                restored.append(installed_files[bundled])
+                            else:
+                                restored.append(str(value))
+                        raw["required_files"] = restored
+                    self._save_model_manifest(model_type, character_id, manifest)
         return self.load(character_id)
 
     def add_reference(self, draft: CharacterDraft, emotion: str, source: str | Path, text: str = "") -> ReferenceVoice:

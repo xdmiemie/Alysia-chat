@@ -11,5 +11,5 @@
   "runtime": {
     "model_file": "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf"
   },
-  "activated_at": "2026-10-15T07:41:34.744470+00:00"
+  "activated_at": "2026-10-15T09:38:53.213925+00:00"
 }

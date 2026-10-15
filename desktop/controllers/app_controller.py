@@ -98,29 +98,12 @@ def _character_tts_model(character_id: str) -> str:
 
 
 def list_character_models(character_id: str) -> list[tuple[str, str, str]]:
-    choices: list[tuple[str, str, str]] = []
-    qwen_registry = PROJECT_ROOT / "model_store" / "registry" / "qwen3" / character_id / "models.json"
-    try:
-        qwen_data = json.loads(qwen_registry.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        qwen_data = {}
-    for item in qwen_data.get("models", []):
-        model_id = str(item.get("id") or "")
-        if model_id:
-            display_name = str(item.get("display_name") or model_id)
-            choices.append(("qwen", model_id, f"Qwen3 · {display_name}"))
-
-    tts_manifest = PROJECT_ROOT / "model_store" / "registry" / "gpt_sovits" / character_id / "models.json"
-    try:
-        tts_data = json.loads(tts_manifest.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
-        tts_data = {}
-    for item in tts_data.get("models", []):
-        model_id = str(item.get("id") or "")
-        if model_id:
-            display_name = str(item.get("display_name") or model_id)
-            choices.append(("tts", model_id, f"GPT-SoVITS · {display_name}"))
-    return choices
+    return [
+        *(("qwen", model.model_id, f"Qwen3 · {model.display_name}")
+          for model in qwen_registry.list_models(character_id)),
+        *(("tts", model.model_id, f"GPT-SoVITS · {model.display_name}")
+          for model in tts_registry.list_models(character_id)),
+    ]
 
 
 class StartupWorker(QObject):
@@ -231,6 +214,7 @@ class AppController(QObject):
         self._startup_cancelled = Event()
         self._processes: set[QProcess] = set()
         self._shutting_down = False
+        self._pending_activation: dict[str, str] = {}
         self._chat_thread: QThread | None = None
         self._chat_worker: ChatWorker | None = None
         self._pending_request: dict[str, str] = {}
@@ -415,6 +399,18 @@ class AppController(QObject):
         else:
             self.state.set_error(f"未知模型类型：{kind}")
 
+    def rollback_model(self, kind: str) -> None:
+        character_id = self.state.snapshot.character_id
+        registry = qwen_registry if kind == "qwen" else tts_registry if kind == "tts" else None
+        if registry is None:
+            self.state.set_error(f"未知模型类型：{kind}")
+            return
+        previous = str(registry.load_character_manifest(character_id).get("previous_model_id") or "")
+        if not previous:
+            self.state.set_error("没有可回滚的上一版本")
+            return
+        self.switch_model(kind, previous)
+
     def switch_models(
         self,
         *,
@@ -423,13 +419,16 @@ class AppController(QObject):
     ) -> None:
         if not self.state.snapshot.controls_enabled:
             return
-        # The model selector contains both fields.  Treat an unchanged value
-        # as absent so changing Qwen never validates, activates, or rewrites
-        # the independently selected GPT-SoVITS model (and vice versa).
+        # An unchanged selection still needs activation when the global runtime
+        # manifest belongs to another character or an older version.
         snapshot = self.state.snapshot
-        if qwen_model == snapshot.qwen_model:
+        if qwen_model == snapshot.qwen_model and _manifest_selects(
+            qwen_registry.ACTIVE_MANIFEST, snapshot.character_id, qwen_model
+        ):
             qwen_model = None
-        if tts_model == snapshot.tts_model:
+        if tts_model == snapshot.tts_model and _manifest_selects(
+            tts_registry.active_manifest_path(snapshot.character_id), snapshot.character_id, tts_model
+        ):
             tts_model = None
         if not qwen_model and not tts_model:
             return
@@ -496,6 +495,10 @@ class AppController(QObject):
             self.state.set_error(f"模型切换失败，已保留原模型：{exc}")
             return
         self.state.update(**changes)
+        self._pending_activation = {
+            **({"qwen": snapshot.qwen_model} if qwen_model and snapshot.qwen_model != qwen_model else {}),
+            **({"tts": snapshot.tts_model} if tts_model and snapshot.tts_model != tts_model else {}),
+        }
         self.state.set_status(AppStatus.IDLE, "模型已验证并切换，将在服务启动时加载")
 
     def send_chat(self, text: str) -> None:
@@ -1037,8 +1040,12 @@ class AppController(QObject):
         if self._service_thread is not None or not self.state.snapshot.controls_enabled:
             return
         snapshot = self.state.snapshot
-        if not _manifest_selects(qwen_registry.ACTIVE_MANIFEST, snapshot.character_id, snapshot.qwen_model):
-            self.switch_models(qwen_model=snapshot.qwen_model)
+        qwen_missing = not _manifest_selects(qwen_registry.ACTIVE_MANIFEST, snapshot.character_id, snapshot.qwen_model)
+        tts_missing = not _manifest_selects(tts_registry.active_manifest_path(snapshot.character_id),
+                                            snapshot.character_id, snapshot.tts_model)
+        if qwen_missing or tts_missing:
+            self.switch_models(qwen_model=snapshot.qwen_model if qwen_missing else None,
+                               tts_model=snapshot.tts_model if tts_missing else None)
             if self.state.snapshot.status is AppStatus.ERROR:
                 return
             snapshot = self.state.snapshot
@@ -1085,6 +1092,8 @@ class AppController(QObject):
         if self._shutting_down:
             return
         self.state.update(model_service_running=running)
+        if running:
+            self._pending_activation = {}
         detail = "Qwen3 与 GPT-SoVITS 已启动，可以开始聊天" if running else "模型服务已关闭"
         self.state.set_status(AppStatus.IDLE, detail)
 
@@ -1093,6 +1102,24 @@ class AppController(QObject):
         if not self._shutting_down:
             if self._service_action == "start":
                 self.state.update(model_service_running=False)
+                restored: dict[str, str] = {}
+                character_id = self.state.snapshot.character_id
+                for kind, registry, field in (("qwen", qwen_registry, "qwen_model"),
+                                              ("tts", tts_registry, "tts_model")):
+                    previous = self._pending_activation.get(kind) or str(
+                        registry.load_character_manifest(character_id).get("previous_model_id") or "")
+                    current = getattr(self.state.snapshot, field)
+                    if previous and previous != current:
+                        try:
+                            registry.activate_model(character_id, previous)
+                            restored[field] = previous
+                        except Exception:
+                            pass
+                if restored:
+                    self.state.update(**restored)
+                    self._pending_activation = {}
+                    self.state.set_error(f"模型启动失败，已恢复上一版本：{error}")
+                    return
             self.state.set_error(f"模型服务操作失败：{error}")
 
     @Slot()

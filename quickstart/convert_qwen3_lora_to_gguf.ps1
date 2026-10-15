@@ -127,6 +127,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $AdapterDir "adapter_model.safetenso
 $OutputDir = Join-Path $ProjectRoot "model_store\registry\qwen3\$CharacterId\$ModelId"
 $OutputFile = Join-Path $OutputDir "adapter_model.gguf"
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+if ((Test-Path -LiteralPath $OutputFile) -and $Force) {
+    throw "Model version already exists; refusing to overwrite weights: $OutputFile. Use a new training run name."
+}
 
 if ((Test-Path -LiteralPath $OutputFile) -and (-not $Force)) {
     Write-Host "LoRA GGUF already exists: $OutputFile"

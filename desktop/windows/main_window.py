@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt, Slot
+from PySide6.QtCore import QEvent, QThread, Qt, Slot
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -17,7 +18,7 @@ from desktop.pages import ChatPage, TrainingPage
 from desktop.panels import CharacterStatusPanel, LeftNavigation
 from desktop.state import AppSnapshot, Workspace
 from desktop.widgets import ResizeHandle, TitleBar
-from desktop.windows.selection_dialogs import CharacterSelectionDialog, ModelSelectionDialog
+from desktop.windows.selection_dialogs import CharacterSelectionDialog, ModelSelectionDialog, ModelValidationWorker
 from desktop.windows.settings_dialog import SettingsDialog
 from desktop.windows.voice_call_dialog import VoiceCallDialog
 
@@ -114,6 +115,9 @@ class MainWindow(QMainWindow):
         self.controller.messages_changed.connect(self.chat_page.set_messages)
         self.controller.recording_changed.connect(self.chat_page.apply_recording_progress)
         self._call_dialog: VoiceCallDialog | None = None
+        self._model_validation_thread: QThread | None = None
+        self._model_validation_worker: ModelValidationWorker | None = None
+        self._model_validation_progress: QProgressDialog | None = None
 
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self.open_settings)
         QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.controller.set_workspace(Workspace.CHAT))
@@ -168,20 +172,59 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "切换模型", "当前角色没有已注册模型。")
             return
         snapshot = self.controller.state.snapshot
-        dialog = ModelSelectionDialog(models, snapshot.qwen_model, snapshot.tts_model, self)
+        from runtime.qwen3 import model_registry as qwen_registry
+        from runtime.gpt_sovits import model_registry as voice_registry
+        previous_qwen = str(qwen_registry.load_character_manifest(snapshot.character_id).get("previous_model_id") or "")
+        previous_tts = str(voice_registry.load_character_manifest(snapshot.character_id).get("previous_model_id") or "")
+        dialog = ModelSelectionDialog(models, snapshot.qwen_model, snapshot.tts_model, self,
+                                      previous_qwen=previous_qwen, previous_tts=previous_tts)
         if dialog.exec():
-            self.controller.switch_models(
-                qwen_model=(
-                    dialog.selected_qwen_model
-                    if dialog.selected_qwen_model != snapshot.qwen_model
-                    else None
-                ),
-                tts_model=(
-                    dialog.selected_tts_model
-                    if dialog.selected_tts_model != snapshot.tts_model
-                    else None
-                ),
+            if dialog.rollback_kind:
+                self._start_verified_switch(previous_qwen if dialog.rollback_kind == "qwen" else "",
+                                            previous_tts if dialog.rollback_kind == "tts" else "")
+                return
+            self._start_verified_switch(
+                dialog.selected_qwen_model if dialog.selected_qwen_model != snapshot.qwen_model else "",
+                dialog.selected_tts_model if dialog.selected_tts_model != snapshot.tts_model else "",
             )
+
+    def _start_verified_switch(self, qwen_model: str, tts_model: str) -> None:
+        if (not qwen_model and not tts_model) or self._model_validation_thread is not None:
+            return
+        character_id = self.controller.state.snapshot.character_id
+        progress = QProgressDialog("正在启动测试候选模型…", "", 0, 0, self)
+        progress.setCancelButton(None)
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        thread = QThread(self)
+        worker = ModelValidationWorker(character_id, qwen_model, tts_model)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(lambda: self._verified_switch_succeeded(qwen_model, tts_model))
+        worker.failed.connect(self._verified_switch_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._verified_switch_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._model_validation_thread, self._model_validation_worker = thread, worker
+        self._model_validation_progress = progress
+        thread.start()
+
+    def _verified_switch_succeeded(self, qwen_model: str, tts_model: str) -> None:
+        if self._model_validation_progress is not None:
+            self._model_validation_progress.close()
+        self.controller.switch_models(qwen_model=qwen_model or None, tts_model=tts_model or None)
+
+    def _verified_switch_failed(self, error: str) -> None:
+        if self._model_validation_progress is not None:
+            self._model_validation_progress.close()
+        self.controller.state.set_error(f"模型测试失败，已保留原模型：{error}")
+
+    def _verified_switch_finished(self) -> None:
+        self._model_validation_thread = None
+        self._model_validation_worker = None
+        self._model_validation_progress = None
 
     @Slot()
     def open_voice_call(self) -> None:
@@ -225,6 +268,9 @@ class MainWindow(QMainWindow):
             return
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
+        if self._model_validation_thread is not None:
+            event.ignore()
+            return
         self.chat_page.playback.stop()
         self.training_page.shutdown()
         self.controller.shutdown()

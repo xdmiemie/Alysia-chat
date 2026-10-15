@@ -465,7 +465,7 @@ class VoiceTrainingPage(QScrollArea):
             active = str(manifest.get("active_model_id") or "")
             for model in model_registry.list_models(self.character_id):
                 label = "当前" if model.model_id == active else "候选 / 历史"
-                self.preview_model.addItem(f"{label} · {model.display_name}", model.model_id)
+                self.preview_model.addItem(f"{label} · {model.display_name} · {model.status}", model.model_id)
             index = self.preview_model.findData(previous)
             if index >= 0:
                 self.preview_model.setCurrentIndex(index)

@@ -10,7 +10,8 @@
       "required_files": [
         "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf"
       ],
-      "created_at": "2026-10-15T07:21:11.554617+00:00"
+      "created_at": "2026-10-15T07:21:11.554617+00:00",
+      "status": "active"
     },
     {
       "id": "fish-qiyu-1-d6b3aa33-final",
@@ -29,5 +30,5 @@
       "export_log": "training/qwen3/outputs/fish/fish-qwen3-lora/export_log.json"
     }
   ],
-  "activated_at": "2026-10-15T07:41:34.744470+00:00"
+  "activated_at": "2026-10-15T09:38:53.213925+00:00"
 }

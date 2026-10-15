@@ -26,6 +26,7 @@ def start_qwen_server(
     base_url: str = "http://127.0.0.1:8080",
     timeout_seconds: float = 180.0,
     cancelled: Event | None = None,
+    skip_activation: bool = False,
 ) -> None:
     """Start the project llama-server and verify its selected model."""
     props = _get_json(f"{base_url}/props", timeout=1.0)
@@ -52,6 +53,8 @@ def start_qwen_server(
         "-ModelVersion",
         model.model_id,
     ]
+    if skip_activation:
+        command.append("-SkipActivation")
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
         completed = subprocess.run(

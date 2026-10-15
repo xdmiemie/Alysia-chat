@@ -10,7 +10,14 @@ from PySide6.QtWidgets import QApplication
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 THEME_PATH = Path(__file__).resolve().parent / "resources" / "qss" / "alysia.qss"
+CONTROL_ICON_ROOT = THEME_PATH.parent.parent / "icons"
 LOG_PATH = PROJECT_ROOT / "storage" / "logs" / "desktop.log"
+
+
+def load_theme_stylesheet() -> str:
+    return THEME_PATH.read_text(encoding="utf-8").replace(
+        "__CONTROL_ICON_ROOT__", CONTROL_ICON_ROOT.resolve().as_posix()
+    )
 
 
 def configure_logging() -> None:
@@ -30,7 +37,7 @@ def create_application(argv: list[str] | None = None) -> QApplication:
     )
     app = QApplication(argv if argv is not None else sys.argv)
     app.setStyle("Fusion")
-    app.setStyleSheet(THEME_PATH.read_text(encoding="utf-8"))
+    app.setStyleSheet(load_theme_stylesheet())
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor("#111225"))
     palette.setColor(QPalette.ColorRole.WindowText, QColor("#f6f3ff"))

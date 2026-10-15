@@ -35,10 +35,16 @@ class SharedModelDialog(QDialog):
         root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
         root.addWidget(TitleBar(title=self.windowTitle()))
         body = QWidget(); layout = QVBoxLayout(body); layout.setContentsMargins(24, 20, 24, 20); layout.setSpacing(12)
-        hint = QLabel("模型文件只保存一份，可同时关联多个角色。移除当前角色后，若没有任何角色使用该模型，会自动删除模型本体文件。")
+        hint = QLabel("模型清单与使用界面共用。当前版本和上一回滚版本受保护，不能从角色移除。")
         hint.setObjectName("dialogHint"); hint.setWordWrap(True); layout.addWidget(hint)
         self.model_list = QListWidget(); self.model_list.setObjectName("sharedModelList"); self.model_list.currentTextChanged.connect(self._load_selected)
         layout.addWidget(self.model_list, 1)
+        link_row = QHBoxLayout()
+        self.link_model_combo = QComboBox(); link_row.addWidget(self.link_model_combo, 1)
+        link = QPushButton("关联已有模型"); link.setObjectName("secondaryButton"); link.clicked.connect(self._link_existing)
+        link_row.addWidget(link); layout.addLayout(link_row)
+        self.details = QLabel(); self.details.setObjectName("dialogHint"); self.details.setWordWrap(True)
+        layout.addWidget(self.details)
         layout.addWidget(QLabel("所属角色（可多选）"))
         roles = QWidget(); role_layout = QHBoxLayout(roles); role_layout.setContentsMargins(0, 0, 0, 0)
         self.role_checks: dict[str, QCheckBox] = {}
@@ -50,6 +56,7 @@ class SharedModelDialog(QDialog):
         add = QPushButton("增加模型"); add.setObjectName("secondaryButton"); add.clicked.connect(self._add_model)
         save_roles = QPushButton("保存所属角色"); save_roles.setObjectName("secondaryButton"); save_roles.clicked.connect(self._save_roles)
         delete = QPushButton("移除当前角色关联"); delete.setObjectName("secondaryButton"); delete.clicked.connect(self._remove_current_association)
+        self.delete_button = delete
         close = QPushButton("完成"); close.setObjectName("dialogConfirmButton"); close.clicked.connect(self.accept)
         for button in (add, save_roles, delete, close): actions.addWidget(button)
         layout.addLayout(actions); root.addWidget(body, 1)
@@ -57,12 +64,28 @@ class SharedModelDialog(QDialog):
 
     def _refresh(self, selected_id: str = "") -> None:
         selected_id = selected_id or self._selected_id()
+        try:
+            self._registry().list_models(self.character_id)
+        except (OSError, ValueError):
+            pass
         self.model_list.clear()
-        for model in self.manager.list_shared_models(self.model_type):
-            self.model_list.addItem(f"{model.display_name}  ·  {model.model_id}")
+        manifest = self.manager._load_model_manifest(self.model_type, self.character_id)
+        active = str(manifest.get("active_model_id") or "")
+        previous = str(manifest.get("previous_model_id") or "")
+        for model in self.manager.list_character_models(self.model_type, self.character_id):
+            badges = [label for condition, label in ((model.model_id == active, "当前"),
+                       (model.model_id == previous, "上一版"), (bool(model.raw.get("pinned")), "固定")) if condition]
+            self.model_list.addItem(f"{model.display_name}  ·  {model.model_id}" + (f"  [{' / '.join(badges)}]" if badges else ""))
             self.model_list.item(self.model_list.count() - 1).setData(Qt.ItemDataRole.UserRole, model.registry_key)
+        self.link_model_combo.clear()
+        for model in self.manager.list_shared_models(self.model_type):
+            if self.character_id not in model.character_ids:
+                self.link_model_combo.addItem(f"{model.display_name} · {model.model_id}", model.registry_key)
         for index in range(self.model_list.count()):
-            if self.model_list.item(index).data(Qt.ItemDataRole.UserRole) == selected_id:
+            if (self.model_list.item(index).data(Qt.ItemDataRole.UserRole) == selected_id or
+                    any(model.registry_key == self.model_list.item(index).data(Qt.ItemDataRole.UserRole)
+                        and model.model_id == selected_id
+                        for model in self.manager.list_character_models(self.model_type, self.character_id))):
                 self.model_list.setCurrentRow(index); break
         if self.model_list.count() and self.model_list.currentRow() < 0:
             self.model_list.setCurrentRow(0)
@@ -76,9 +99,36 @@ class SharedModelDialog(QDialog):
         model = next((item for item in self.manager.list_shared_models(self.model_type) if item.registry_key == self._selected_id()), None)
         for role_id, check in self.role_checks.items():
             check.setChecked(bool(model and role_id in model.character_ids))
+        manifest = self.manager._load_model_manifest(self.model_type, self.character_id)
+        self.delete_button.setEnabled(bool(model and self.character_id in model.character_ids and
+            model.model_id not in {str(manifest.get("active_model_id") or ""),
+                                   str(manifest.get("previous_model_id") or "")}))
+        if not model:
+            self.details.clear(); return
+        raw = model.raw
+        size = sum(path.stat().st_size for path in model.required_files if path.is_file())
+        self.details.setText(
+            f"创建：{raw.get('created_at') or '未知'}    大小：{size / (1024 ** 2):.1f} MiB    "
+            f"状态：{raw.get('status') or '已注册'}\n"
+            f"基础模型：{raw.get('base_model_id') or '未记录'}    "
+            f"训练来源：{raw.get('source_run') or '手动导入 / 基础模型'}\n"
+            f"数据哈希：{raw.get('data_hash') or '未记录'}"
+        )
 
     def _selected_roles(self) -> list[str]:
         return [role_id for role_id, check in self.role_checks.items() if check.isChecked()]
+
+    def _link_existing(self) -> None:
+        model_key = str(self.link_model_combo.currentData() or "")
+        if not model_key:
+            return
+        try:
+            model = self.manager._shared_model(self.model_type, model_key)
+            self.manager.associate_model(self.model_type, model_key,
+                                         (*model.character_ids, self.character_id))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "关联模型", str(exc)); return
+        self.models_changed.emit(); self._refresh(model_key)
 
     def _save_roles(self) -> None:
         model_key = self._selected_id()
@@ -90,6 +140,12 @@ class SharedModelDialog(QDialog):
             QMessageBox.warning(self, "所属角色", "模型至少需要属于一个角色。")
             return
         try:
+            if current:
+                for role_id in set(current.character_ids) - selected:
+                    manifest = self.manager._load_model_manifest(self.model_type, role_id)
+                    if current.model_id in {str(manifest.get("active_model_id") or ""),
+                                            str(manifest.get("previous_model_id") or "")}:
+                        raise ValueError(f"角色“{role_id}”的当前或上一版模型不能移除。")
             self.manager.associate_model(self.model_type, model_key, selected)
             if current:
                 for role_id in set(current.character_ids) - selected:
@@ -110,6 +166,13 @@ class SharedModelDialog(QDialog):
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "增加模型", str(exc)); return
         self.models_changed.emit(); self._refresh(model.registry_key)
+
+    def _registry(self):
+        if self.model_type == "qwen3":
+            from runtime.qwen3 import model_registry
+        else:
+            from runtime.gpt_sovits import model_registry
+        return model_registry
 
     def _remove_current_association(self) -> None:
         model_key = self._selected_id()
@@ -335,7 +398,7 @@ class CharacterManagerDialog(QDialog):
 
     def _persona_tab(self) -> QWidget:
         tab = QWidget(); form = QFormLayout(tab)
-        self.qwen_edit = QLineEdit(self.draft.qwen_model); self.qwen_edit.setPlaceholderText("训练完成后可填写该角色的模型 ID")
+        self.qwen_edit = QLineEdit(self.draft.qwen_model); self.qwen_edit.setReadOnly(True); self.qwen_edit.setPlaceholderText("在使用界面切换当前版本")
         qwen_manage = QPushButton("管理 Qwen 模型")
         qwen_manage.clicked.connect(lambda: self._manage_models("qwen3"))
         qwen_row = QWidget(); qwen_layout = QHBoxLayout(qwen_row); qwen_layout.setContentsMargins(0, 0, 0, 0); qwen_layout.addWidget(self.qwen_edit, 1); qwen_layout.addWidget(qwen_manage)
@@ -352,7 +415,7 @@ class CharacterManagerDialog(QDialog):
 
     def _voice_tab(self) -> QWidget:
         tab = QWidget(); form = QFormLayout(tab)
-        self.tts_edit = QLineEdit(self.draft.tts_model); self.tts_edit.setPlaceholderText("训练完成后可填写该角色的模型 ID")
+        self.tts_edit = QLineEdit(self.draft.tts_model); self.tts_edit.setReadOnly(True); self.tts_edit.setPlaceholderText("在使用界面切换当前版本")
         tts_manage = QPushButton("管理 TTS 模型")
         tts_manage.clicked.connect(lambda: self._manage_models("gpt_sovits"))
         tts_row = QWidget(); tts_layout = QHBoxLayout(tts_row); tts_layout.setContentsMargins(0, 0, 0, 0); tts_layout.addWidget(self.tts_edit, 1); tts_layout.addWidget(tts_manage)
@@ -369,13 +432,15 @@ class CharacterManagerDialog(QDialog):
             return
         dialog = SharedModelDialog(self.manager, model_type, self.editing_id, self)
         dialog.models_changed.connect(lambda: self._refresh_default_model(model_type))
+        dialog.models_changed.connect(lambda: self.saved.emit(self.editing_id))
         dialog.exec()
 
     def _refresh_default_model(self, model_type: str) -> None:
         current = self.qwen_edit if model_type == "qwen3" else self.tts_edit
         available = {model.model_id for model in self.manager.list_shared_models(model_type) if self.editing_id in model.character_ids}
-        if current.text().strip() not in available:
-            current.clear()
+        manifest = self.manager._load_model_manifest(model_type, self.editing_id)
+        active = str(manifest.get("active_model_id") or "")
+        current.setText(active if active in available else "")
 
     def _references_tab(self) -> QWidget:
         tab = QWidget(); layout = QVBoxLayout(tab)

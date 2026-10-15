@@ -312,7 +312,7 @@ def test_gpt_sovits_registry_keeps_base_active_voice_and_latest_other_models(tmp
         activate=True,
     )
 
-    for index in range(6):
+    for index in range(7):
         model_dir = tmp_path / "model_store" / "registry" / "gpt_sovits" / "elysia" / f"trained-{index}"
         files = _write_model_files(model_dir)
         model_registry.register_model(
@@ -326,9 +326,11 @@ def test_gpt_sovits_registry_keeps_base_active_voice_and_latest_other_models(tmp
         if index == 0:
             model_registry.activate_model("elysia", "trained-0")
 
+    assert [item.model_id for item in model_registry.plan_prune_trained_models("elysia")] == ["trained-1"]
+    model_registry.prune_trained_models("elysia")
     manifest = json.loads((model_registry.REGISTRY_ROOT / "elysia" / "models.json").read_text(encoding="utf-8"))
     trained_ids = [item["id"] for item in manifest["models"] if item["kind"] == "trained"]
-    assert trained_ids == ["trained-0", "trained-2", "trained-3", "trained-4", "trained-5"]
+    assert trained_ids == ["trained-0", "trained-2", "trained-3", "trained-4", "trained-5", "trained-6"]
     assert json.loads((model_registry.ACTIVE_ROOT / "gpt_sovits_elysia.json").read_text(encoding="utf-8"))[
         "model_id"
     ] == "trained-0"

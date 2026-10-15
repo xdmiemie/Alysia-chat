@@ -91,6 +91,55 @@ QPushButton:focus {
     outline: none;
 }
 
+QComboBox, QSpinBox, QDoubleSpinBox {
+    background: #25263f;
+    color: #f1edf8;
+    border: 1px solid #454663;
+    border-radius: 8px;
+    padding: 6px 34px 6px 10px;
+}
+
+QComboBox::drop-down {
+    background: #31324d;
+    border: 0;
+    border-left: 1px solid #454663;
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
+    width: 30px;
+    margin: 1px 1px 1px 0;
+}
+
+QComboBox::down-arrow, QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url("__CONTROL_ICON_ROOT__/arrow-down.svg");
+    width: 10px;
+    height: 10px;
+}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url("__CONTROL_ICON_ROOT__/arrow-up.svg");
+    width: 10px;
+    height: 10px;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    background: #31324d;
+    border: 0;
+    border-left: 1px solid #454663;
+    width: 28px;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    border-top-right-radius: 7px;
+    margin: 1px 1px 0 0;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    border-top: 1px solid #454663;
+    border-bottom-right-radius: 7px;
+    margin: 0 1px 1px 0;
+}
+
 #navButton {
     background: transparent;
     color: #a9a5b8;
@@ -257,7 +306,7 @@ QPushButton:focus {
     border: 1px solid #454663;
     border-radius: 8px;
     min-height: 34px;
-    padding: 0 10px;
+    padding: 0 34px 0 10px;
 }
 
 #compactButton {
@@ -543,6 +592,12 @@ QDialog, QTabWidget::pane {
     width: 32px;
 }
 
+#selectionCombo::down-arrow, #characterManagerCombo::down-arrow {
+    image: none;
+    width: 0;
+    height: 0;
+}
+
 #selectionCombo QAbstractItemView {
     background: #24253d;
     color: #eeeaf8;
@@ -615,6 +670,12 @@ QDialog, QTabWidget::pane {
     selection-color: #ffffff;
 }
 
+#characterManagerDialog QSpinBox,
+#characterManagerDialog QDoubleSpinBox,
+#characterManagerDialog QComboBox {
+    padding-right: 34px;
+}
+
 #characterManagerDialog QLineEdit:focus,
 #characterManagerDialog QTextEdit:focus,
 #characterManagerDialog QSpinBox:focus,
@@ -625,22 +686,52 @@ QDialog, QTabWidget::pane {
     background: #2b2c47;
 }
 
+#characterManagerDialog QComboBox {
+    selection-background-color: #e967a7;
+}
+
 #characterManagerDialog QLineEdit:read-only {
     background: #202136;
     color: #aaa7b8;
 }
 
-#characterManagerDialog QComboBox QAbstractItemView,
-#characterManagerDialog QListWidget::item {
+#characterManagerDialog QComboBox QAbstractItemView {
     background: #24253d;
     color: #eeeaf8;
-    selection-background-color: #70405f;
+    selection-background-color: #e967a7;
     selection-color: #ffffff;
 }
 
 #characterManagerDialog QListWidget::item {
+    background: #24253d;
+    color: #eeeaf8;
+    selection-background-color: #e967a7;
+    selection-color: #ffffff;
     padding: 7px;
     border-radius: 5px;
+}
+
+#characterManagerDialog QListWidget::item:hover,
+#characterManagerDialog QComboBox QAbstractItemView::item:hover {
+    background: #f27eb7;
+    color: #ffffff;
+}
+
+#characterManagerDialog QListWidget::item:selected,
+#characterManagerDialog QComboBox QAbstractItemView::item:selected {
+    background: #e967a7;
+    color: #ffffff;
+    font-weight: 700;
+}
+
+#characterManagerDialog QListWidget::item:selected {
+    border: 1px solid #f8b2d3;
+}
+
+#characterManagerDialog QListWidget::item:selected:hover,
+#characterManagerDialog QComboBox QAbstractItemView::item:selected:hover {
+    background: #f27eb7;
+    color: #ffffff;
 }
 
 #characterManagerDialog QCheckBox {
@@ -759,6 +850,12 @@ QTabBar::tab:selected {
     padding: 6px 10px;
     selection-background-color: #70405f;
     selection-color: #ffffff;
+}
+
+#trainingSections QSpinBox,
+#trainingSections QDoubleSpinBox,
+#trainingSections QComboBox {
+    padding-right: 34px;
 }
 
 #fixedTeacherModel {

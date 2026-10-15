@@ -352,6 +352,8 @@ def _register_final_adapter(config: TrainingConfig, *, data_hash: str, cfg_hash:
     registry_dir.mkdir(parents=True, exist_ok=True)
     registered_adapter = registry_dir / adapter_path.name
     if adapter_path.resolve() != registered_adapter.resolve():
+        if registered_adapter.exists():
+            raise FileExistsError(f"模型版本已存在，拒绝覆盖权重：{registered_adapter}")
         shutil.copy2(adapter_path, registered_adapter)
 
     registration_log = config.run_dir / "registration_log.json"

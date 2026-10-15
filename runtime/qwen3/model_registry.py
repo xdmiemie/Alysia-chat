@@ -7,7 +7,9 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+from runtime.core.model_versions import activate_version, deletable_model_files, protected_ids, validate_files, validate_identity
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +32,8 @@ class Qwen3ModelEntry:
     config_hash: str | None = None
     source_run: str | None = None
     export_log: str | None = None
+    pinned: bool = False
+    status: str = "registered"
 
     @property
     def model_file(self) -> Path:
@@ -162,6 +166,7 @@ def register_model(
         "format": model_format,
         "required_files": [_relative_path(path) for path in resolved_files],
         "created_at": utc_now(),
+        "status": "registered",
     }
     if base_model_id:
         raw_entry["base_model_id"] = base_model_id
@@ -176,31 +181,37 @@ def register_model(
 
     models.append(raw_entry)
     data["models"] = sorted(models, key=lambda item: (str(item.get("kind")) != "base", str(item.get("created_at", ""))))
-    if activate or not data.get("active_model_id"):
+    if not activate and not data.get("active_model_id"):
         data["active_model_id"] = model_id
     save_character_manifest(character_id, data)
-    prune_trained_models(character_id, keep=trained_limit)
+    # Cleanup is deferred until the desktop can show the exact deletion plan.
     if activate:
         return activate_model(character_id, model_id)
     return find_model(character_id, model_id)
 
 
-def activate_model(character_id: str, model_id: str, active_manifest: Path | None = None) -> Qwen3ModelEntry:
+def activate_model(character_id: str, model_id: str, active_manifest: Path | None = None,
+                   smoke_test: Callable[[Qwen3ModelEntry], None] | None = None) -> Qwen3ModelEntry:
+    validate_identity(character_id, model_id)
     active_manifest = active_manifest or ACTIVE_MANIFEST
     model = find_model(character_id, model_id)
-    missing = [path for path in model.required_files if not path.exists()]
-    if missing:
-        raise FileNotFoundError("Qwen3 model file(s) missing: " + ", ".join(str(path) for path in missing))
+    validate_files(model.required_files)
 
     data = load_character_manifest(character_id)
-    data["active_model_id"] = model_id
-    data["activated_at"] = utc_now()
-    save_character_manifest(character_id, data)
-
-    manifest = model.to_manifest()
-    manifest["activated_at"] = data["activated_at"]
-    _atomic_write_json(active_manifest, manifest)
+    def check() -> None:
+        validate_files(model.required_files)
+        if smoke_test is not None:
+            smoke_test(model)
+    activate_version(character_manifest_path(character_id), active_manifest, data,
+                     model_id, model.to_manifest(), utc_now(), check, validated=smoke_test is not None)
     return model
+
+
+def rollback_model(character_id: str, *, smoke_test: Callable[[Qwen3ModelEntry], None] | None = None) -> Qwen3ModelEntry:
+    previous = str(load_character_manifest(character_id).get("previous_model_id") or "")
+    if not previous:
+        raise ValueError("没有可回滚的上一版本")
+    return activate_model(character_id, previous, smoke_test=smoke_test)
 
 
 def resolve_model(character_id: str | None = None, model_id: str | None = None) -> Qwen3ModelEntry:
@@ -231,32 +242,42 @@ def ensure_default_elysia_base() -> Qwen3ModelEntry:
     )
 
 
-def prune_trained_models(character_id: str, keep: int = TRAINED_MODEL_LIMIT) -> None:
+def plan_prune_trained_models(character_id: str, keep: int = TRAINED_MODEL_LIMIT) -> list[Qwen3ModelEntry]:
     data = load_character_manifest(character_id)
     trained = [raw for raw in data.get("models", []) if raw.get("kind") == "trained"]
     trained.sort(key=lambda raw: str(raw.get("created_at", "")), reverse=True)
-    to_remove = trained[keep:]
+    retained = {str(raw.get("id")) for raw in trained[:keep]} | protected_ids(data)
+    return [_entry_from_raw(character_id, raw) for raw in trained if str(raw.get("id")) not in retained]
+
+
+def plan_prune_files(character_id: str, keep: int = TRAINED_MODEL_LIMIT) -> list[Path]:
+    candidates = plan_prune_trained_models(character_id, keep)
+    removed = {entry.model_id for entry in candidates}
+    referenced = {path.resolve() for other in list_characters() for entry in list_models(other)
+                  if other != character_id or entry.model_id not in removed
+                  for path in entry.required_files}
+    return deletable_model_files(REGISTRY_ROOT, character_id, candidates, referenced)
+
+
+def prune_trained_models(character_id: str, keep: int = TRAINED_MODEL_LIMIT) -> None:
+    data = load_character_manifest(character_id)
+    to_remove = plan_prune_trained_models(character_id, keep)
     if not to_remove:
         return
+    files_to_delete = plan_prune_files(character_id, keep)
 
-    remove_ids = {str(raw.get("id")) for raw in to_remove}
+    remove_ids = {entry.model_id for entry in to_remove}
     data["models"] = [raw for raw in data.get("models", []) if str(raw.get("id")) not in remove_ids]
-    active_was_pruned = data.get("active_model_id") in remove_ids
-    if active_was_pruned:
-        data["active_model_id"] = next(
-            (raw.get("id") for raw in data["models"] if raw.get("kind") == "base"),
-            data["models"][0].get("id") if data["models"] else None,
-        )
     save_character_manifest(character_id, data)
-    if active_was_pruned and data.get("active_model_id"):
-        activate_model(character_id, str(data["active_model_id"]))
-
-    character_root = (REGISTRY_ROOT / character_id).resolve()
-    for raw in to_remove:
-        for required in raw.get("required_files", []):
-            model_dir = _project_path(required).resolve().parent
-            if character_root in model_dir.parents and model_dir.name == str(raw.get("id")):
-                shutil.rmtree(model_dir, ignore_errors=True)
+    for path in files_to_delete:
+        path.unlink(missing_ok=True)
+    for directory in sorted({path.parent for path in files_to_delete}, key=lambda item: len(item.parts), reverse=True):
+        while directory != REGISTRY_ROOT and directory.exists():
+            try:
+                directory.rmdir()
+            except OSError:
+                break
+            directory = directory.parent
 
 
 def choose_interactively(character_id: str | None = None) -> Qwen3ModelEntry:
@@ -313,6 +334,8 @@ def _entry_from_raw(character_id: str, raw: dict[str, Any]) -> Qwen3ModelEntry:
         config_hash=str(raw["config_hash"]) if raw.get("config_hash") else None,
         source_run=str(raw["source_run"]) if raw.get("source_run") else None,
         export_log=str(raw["export_log"]) if raw.get("export_log") else None,
+        pinned=bool(raw.get("pinned", False)),
+        status=str(raw.get("status") or "registered"),
     )
 
 

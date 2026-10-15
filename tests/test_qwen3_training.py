@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from training.qwen3.export import export_gguf
 from training.qwen3.preprocess.normalize import normalize_jsonl
 
 
-def test_qwen3_registry_keeps_base_and_latest_five_trained_models(tmp_path, monkeypatch):
+def test_qwen3_registry_protects_active_and_previews_cleanup(tmp_path, monkeypatch):
     registry_root = tmp_path / "registry" / "qwen3"
     active_manifest = tmp_path / "active" / "qwen3.json"
     monkeypatch.setattr(model_registry, "PROJECT_ROOT", tmp_path)
@@ -34,7 +35,7 @@ def test_qwen3_registry_keeps_base_and_latest_five_trained_models(tmp_path, monk
         activate=True,
     )
 
-    for index in range(6):
+    for index in range(7):
         adapter = registry_root / "elysia" / f"trained-{index}" / "adapter.safetensors"
         adapter.parent.mkdir(parents=True)
         adapter.write_text(str(index), encoding="utf-8")
@@ -51,12 +52,15 @@ def test_qwen3_registry_keeps_base_and_latest_five_trained_models(tmp_path, monk
         if index == 0:
             model_registry.activate_model("elysia", "trained-0")
 
+    assert [item.model_id for item in model_registry.plan_prune_trained_models("elysia")] == ["trained-1"]
+    model_registry.prune_trained_models("elysia")
     manifest = json.loads((registry_root / "elysia" / "models.json").read_text(encoding="utf-8"))
     trained_ids = [model["id"] for model in manifest["models"] if model["kind"] == "trained"]
-    assert trained_ids == ["trained-1", "trained-2", "trained-3", "trained-4", "trained-5"]
+    assert trained_ids == ["trained-0", "trained-2", "trained-3", "trained-4", "trained-5", "trained-6"]
     assert (registry_root / "elysia" / "base-v1" / "base.gguf").exists()
-    assert not (registry_root / "elysia" / "trained-0").exists()
-    assert json.loads(active_manifest.read_text(encoding="utf-8"))["model_id"] == "base-v1"
+    assert (registry_root / "elysia" / "trained-0").exists()
+    assert not (registry_root / "elysia" / "trained-1").exists()
+    assert json.loads(active_manifest.read_text(encoding="utf-8"))["model_id"] == "trained-0"
 
 
 def test_auto_resume_starts_fresh_when_no_compatible_checkpoint_exists(tmp_path):
@@ -209,6 +213,7 @@ def test_custom_training_model_name_is_preserved_for_display_and_safe_for_regist
     assert display_name == "爱莉希雅 · 夏日语录 LoRA"
     assert model_id.startswith("elysia-lora-")
     assert model_id.endswith("-final")
+    assert trained_model_identity(replace(config, run_name="another-run"))[0] != model_id
 
 
 def test_registering_peft_safetensors_as_llama_lora_is_rejected(tmp_path):

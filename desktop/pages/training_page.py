@@ -101,7 +101,7 @@ class TrainingPage(QWidget):
         self.training_tabs.addTab(self._build_task_tab(), "任务控制")
         self.training_sections.addTab(self.training_tabs, "Qwen3 训练")
         self.voice_training_page = VoiceTrainingPage(self)
-        self.voice_training_page.models_changed.connect(self.characters_changed)
+        self.voice_training_page.models_changed.connect(self._voice_models_changed)
         self.training_sections.addTab(self.voice_training_page, "GPT-SoVITS 训练")
         root.addWidget(self.training_sections)
 
@@ -222,6 +222,12 @@ class TrainingPage(QWidget):
         self.finish_training_button = QPushButton("结束并导出"); self.finish_training_button.setObjectName("secondaryButton"); self.finish_training_button.clicked.connect(self._finish_training)
         for button in (self.start_training_button, self.pause_training_button, self.finish_training_button, self.clear_training_data_button): actions.addWidget(button)
         actions.addStretch(1); layout.addLayout(actions); self._set_task_buttons(Qwen3JobState.SOURCE_READY)
+        layout.addWidget(QLabel("该角色的 Qwen3 模型版本"))
+        models_row = QHBoxLayout()
+        self.qwen_model_versions = QComboBox(); models_row.addWidget(self.qwen_model_versions, 1)
+        refresh_models = QPushButton("刷新版本"); refresh_models.setObjectName("secondaryButton")
+        refresh_models.clicked.connect(self._refresh_qwen_models); models_row.addWidget(refresh_models)
+        layout.addLayout(models_row)
         return tab
 
     @staticmethod
@@ -288,6 +294,7 @@ class TrainingPage(QWidget):
         if hasattr(self, "voice_training_page"):
             self.voice_training_page.set_character_id(character_id)
         self._sync_model_roles(character_id)
+        self._refresh_qwen_models()
         if not character_id:
             return
         path = _project_root() / "training" / "qwen3" / "configs" / "characters" / f"{character_id}.yaml"
@@ -557,9 +564,47 @@ training:
             self._clear_training_data_requested = False
         if not clearing:
             self._refresh_preview()
-        if job.state is Qwen3JobState.COMPLETED:
+        if job.state is Qwen3JobState.COMPLETED and job.kind == "training":
+            self._offer_model_cleanup("qwen3", self._selected_id())
+            self._refresh_qwen_models()
             self.characters_changed.emit()
             self.log_console.append_log("[done] Qwen3 模型已完成导出、注册和激活；模型列表可立即刷新。")
+
+    def _voice_models_changed(self) -> None:
+        self._offer_model_cleanup("gpt_sovits", self.voice_training_page.character_id)
+        self.characters_changed.emit()
+
+    def _refresh_qwen_models(self) -> None:
+        if not hasattr(self, "qwen_model_versions"):
+            return
+        from runtime.qwen3 import model_registry
+        character_id = self._selected_id()
+        self.qwen_model_versions.clear()
+        if not character_id:
+            return
+        manifest = model_registry.load_character_manifest(character_id)
+        active = str(manifest.get("active_model_id") or "")
+        for model in model_registry.list_models(character_id):
+            label = "当前" if model.model_id == active else "候选 / 历史"
+            self.qwen_model_versions.addItem(f"{label} · {model.display_name} · {model.status}", model.model_id)
+
+    def _offer_model_cleanup(self, model_type: str, character_id: str) -> None:
+        if not character_id:
+            return
+        if model_type == "qwen3":
+            from runtime.qwen3 import model_registry
+        else:
+            from runtime.gpt_sovits import model_registry
+        candidates = model_registry.plan_prune_trained_models(character_id)
+        if not candidates:
+            return
+        files = model_registry.plan_prune_files(character_id)
+        size = sum(path.stat().st_size for path in files)
+        details = "版本：" + "、".join(model.model_id for model in candidates)
+        details += "\n文件：\n" + ("\n".join(str(path) for path in files) if files else "无独占文件，原文件由其他角色保留")
+        if QMessageBox.question(self, "清理旧模型",
+                                f"已超过默认保留的 5 个训练版本。将移除以下版本及文件，预计释放 {size / (1024 ** 3):.2f} GiB：\n{details}") == QMessageBox.StandardButton.Yes:
+            model_registry.prune_trained_models(character_id)
 
     def _set_task_buttons(self, state: Qwen3JobState) -> None:
         running = state in {Qwen3JobState.BUILDING_DATASET, Qwen3JobState.RUNNING, Qwen3JobState.PAUSING, Qwen3JobState.FINISHING, Qwen3JobState.EXPORTING}
@@ -787,17 +832,38 @@ training:
             QMessageBox.warning(self, "导入角色", str(exc))
         else:
             self._on_saved(draft.character_id)
+            missing = []
+            restored = 0
+            for model_type in ("qwen3", "gpt_sovits"):
+                manifest = self.character_manager._load_model_manifest(model_type, draft.character_id)
+                for model in manifest["models"]:
+                    paths = [self.character_manager._project_model_path(value)
+                             for value in model.get("required_files", [])]
+                    if paths and all(path.is_file() for path in paths):
+                        restored += 1
+                    else:
+                        missing.append(f"{model_type} · {model.get('display_name') or model.get('id')}")
+            message = f"角色配置与参考音频已恢复；可用模型 {restored} 个。"
+            if missing:
+                message += "\n以下模型只有引用，需要重新定位文件：\n" + "\n".join(missing)
+            QMessageBox.information(self, "导入角色", message)
 
     def _export_selected(self) -> None:
         character_id = self._selected_id()
         if not character_id:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "导出角色配置包", f"{character_id}.zip", "角色包 (*.zip)")
+        path, _ = QFileDialog.getSaveFileName(self, "导出角色配置包", f"{character_id}.alysia-character.zip", "角色包 (*.zip)")
         if not path:
             return
+        choice = QMessageBox.question(self, "模型文件", "是否将大型模型文件也包含在角色包中？\n选择“否”时只保存模型引用。",
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                                      QMessageBox.StandardButton.No)
+        if choice == QMessageBox.StandardButton.Cancel:
+            return
         try:
-            bundle = self.character_manager.export_bundle(character_id, path)
-        except OSError as exc:
+            bundle = self.character_manager.export_bundle(character_id, path,
+                                                          include_models=choice == QMessageBox.StandardButton.Yes)
+        except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "导出角色", str(exc)); return
         QMessageBox.information(self, "导出角色", f"已导出：{bundle}")
 

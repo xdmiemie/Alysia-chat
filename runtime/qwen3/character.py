@@ -14,17 +14,19 @@ class CharacterProfile:
     personality: tuple[str, ...]
     max_sentences: int
     forbidden: tuple[str, ...]
+    speaking_style_text: str = ""
 
 
 def load_character_profile(path: str | Path) -> CharacterProfile:
     data = _load_yaml_subset(Path(path))
-    speaking_style = data.get("speaking_style", {})
+    speaking_style = data.get("speaking_style") or {}
     return CharacterProfile(
         character_id=str(data.get("character_id", "elysia")),
         name=str(data.get("name", "Elysia")),
-        personality=tuple(str(item) for item in data.get("personality", [])),
+        personality=tuple(str(item) for item in (data.get("personality") or [])),
         max_sentences=int(speaking_style.get("max_sentences", 3)),
-        forbidden=tuple(str(item) for item in data.get("forbidden", [])),
+        forbidden=tuple(str(item) for item in (data.get("forbidden") or [])),
+        speaking_style_text=str(data.get("speaking_style_text") or "").strip(),
     )
 
 
@@ -107,6 +109,11 @@ def _parse_yaml_subset(text: str) -> dict[str, object]:
 def _parse_scalar(value: str) -> object:
     if value.lower() in {"true", "false"}:
         return value.lower() == "true"
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            pass
     try:
         return int(value)
     except ValueError:

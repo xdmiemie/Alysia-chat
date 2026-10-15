@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     emit("validation", 97, "正在生成固定测试句并验证候选音色", candidate_model_id=candidate.model_id)
     from training.gpt_sovits.preview import synthesize_fixed_set
     synthesize_fixed_set(candidate, emotion="neutral", output_dir=config.run_dir / "fixed_preview")
-    model_registry.activate_model(config.character_id, candidate.model_id)
+    model_registry.activate_model(config.character_id, candidate.model_id, smoke_test=lambda _model: None)
     state["status"] = "completed"
     state["model_id"] = candidate.model_id
     _save(state_path, state)

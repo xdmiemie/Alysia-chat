@@ -29,10 +29,16 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         raise FileNotFoundError("candidate model file(s) missing: " + ", ".join(str(path) for path in missing))
 
+    smoke = None
     if not args.skip_smoke:
-        _run_smoke(args.acceptance_command)
+        if args.acceptance_command:
+            _run_smoke(args.acceptance_command)
+            smoke = lambda _model: None
+        else:
+            from runtime.core.model_smoke import smoke_test_voice
+            smoke = smoke_test_voice
 
-    activated = model_registry.activate_model(args.character, args.model)
+    activated = model_registry.activate_model(args.character, args.model, smoke_test=smoke)
     print(json.dumps(activated.to_manifest(), ensure_ascii=False, indent=2))
     return 0
 

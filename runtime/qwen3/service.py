@@ -6,7 +6,7 @@ from pathlib import Path
 
 from runtime.qwen3.character import load_character_profile, load_examples
 from runtime.qwen3.client import ChatCompletionClient, LlamaServerClient
-from runtime.qwen3.config import Qwen3Config, load_qwen3_config
+from runtime.qwen3.config import Qwen3Config, load_qwen3_config, with_character_generation_settings
 from runtime.qwen3.prompt import build_example_messages, build_system_prompt
 from runtime.qwen3.types import CharacterReply, ChatMessage, ChatTurn
 
@@ -36,6 +36,7 @@ class Qwen3ChatSession:
     @classmethod
     def from_config(cls, config_path: str | Path | Qwen3Config = "configs/runtime/qwen3.yaml") -> "Qwen3ChatSession":
         config = config_path if isinstance(config_path, Qwen3Config) else load_qwen3_config(config_path)
+        config = with_character_generation_settings(config)
         profile = load_character_profile(config.character_config)
         system_prompt = build_system_prompt(profile, config.system_prompt)
         examples = load_examples(config.examples_path)

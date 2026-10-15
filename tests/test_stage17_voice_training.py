@@ -104,7 +104,7 @@ def test_voice_job_pauses_at_checkpoint_then_activates_after_preview(tmp_path, m
     from runtime.gpt_sovits import model_registry
     candidate = SimpleNamespace(model_id="candidate", created_at="now", source_run=str(config.run_dir))
     monkeypatch.setattr(model_registry, "list_models", lambda _character: [candidate])
-    monkeypatch.setattr(model_registry, "activate_model", lambda *_: events.append("activated"))
+    monkeypatch.setattr(model_registry, "activate_model", lambda *_, **_kwargs: events.append("activated"))
     from training.gpt_sovits import preview
     monkeypatch.setattr(preview, "synthesize_fixed_set", lambda *_args, **_kwargs: events.append("previewed"))
 
@@ -146,7 +146,7 @@ def test_candidate_retention_never_prunes_the_active_voice(tmp_path, monkeypatch
     monkeypatch.setattr(model_registry, "REGISTRY_ROOT", tmp_path / "registry")
     monkeypatch.setattr(model_registry, "ACTIVE_ROOT", tmp_path / "active")
     entries = []
-    for number in range(6):
+    for number in range(7):
         model_id = f"trained-{number}"
         directory = model_registry.REGISTRY_ROOT / "test" / model_id
         directory.mkdir(parents=True)
@@ -157,7 +157,7 @@ def test_candidate_retention_never_prunes_the_active_voice(tmp_path, monkeypatch
     model_registry.prune_trained_models("test", keep=5)
     result = model_registry.load_character_manifest("test")
     assert result["active_model_id"] == "trained-0"
-    assert {item["id"] for item in result["models"]} == {"trained-0", "trained-2", "trained-3", "trained-4", "trained-5"}
+    assert {item["id"] for item in result["models"]} == {"trained-0", "trained-2", "trained-3", "trained-4", "trained-5", "trained-6"}
 
 
 def test_stage17_desktop_page_exposes_voice_workflow():

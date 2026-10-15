@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from desktop.characters import CharacterDraft, CharacterManager
 from runtime.qwen3.config import Qwen3Config
 from runtime.qwen3.prompt import build_example_messages, build_system_prompt
 from runtime.qwen3.service import Qwen3ChatSession, parse_character_reply
@@ -131,6 +132,57 @@ def test_system_prompt_contains_no_think_and_json_contract(tmp_path):
     assert "Return only valid JSON" in prompt
     assert "<think>" in prompt
     assert "Never claim to be an AI assistant" in prompt
+
+
+def test_character_editor_settings_reach_qwen_session(tmp_path, monkeypatch):
+    manager = CharacterManager(tmp_path)
+    draft = CharacterDraft.template("violet", "Violet")
+    assert (draft.temperature, draft.top_p, draft.max_tokens) == (0.7, 0.9, 256)
+    draft.speaking_style = "语气轻快，先给简短答复。\n适当使用口语。"
+    draft.temperature = 0.4
+    draft.top_p = 0.75
+    draft.max_tokens = 384
+    manager.save(draft)
+    root = tmp_path / "configs" / "characters" / "violet"
+    config = Qwen3Config(character_config=root / "character.yaml", system_prompt=root / "system_prompt.txt")
+
+    session = Qwen3ChatSession.from_config(config)
+    assert (session.config.temperature, session.config.top_p, session.config.max_tokens) == (0.4, 0.75, 384)
+    assert "Speaking style: 语气轻快，先给简短答复。\n适当使用口语。" in session.system_prompt
+    requests = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        return FakeResponse()
+
+    monkeypatch.setattr("runtime.qwen3.client.urlopen", fake_urlopen)
+    assert session.client.complete([ChatMessage(role="user", content="hi")]) == "ok"
+    payload = json.loads(requests[0].data)
+    assert (payload["temperature"], payload["top_p"], payload["max_tokens"]) == (0.4, 0.75, 384)
+
+    draft.speaking_style = ""
+    manager.save(draft, editing_id="violet")
+    session = Qwen3ChatSession.from_config(config)
+    assert "Speaking style:" not in session.system_prompt
+    assert "Keep reply within" in session.system_prompt
+
+
+def test_legacy_character_without_sampling_settings_uses_global_values(tmp_path):
+    character = tmp_path / "character.yaml"
+    character.write_text("character_id: violet\nname: Violet\n", encoding="utf-8")
+    config = Qwen3Config(character_config=character, temperature=0.55, top_p=0.8, max_tokens=300)
+    session = Qwen3ChatSession.from_config(config)
+    assert (session.config.temperature, session.config.top_p, session.config.max_tokens) == (0.55, 0.8, 300)
 
 
 def test_build_example_messages_selects_relevant_few_shots():

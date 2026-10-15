@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QObject, QPointF, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QPaintEvent, QPainter, QPolygonF
 from PySide6.QtWidgets import (
     QComboBox,
@@ -8,11 +8,40 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFrame,
     QLabel,
+    QHBoxLayout,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from desktop.widgets import TitleBar
+
+
+class ModelValidationWorker(QObject):
+    succeeded = Signal()
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, character_id: str, qwen_model: str = "", tts_model: str = "") -> None:
+        super().__init__()
+        self.character_id, self.qwen_model, self.tts_model = character_id, qwen_model, tts_model
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self.qwen_model:
+                from runtime.qwen3.model_registry import find_model
+                from runtime.core.model_smoke import smoke_test_qwen
+                smoke_test_qwen(find_model(self.character_id, self.qwen_model))
+            if self.tts_model:
+                from runtime.gpt_sovits.model_registry import find_model
+                from runtime.core.model_smoke import smoke_test_voice
+                smoke_test_voice(find_model(self.character_id, self.tts_model))
+            self.succeeded.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc) or exc.__class__.__name__)
+        finally:
+            self.finished.emit()
 
 
 class SelectionComboBox(QComboBox):
@@ -92,6 +121,9 @@ class ModelSelectionDialog(QDialog):
         current_qwen: str,
         current_tts: str,
         parent=None,
+        *,
+        previous_qwen: str = "",
+        previous_tts: str = "",
     ) -> None:
         super().__init__(parent)
         self.setObjectName("selectionDialog")
@@ -99,6 +131,7 @@ class ModelSelectionDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setModal(True)
         self.setMinimumWidth(520)
+        self.rollback_kind = ""
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -131,9 +164,23 @@ class ModelSelectionDialog(QDialog):
             [(model_id, label.removeprefix("GPT-SoVITS · ")) for kind, model_id, label in models if kind == "tts"],
             current_tts,
         )
+        rollback_row = QHBoxLayout()
+        for kind, previous, label in (("qwen", previous_qwen, "回滚 Qwen3 上一版"),
+                                      ("tts", previous_tts, "回滚 TTS 上一版")):
+            button = QPushButton(label)
+            button.setObjectName("secondaryButton")
+            button.setEnabled(bool(previous))
+            button.setToolTip(f"上一版本：{previous}" if previous else "暂无上一版本")
+            button.clicked.connect(lambda _checked=False, selected=kind: self._request_rollback(selected))
+            rollback_row.addWidget(button)
+        layout.addLayout(rollback_row)
         layout.addSpacing(8)
         layout.addWidget(_dialog_buttons(self))
         root.addWidget(content, 1)
+
+    def _request_rollback(self, kind: str) -> None:
+        self.rollback_kind = kind
+        self.accept()
 
     @staticmethod
     def _model_combo(
