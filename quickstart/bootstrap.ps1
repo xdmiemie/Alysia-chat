@@ -1,5 +1,6 @@
 param(
     [string]$Python = "",
+    [string]$QwenPython = "",
     [switch]$Lightweight,
     [switch]$SkipLfsPull,
     [switch]$SkipThirdParty,
@@ -113,11 +114,11 @@ function New-VenvRuntimeEnv {
     param([string]$EnvPath)
     $Python310 = Resolve-OrInstallPython310
 
-    Write-Host "Creating project-local unified venv at '$EnvPath' with Python 3.10"
+    Write-Host "Creating project-local venv at '$EnvPath' with Python 3.10"
     $CreateArguments = @($Python310.Arguments) + @("-m", "venv", $EnvPath)
     & $Python310.Command @CreateArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create runtime_env with Python 3.10."
+        throw "Failed to create $EnvPath with Python 3.10."
     }
 
     $Candidate = Join-Path $EnvPath "Scripts\python.exe"
@@ -135,6 +136,35 @@ function Resolve-OrCreateRuntimePython {
         Write-Host $_.Exception.Message
         return New-VenvRuntimeEnv -EnvPath (Join-Path $ProjectRoot "runtime_env")
     }
+}
+
+function Resolve-OrCreateQwenPython {
+    param([string]$PythonOverride)
+    if (-not [string]::IsNullOrWhiteSpace($PythonOverride)) {
+        return Resolve-AlysiaQwenPython -PythonOverride $PythonOverride
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:ALYSIA_QWEN_PYTHON)) {
+        return Resolve-AlysiaQwenPython
+    }
+    $QwenEnv = Join-Path $ProjectRoot "runtime_env_qwen"
+    if ((Test-Path -LiteralPath (Join-Path $QwenEnv "python.exe")) -or
+        (Test-Path -LiteralPath (Join-Path $QwenEnv "Scripts\python.exe"))) {
+        return Resolve-AlysiaQwenPython
+    }
+    if (Test-Path -LiteralPath $QwenEnv) {
+        throw "runtime_env_qwen exists but has no Python executable. Repair or remove this incomplete environment before bootstrapping."
+    }
+    return New-VenvRuntimeEnv -EnvPath $QwenEnv
+}
+
+function Assert-TransformersVersion {
+    param([string]$Python, [string]$Constraint, [string]$Name)
+    $Probe = "from importlib.metadata import version; from packaging.specifiers import SpecifierSet; import sys; v=version('transformers'); print(v); sys.exit(0 if v in SpecifierSet(sys.argv[1]) else 1)"
+    $Detected = & $Python -c $Probe $Constraint
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name requires transformers$Constraint in $Python; found $Detected."
+    }
+    Write-Host "$Name transformers: $Detected ($Python)"
 }
 
 function Install-Requirements {
@@ -642,7 +672,30 @@ try {
         Invoke-Pip -Python $RuntimePython -Arguments @("install", "-r", $PlatformGptSoVitsRequirements)
     }
 
+    Assert-TransformersVersion -Python $RuntimePython -Constraint ">=4.43,<=4.50" -Name "GPT-SoVITS"
+
     Invoke-Pip -Python $RuntimePython -Arguments @("install", "pytest", "torchcodec", "opencc-python-reimplemented")
+
+    $QwenRuntimePython = Resolve-OrCreateQwenPython -PythonOverride $QwenPython
+    if ([System.IO.Path]::GetFullPath($QwenRuntimePython) -ieq [System.IO.Path]::GetFullPath($RuntimePython)) {
+        throw "Qwen3 and GPT-SoVITS must use different Python environments because their transformers requirements conflict."
+    }
+    Write-Host "Using Qwen3 training Python: $QwenRuntimePython"
+    Invoke-Pip -Python $QwenRuntimePython -Arguments @("install", "--upgrade", "pip", "wheel", "setuptools<82")
+    if ($Lightweight) {
+        Install-Requirements -Python $QwenRuntimePython -RequirementFiles @("runtime/qwen3/requirements.txt")
+        Write-Host "Qwen3 training packages were skipped in lightweight mode."
+    } else {
+        Install-CudaTorch -Python $QwenRuntimePython
+        Install-Requirements -Python $QwenRuntimePython -RequirementFiles @("training/qwen3/requirements.txt")
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "quickstart\install_qwen3_training_deps.ps1") -Python $QwenRuntimePython
+        if ($LASTEXITCODE -ne 0) {
+            throw "Qwen3 training dependency installation failed."
+        }
+        Assert-TransformersVersion -Python $QwenRuntimePython -Constraint ">=4.51.0,<5" -Name "Qwen3"
+    }
+    Invoke-Pip -Python $RuntimePython -Arguments @("check")
+    Invoke-Pip -Python $QwenRuntimePython -Arguments @("check")
 
     if ($SkipModelDownloads) {
         Write-Host "Skipping Qwen3, SenseVoice, and GPT-SoVITS pretrained model downloads."
@@ -702,8 +755,9 @@ try {
     Write-Host "Bootstrap complete. Start with:"
     Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1"
     Write-Host ""
-    Write-Host "For Qwen3 training, run after bootstrap:"
-    Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1"
+    Write-Host "GPT-SoVITS/desktop Python: $RuntimePython"
+    Write-Host "Qwen3 training Python: $QwenRuntimePython"
+    Write-Host "For Qwen3 training, download the HF base model when needed:"
     Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1"
 } finally {
     Pop-Location

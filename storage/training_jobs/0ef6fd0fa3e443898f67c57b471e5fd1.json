@@ -1,0 +1,25 @@
+{
+  "job_id": "0ef6fd0fa3e443898f67c57b471e5fd1",
+  "kind": "training",
+  "character_id": "fish",
+  "config_path": "E:\\Alysia-chat\\storage\\training_jobs\\configs\\fish-20261015-155159.yaml",
+  "state": "CANCELLED",
+  "created_at": "2026-10-15T07:53:16.493058+00:00",
+  "updated_at": "2026-10-15T07:56:14.232152+00:00",
+  "error": "training results discarded",
+  "progress": 1.5,
+  "phase": "training",
+  "detail": "{'train_runtime': 108.2551, 'train_samples_per_second': 73.899, 'train_steps_per_second': 9.237, 'train_loss': 1.1959638913472495, 'epoch': 0.58}",
+  "metrics": {
+    "train_runtime": 108.2551,
+    "train_samples_per_second": 73.899,
+    "train_steps_per_second": 9.237,
+    "total_flos": 4654602626365440.0,
+    "train_loss": 1.1959638913472495,
+    "epoch": 0.58,
+    "steps_per_second": 0.139,
+    "loss": 1.1959638913472495,
+    "raw": "{'train_runtime': 108.2551, 'train_samples_per_second': 73.899, 'train_steps_per_second': 9.237, 'train_loss': 1.1959638913472495, 'epoch': 0.58}",
+    "resume_checkpoint": "E:\\Alysia-chat\\training\\qwen3\\outputs\\fish\\fish-qwen3-lora-20261015-155159-aebeb436\\checkpoint-15"
+  }
+}

@@ -26,3 +26,23 @@ def resolve_runtime_python(project_root: Path) -> Path:
         "找不到项目运行环境。请先运行 quickstart/bootstrap.ps1，"
         "或设置 ALYSIA_PYTHON / GPT_SOVITS_PYTHON。"
     )
+
+
+def resolve_qwen_python(project_root: Path) -> Path:
+    root = Path(project_root)
+    configured = os.environ.get("ALYSIA_QWEN_PYTHON", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return candidate.resolve()
+        raise FileNotFoundError(f"ALYSIA_QWEN_PYTHON points to a missing file: {candidate}")
+    for candidate in (
+        root / "runtime_env_qwen" / "python.exe",
+        root / "runtime_env_qwen" / "Scripts" / "python.exe",
+        root / "runtime_env_qwen" / "bin" / "python",
+    ):
+        if candidate.is_file():
+            return candidate.resolve()
+    raise FileNotFoundError(
+        "Qwen3 Python is missing. Run quickstart/bootstrap.ps1 to prepare runtime_env_qwen."
+    )

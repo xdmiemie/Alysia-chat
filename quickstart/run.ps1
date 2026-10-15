@@ -4,6 +4,7 @@ param(
     [string]$GPTSoVITSModel = "",
     [int]$MaxTurns = 0,
     [string]$Python = "",
+    [string]$QwenPython = "",
     [switch]$Qwen3Interactive,
     [switch]$GPTSoVITSInteractive,
     [switch]$SkipBootstrap,
@@ -16,11 +17,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if (-not [string]::IsNullOrWhiteSpace($QwenPython)) {
+    if (-not (Test-Path -LiteralPath $QwenPython -PathType Leaf)) {
+        throw "Qwen3 Python was provided but does not exist: $QwenPython"
+    }
+    $env:ALYSIA_QWEN_PYTHON = (Resolve-Path -LiteralPath $QwenPython).Path
+}
 
 if (-not $SkipBootstrap) {
     $BootstrapArgs = @()
     if (-not [string]::IsNullOrWhiteSpace($Python)) {
         $BootstrapArgs += @("-Python", $Python)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($QwenPython)) {
+        $BootstrapArgs += @("-QwenPython", $QwenPython)
     }
     if ($LightweightBootstrap) {
         $BootstrapArgs += "-Lightweight"
@@ -35,6 +45,9 @@ if (-not $SkipBootstrap) {
         $BootstrapArgs += "-SkipModelDownloads"
     }
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "quickstart\bootstrap.ps1") @BootstrapArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bootstrap failed with exit code $LASTEXITCODE."
+    }
 }
 
 $StartArgs = @()

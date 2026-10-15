@@ -1,0 +1,25 @@
+{
+  "job_id": "b70f18ac2d4b47d68378622fd680354b",
+  "kind": "training",
+  "character_id": "elysia",
+  "config_path": "E:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20261014-202318.yaml",
+  "state": "CANCELLED",
+  "created_at": "2026-10-14T12:23:25.448987+00:00",
+  "updated_at": "2026-10-14T12:26:51.901803+00:00",
+  "error": "training results discarded",
+  "progress": 3.3,
+  "phase": "training",
+  "detail": "{'train_runtime': 113.2592, 'train_samples_per_second': 70.634, 'train_steps_per_second': 8.829, 'train_loss': 0.378228561444716, 'epoch': 2.54}",
+  "metrics": {
+    "train_runtime": 113.2592,
+    "train_samples_per_second": 70.634,
+    "train_steps_per_second": 8.829,
+    "total_flos": 5113472373964800.0,
+    "train_loss": 0.378228561444716,
+    "epoch": 2.54,
+    "steps_per_second": 0.291,
+    "loss": 0.378228561444716,
+    "raw": "{'train_runtime': 113.2592, 'train_samples_per_second': 70.634, 'train_steps_per_second': 8.829, 'train_loss': 0.378228561444716, 'epoch': 2.54}",
+    "resume_checkpoint": "E:\\Alysia-chat\\training\\qwen3\\outputs\\elysia\\elysia-qwen3-lora-20261014-102832-3495678c-20261014-193623-03bd2238-20261014-202318-540210de\\checkpoint-33"
+  }
+}

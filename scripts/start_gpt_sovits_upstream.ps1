@@ -53,7 +53,6 @@ function Convert-TtsConfigToResolvedPaths {
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
-. (Join-Path $ProjectRoot "scripts\gpt_sovits_requirements.ps1")
 $CompatPath = Join-Path $ProjectRoot "runtime\compat"
 if ([string]::IsNullOrWhiteSpace($env:PYTHONPATH)) {
     $env:PYTHONPATH = $CompatPath
@@ -110,20 +109,11 @@ Write-Host "Using GPT-SoVITS config: $ResolvedConfig"
 Set-Content -LiteralPath (Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.character") -Value $Character -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.model") -Value $Model -Encoding UTF8
 
-$GptSoVitsRequirements = Join-Path $Repo "requirements.txt"
-if (Test-Path -LiteralPath $GptSoVitsRequirements) {
-    Write-Host "Ensuring GPT-SoVITS Python requirements are installed..."
-    $PlatformGptSoVitsRequirements = New-GptSoVitsPlatformRequirements `
-        -Source $GptSoVitsRequirements `
-        -Destination (Join-Path $ProjectRoot "storage\temporary\gpt_sovits_requirements.resolved.txt")
-    & $ResolvedPython -m pip install -r $PlatformGptSoVitsRequirements
-    if ($LASTEXITCODE -ne 0) {
-        throw "pip command failed: $ResolvedPython -m pip install -r $PlatformGptSoVitsRequirements"
-    }
-    & $ResolvedPython -m pip install opencc-python-reimplemented
-    if ($LASTEXITCODE -ne 0) {
-        throw "pip command failed: $ResolvedPython -m pip install opencc-python-reimplemented"
-    }
+$VersionProbe = "from importlib.metadata import version; from packaging.specifiers import SpecifierSet; import sys; v=version('transformers'); print(v); sys.exit(0 if v in SpecifierSet('>=4.43,<=4.50') else 1)"
+$TransformersVersion = & $ResolvedPython -c $VersionProbe
+if ($LASTEXITCODE -ne 0) {
+    throw "GPT-SoVITS requires transformers>=4.43,<=4.50 in $ResolvedPython; found $TransformersVersion. Run quickstart/bootstrap.ps1."
 }
+Write-Host "GPT-SoVITS transformers: $TransformersVersion"
 
 & $ResolvedPython -u api_v2.py -a $BindAddr -p $Port -c $ResolvedConfig

@@ -363,7 +363,7 @@ QPushButton:focus {
     color: #ff849e;
 }
 
-#modelCard, #trainingCard {
+#modelCard {
     background: #202039;
     border: 1px solid #30314c;
     border-radius: 14px;
@@ -417,7 +417,7 @@ QPushButton:focus {
     border-color: #333349;
 }
 
-#logConsole {
+#logConsole, #voiceTrainingLog {
     background: #0c0d1a;
     color: #b9d8cf;
     border: 1px solid #2b2c43;
@@ -709,36 +709,49 @@ QTabBar::tab:selected {
     border-bottom: 2px solid #ee6fad;
 }
 
-/* Stage 16: tab pages are plain QWidget instances.  They do not inherit a
-   stylesheet background from the training shell on every Qt platform, so set
-   all four surfaces explicitly instead of allowing the white native fallback. */
+#trainingSectionBar::tab {
+    padding: 13px 24px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+/* The training type tabs contain the existing Qwen3 and GPT-SoVITS tab sets. */
+#trainingSections, #trainingSections::pane,
 #qwen3TrainingTabs, #qwen3TrainingTabs::pane,
+#voiceTrainingPage, #voiceTrainingTabs, #voiceTrainingTabs::pane,
 #trainingPageScroll, #trainingPageScroll > QWidget > QWidget,
 #qwenSourceTabScroll, #qwenSettingsTabScroll, #qwenPreviewTabScroll, #qwenTaskTabScroll,
-#qwenSourceTab, #qwenSettingsTab, #qwenPreviewTab, #qwenTaskTab {
+#qwenSourceTab, #qwenSettingsTab, #qwenPreviewTab, #qwenTaskTab,
+#voiceDatasetTabScroll, #voiceParametersTabScroll, #voiceTaskTabScroll, #voicePreviewTabScroll,
+#voiceDatasetTab, #voiceParametersTab, #voiceTaskTab, #voicePreviewTab {
     background: #17182d;
     color: #eeeaf8;
 }
 
 #trainingPageScroll > QWidget > QWidget,
+#voiceTrainingPage > QWidget > QWidget,
 #qwenSourceTabScroll > QWidget > QWidget,
 #qwenSettingsTabScroll > QWidget > QWidget,
 #qwenPreviewTabScroll > QWidget > QWidget,
-#qwenTaskTabScroll > QWidget > QWidget {
+#qwenTaskTabScroll > QWidget > QWidget,
+#voiceDatasetTabScroll > QWidget > QWidget,
+#voiceParametersTabScroll > QWidget > QWidget,
+#voiceTaskTabScroll > QWidget > QWidget,
+#voicePreviewTabScroll > QWidget > QWidget {
     background: #17182d;
 }
 
-#qwen3TrainingTabs::pane {
+#trainingSections::pane, #qwen3TrainingTabs::pane, #voiceTrainingTabs::pane {
     border: 1px solid #30314d;
     border-radius: 10px;
     top: -1px;
 }
 
-#qwen3TrainingTabs QLineEdit,
-#qwen3TrainingTabs QTextEdit,
-#qwen3TrainingTabs QSpinBox,
-#qwen3TrainingTabs QDoubleSpinBox,
-#qwen3TrainingTabs QComboBox {
+#trainingSections QLineEdit,
+#trainingSections QTextEdit,
+#trainingSections QSpinBox,
+#trainingSections QDoubleSpinBox,
+#trainingSections QComboBox {
     background: #25263f;
     color: #f1edf8;
     border: 1px solid #454663;
@@ -757,22 +770,22 @@ QTabBar::tab:selected {
     font-weight: 600;
 }
 
-#qwen3TrainingTabs QLineEdit:focus,
-#qwen3TrainingTabs QTextEdit:focus,
-#qwen3TrainingTabs QSpinBox:focus,
-#qwen3TrainingTabs QDoubleSpinBox:focus,
-#qwen3TrainingTabs QComboBox:focus {
+#trainingSections QLineEdit:focus,
+#trainingSections QTextEdit:focus,
+#trainingSections QSpinBox:focus,
+#trainingSections QDoubleSpinBox:focus,
+#trainingSections QComboBox:focus {
     background: #2b2c47;
     border-color: #e96ca9;
 }
 
-#qwen3TrainingTabs QCheckBox {
+#trainingSections QCheckBox {
     background: transparent;
     color: #eeeaf8;
     spacing: 9px;
 }
 
-#qwen3TrainingTabs QCheckBox::indicator {
+#trainingSections QCheckBox::indicator {
     width: 17px;
     height: 17px;
     background: #24253d;
@@ -780,9 +793,23 @@ QTabBar::tab:selected {
     border-radius: 4px;
 }
 
-#qwen3TrainingTabs QCheckBox::indicator:checked {
+#trainingSections QCheckBox::indicator:checked {
     background: #e967a7;
     border-color: #f08abb;
+}
+
+#trainingSections QProgressBar {
+    background: #25263f;
+    color: #eeeaf8;
+    border: 1px solid #454663;
+    border-radius: 7px;
+    text-align: center;
+    min-height: 18px;
+}
+
+#trainingSections QProgressBar::chunk {
+    background: #e967a7;
+    border-radius: 6px;
 }
 
 #voiceCallDialog {

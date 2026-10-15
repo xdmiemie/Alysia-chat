@@ -100,6 +100,16 @@ class VoiceTrainingWorker(QObject):
         path.write_text("finish\n", encoding="utf-8")
         self._update(state="FINISHING", detail="正在完成完整 S1/S2 权重后验证并应用")
 
+    def discard_paused_job(self, job: dict[str, object]) -> None:
+        if self.is_running:
+            raise RuntimeError("训练任务尚未退出")
+        job_id = str(job["job_id"])
+        if not job_id or any(not (char.isalnum() or char in "_-") for char in job_id):
+            raise ValueError("训练任务 ID 无效")
+        for suffix in (".voice.json", ".voice.log", ".voice.pause", ".voice.finish"):
+            (self.root / "storage" / "training_jobs" / f"{job_id}{suffix}").unlink(missing_ok=True)
+        self.job = None
+
     def _read(self) -> None:
         if self.process is None:
             return

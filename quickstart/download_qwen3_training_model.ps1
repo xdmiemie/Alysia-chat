@@ -17,7 +17,7 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AlysiaQwenPython -PythonOverride $Python
 } catch {
     throw "Qwen3 HF training model download requires quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }

@@ -249,12 +249,40 @@ def test_voice_task_controls_show_action_and_resume_on_click(monkeypatch):
     page.worker.process = None
     page._paused_job = {"job_id": "job", "config_path": "saved.yaml", "character_id": "test"}
     page._buttons("PAUSED")
-    assert page.resume_button.isEnabled()
+    assert page.pause_button.isEnabled()
+    assert page.pause_button.text() == "继续训练"
     calls = []
     monkeypatch.setattr(page.worker, "start", lambda *args, **kwargs: calls.append((args, kwargs)))
-    page.resume_button.click()
+    page.pause_button.click()
     assert calls[0][0] == ("train", Path("saved.yaml"))
     assert calls[0][1]["resume"]["job_id"] == "job"
     page._buttons("FAILED")
-    assert page.resume_button.isEnabled()
+    assert page.pause_button.isEnabled()
+    page.close()
+
+
+def test_voice_clear_removes_only_current_run(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from desktop.pages.voice_training_page import VoiceTrainingPage
+
+    app = QApplication.instance() or QApplication([])
+    path = _config(tmp_path)
+    config = load_training_config(path)
+    config.run_dir.mkdir(parents=True)
+    (config.run_dir / "checkpoint.bin").write_bytes(b"checkpoint")
+    job = {"job_id": "clear-voice", "action": "train", "character_id": "test", "config_path": str(path), "state": "PAUSED"}
+    page = VoiceTrainingPage()
+    page.worker.root = tmp_path
+    jobs = tmp_path / "storage" / "training_jobs"
+    jobs.mkdir(parents=True)
+    (jobs / "clear-voice.voice.json").write_text(json.dumps(job), encoding="utf-8")
+    page._paused_job = job
+    page._discard_training_results(job)
+
+    assert not config.run_dir.exists()
+    assert config.dataset.raw_manifest.exists()
+    assert not (jobs / "clear-voice.voice.json").exists()
+    assert page._paused_job is None
+    assert page.start_button.isEnabled()
     page.close()

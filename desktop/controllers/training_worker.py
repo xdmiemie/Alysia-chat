@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -11,6 +10,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
+
+from runtime.common.python_executable import resolve_qwen_python
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -92,15 +93,16 @@ class Qwen3TrainingWorker(QObject):
             raise ValueError("resume_dataset requires a dataset job")
         return self._start("dataset", job.character_id, Path(job.config_path), resume=True, existing=job)
 
-    def resume_training(self, job: Qwen3Job) -> Qwen3Job:
+    def resume_training(self, job: Qwen3Job, *, finish: bool = False) -> Qwen3Job:
         """Continue a paused LoRA job from its newest normal checkpoint."""
         if job.kind != "training":
             raise ValueError("resume_training requires a training job")
-        return self._start("training", job.character_id, Path(job.config_path), resume=True, existing=job)
+        return self._start("training", job.character_id, Path(job.config_path), resume=True, existing=job, finish=finish)
 
-    def dismiss_paused_job(self, job: Qwen3Job) -> None:
-        """Remove a paused task from the task panel without deleting artifacts."""
-        self.job = Qwen3Job(**{**asdict(job), "state": Qwen3JobState.CANCELLED, "updated_at": _now(), "error": "stopped by user; generated artifacts retained"})
+    def dismiss_paused_job(self, job: Qwen3Job, *, discarded: bool = False) -> None:
+        """Remove a paused task from the task panel after its artifacts are handled."""
+        detail = "training results discarded" if discarded else "stopped by user; generated artifacts retained"
+        self.job = Qwen3Job(**{**asdict(job), "state": Qwen3JobState.CANCELLED, "updated_at": _now(), "error": detail})
         self._persist()
         self.state_changed.emit(self.job)
 
@@ -111,9 +113,10 @@ class Qwen3TrainingWorker(QObject):
         self._set_state(Qwen3JobState.FINISHING)
         self.log.emit("[finish] 将在当前安全 step 保存，随后导出、注册并激活候选模型。")
 
-    def _start(self, kind: str, character_id: str, config_path: Path, *, resume: bool = False, existing: Qwen3Job | None = None) -> Qwen3Job:
+    def _start(self, kind: str, character_id: str, config_path: Path, *, resume: bool = False, existing: Qwen3Job | None = None, finish: bool = False) -> Qwen3Job:
         if self.is_running:
             raise RuntimeError("已有 Qwen3 任务正在执行")
+        qwen_python = resolve_qwen_python(self.project_root)
         job_id = existing.job_id if existing else uuid4().hex
         now = _now()
         initial = Qwen3JobState.BUILDING_DATASET if kind == "dataset" else Qwen3JobState.RUNNING
@@ -132,6 +135,8 @@ class Qwen3TrainingWorker(QObject):
         self._pause_file.parent.mkdir(parents=True, exist_ok=True)
         self._pause_file.unlink(missing_ok=True)
         self._finish_file.unlink(missing_ok=True)
+        if finish and kind == "training":
+            self._finish_file.write_text("finish requested\n", encoding="utf-8")
         self._output_buffer = ""
         self._persist()
         self.state_changed.emit(self.job)
@@ -152,7 +157,7 @@ class Qwen3TrainingWorker(QObject):
         self.process = process
         relative_config = _relative_to_root(config_path, self.project_root)
         if kind == "dataset":
-            process.start(sys.executable, ["training/qwen3/generate/build_dataset.py", "--config", relative_config, "--pause-file", str(self._pause_file)])
+            process.start(str(qwen_python), ["training/qwen3/generate/build_dataset.py", "--config", relative_config, "--pause-file", str(self._pause_file)])
         else:
             resume_checkpoint = ""
             if resume and existing is not None:
@@ -163,6 +168,7 @@ class Qwen3TrainingWorker(QObject):
                 finish_file=self._finish_file,
                 resume=resume,
                 resume_from=resume_checkpoint or "auto",
+                python=str(qwen_python),
             )
             process.start("powershell.exe", args)
         self.log.emit(f"[job:{job_id[:8]}] 已启动 {kind} 任务。")
@@ -390,6 +396,7 @@ def _training_powershell_args(
     finish_file: Path | None,
     resume: bool,
     resume_from: str = "auto",
+    python: str | None = None,
 ) -> list[str]:
     """Build mutually exclusive start/resume command-line flags.
 
@@ -401,6 +408,8 @@ def _training_powershell_args(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "quickstart/train_qwen3.ps1",
         "-Config", config, "-PauseFile", str(pause_file), "-FinishFile", str(finish_file), "-Activate",
     ]
+    if python:
+        args.extend(["-Python", python])
     if resume:
         args.extend(["-ResumeFrom", resume_from])
     else:

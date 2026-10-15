@@ -135,7 +135,7 @@ function Get-MissingTrainingModules {
 }
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AlysiaQwenPython -PythonOverride $Python
 } catch {
     throw "Qwen3 training dependencies require quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }
@@ -144,7 +144,7 @@ if (-not (Test-Path -LiteralPath $RequirementFile)) {
     throw "Requirement file not found: $RequirementFile"
 }
 
-Write-Host "Using unified runtime Python: $RuntimePython"
+Write-Host "Using Qwen3 Python: $RuntimePython"
 New-Item -ItemType Directory -Force -Path $PipCachePath | Out-Null
 New-Item -ItemType Directory -Force -Path $TrainingWheelhouse | Out-Null
 New-Item -ItemType Directory -Force -Path $TorchWheelhouse | Out-Null

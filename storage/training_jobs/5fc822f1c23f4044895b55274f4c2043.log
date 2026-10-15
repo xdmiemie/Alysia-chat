@@ -1,0 +1,36 @@
+[job:5fc822f1] 已启动 training 任务。
+Using unified runtime Python: E:\Alysia-chat\runtime_env\python.exe
+Using Qwen3 training config: storage/training_jobs/configs/elysia-20261014-193623.yaml
+Step 1/4: build Quote-to-SFT dataset
+[progress] {"phase": "finalize", "completed": 0, "total": 1, "percent": 0.0, "message": "已找到已生成的候选，正在复用并校验训练集"}
+[progress] {"phase": "complete", "completed": 1, "total": 1, "percent": 100.0, "message": "训练集已就绪，可开始训练"}
+generated 116 SFT examples
+Step 2/4: split included in Quote-to-SFT dataset build
+Step 3/4: validate dataset
+validated 116 examples -> training\qwen3\outputs\elysia\elysia-qwen3-lora-20261014-102832-3495678c-20261014-193623-03bd2238\dataset_manifest.json
+Step 4/4: train Qwen3 LoRA
+resume: no compatible checkpoint found; starting from scratch
+Traceback (most recent call last):
+  File "E:\Alysia-chat\training\qwen3\train\train_lora.py", line 445, in <module>
+    raise SystemExit(main())
+  File "E:\Alysia-chat\training\qwen3\train\train_lora.py", line 81, in main
+    stopped_for = run_qlora_training(
+  File "E:\Alysia-chat\training\qwen3\train\train_lora.py", line 133, in run_qlora_training
+    raise RuntimeError(
+RuntimeError: Qwen3 training requires transformers>=4.51.0, but found 4.50.0. Run quickstart/install_qwen3_training_deps.ps1 to upgrade the training-only dependencies.
+If this is a real QLoRA run, make sure these were completed first:
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1
+python command failed: E:\Alysia-chat\runtime_env\python.exe E:\Alysia-chat\training\qwen3\train\train_lora.py --config
+ storage/training_jobs/configs/elysia-20261014-193623.yaml --from-scratch --pause-file E:\Alysia-chat\storage\training_
+jobs\5fc822f1c23f4044895b55274f4c2043.pause --finish-file E:\Alysia-chat\storage\training_jobs\5fc822f1c23f4044895b5527
+4f4c2043.finish
+At E:\Alysia-chat\quickstart\train_qwen3.ps1:31 char:9
++         throw "python command failed: $RuntimePython $($Arguments -jo ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (python command ...4f4c2043.finish:String) [], RuntimeException
+    + FullyQualifiedErrorId : python command failed: E:\Alysia-chat\runtime_env\python.exe E:\Alysia-chat\training\qwe 
+   n3\train\train_lora.py --config storage/training_jobs/configs/elysia-20261014-193623.yaml --from-scratch --pause-f  
+  ile E:\Alysia-chat\storage\training_jobs\5fc822f1c23f4044895b55274f4c2043.pause --finish-file E:\Alysia-chat\stora   
+ ge\training_jobs\5fc822f1c23f4044895b55274f4c2043.finish
+[error] 任务进程退出，退出码 1

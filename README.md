@@ -63,19 +63,21 @@ text, timing, character, and model-version history.
 ## Clone-To-Code Quickstart
 
 For a new machine, use the root-level `quickstart/` scripts to make the code
-runtime self-initializing. Runtime now uses a single Python environment centered
-on GPT-SoVITS compatibility. The default Python path is the project-local
-`runtime_env` interpreter: `runtime_env/python.exe` for a packed conda-style
-environment, or `runtime_env/Scripts/python.exe` for a venv built by
-`quickstart/bootstrap.ps1`. Explicit overrides can still be provided through
-`-Python`, `ALYSIA_PYTHON`, or `GPT_SOVITS_PYTHON`. This does not bundle GPU
+runtime self-initializing. Bootstrap prepares two isolated Python environments:
+`runtime_env` for the desktop app and GPT-SoVITS, and `runtime_env_qwen` for
+Qwen3 dataset generation, training, and LoRA export. Each can be a packed
+conda-style environment with `python.exe` at its root, or a venv with
+`Scripts/python.exe` created by `quickstart/bootstrap.ps1`. The default runtime
+can be overridden with `-Python`, `ALYSIA_PYTHON`, or `GPT_SOVITS_PYTHON`;
+the Qwen3 runtime can be overridden with `-QwenPython` or
+`ALYSIA_QWEN_PYTHON`. This does not bundle GPU
 drivers, but it pulls Git LFS files, clones the GPT-SoVITS upstream source,
-downloads project-local FFmpeg and llama.cpp tools, creates/reuses the
-project-local unified runtime environment, installs the Python dependencies,
+downloads project-local FFmpeg and llama.cpp tools, creates/reuses both
+project-local Python environments, installs their separate dependencies,
 downloads the Qwen3 and SenseVoice model files, runs the doctor, and then starts
 the app through the normal Stage 6 entry.
 
-Initialize code dependencies only:
+Initialize both environments and project assets:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
@@ -94,19 +96,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Characte
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -Qwen3Model qwen3-8b-q4-k-m-base-v1
 ```
 
-Qwen3 training dependencies are intentionally separate from normal runtime
-bootstrap. The HF-format training base model is separate too. Run bootstrap
-first, then install only the training extras and download the training base:
+The normal bootstrap installs Qwen3 training dependencies in `runtime_env_qwen`.
+The HF-format training base model is a separate download. Run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1
 ```
 
-The training dependency script is idempotent: if bootstrap or a previous run
-already installed CUDA torch and the Qwen3 training packages, it exits without
-reinstalling them. It also keeps downloaded wheels under
+The standalone training dependency script is idempotent and targets
+`runtime_env_qwen`; use it to repair that environment without rerunning the
+whole bootstrap. It keeps downloaded wheels under
 `model_store/cache/qwen3_training_wheels/` and pip cache under
 `model_store/cache/pip/`, so rerunning after an interrupted download reuses
 completed files. Use `-CheckOnly` to inspect the training environment, or
@@ -150,21 +150,42 @@ External runtime items are still checked or reported by the scripts:
 - model files referenced by `model_store/active/*.json`; Qwen3 and SenseVoice
   are downloaded by bootstrap, and the current TTS base is tracked in Git/LFS
 
-For manual Python commands in the sections below, resolve the unified runtime
-Python once:
+For manual desktop and GPT-SoVITS Python commands in the sections below, resolve
+the base runtime Python once:
 
 ```powershell
 $Python = (& powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\runtime_python.ps1; Resolve-AlysiaRuntimePython").Trim()
 ```
 
-`runtime_python/` and `runtime_env/` are local runtime artifacts and are ignored
+For Qwen3 training commands, use the separate interpreter:
+
+```powershell
+$QwenPython = (& powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\runtime_python.ps1; Resolve-AlysiaQwenPython").Trim()
+```
+
+`runtime_python/`, `runtime_env/`, and `runtime_env_qwen/` are local runtime artifacts and are ignored
 by Git. To recreate them on another machine without conda, run
 `quickstart/bootstrap.ps1`. The script first looks for system Python 3.10; if it
 is missing, it downloads official CPython 3.10.11 for Windows into
-`runtime_python/`. It then creates `runtime_env` with Python 3.10 and installs
-the required packages there. You can also copy/pack a compatible environment into
-`runtime_env/`; run `runtime_env/Scripts/conda-unpack.exe` only when the copied
-environment came from `conda-pack`.
+`runtime_python/`. It then creates both environments with Python 3.10 and
+installs their separate dependencies. Qwen3 requires `transformers>=4.51,<5`;
+GPT-SoVITS requires `transformers>=4.43,<=4.50`. The startup script checks
+the GPT-SoVITS version and does not install packages at service startup.
+You can also copy/pack compatible environments into either directory; run
+the environment's `Scripts/conda-unpack.exe` only when it came from `conda-pack`.
+The regular bootstrap installs CUDA PyTorch in both environments. `-Lightweight`
+creates both but skips Qwen3 training packages; rerun without it before training.
+
+On a fresh Windows clone, prepare both environments with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
+```
+
+After bootstrap, the desktop entry point uses the base runtime, while its
+Qwen3 tasks automatically launch the Qwen3 runtime. A packed conda-style base
+runtime starts with `runtime_env/python.exe -m desktop.main`; a venv base runtime
+starts with `runtime_env/Scripts/python.exe -m desktop.main`.
 
 ## Stage 0 Doctor
 
@@ -286,7 +307,7 @@ Install the lightweight service dependencies:
 & $Python -m pip install -r runtime/sensevoice/requirements.txt
 ```
 
-Install the model backend dependencies in the unified runtime environment when
+Install the model backend dependencies in the base runtime environment when
 you are ready to run the real model:
 
 ```powershell
@@ -359,11 +380,11 @@ local or remote OpenAI-compatible Teacher in that character's training YAML,
 and the pipeline creates auditable `generated/` artifacts plus final Chat JSONL.
 Existing `instruction/output` or Chat JSONL data remains available through
 `data_source.mode: chat_jsonl`; both modes use the same training/export path.
-Normal quickstart runtime does not install every training package. Install the
-training extras after bootstrap before a real QLoRA run:
+Normal bootstrap installs the Qwen3 training packages. If you used
+`-Lightweight`, rerun bootstrap without it before a real QLoRA run. The HF
+base model still needs a separate download:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/install_qwen3_training_deps.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/download_qwen3_training_model.ps1
 ```
 

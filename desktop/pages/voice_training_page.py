@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -31,6 +32,7 @@ class VoiceTrainingPage(QScrollArea):
         self.character_id = ""
         self._config_path: Path | None = None
         self._paused_job: dict[str, object] | None = None
+        self._clear_training_requested = False
         self._runtime_busy = False
         self.worker = VoiceTrainingWorker(self)
         self.playback = VoicePlaybackController(self)
@@ -164,16 +166,16 @@ class VoiceTrainingPage(QScrollArea):
         self.phase.setObjectName("pageSubtitle")
         self.phase.setWordWrap(True)
         layout.addWidget(self.phase)
-        hint = QLabel("暂停会等待当前保存间隔完成，只保存检查点。结束会凑齐 S1/S2 权重，生成固定试听并验证后自动应用。")
+        hint = QLabel("暂停会在保存间隔结束后保留检查点；结束并导出会生成 S1/S2 权重并验证应用；结束并清除会删除本次实验输出，保留原始音频。")
         hint.setWordWrap(True); hint.setObjectName("pageSubtitle")
         layout.addWidget(hint)
         actions = QHBoxLayout()
         self.start_button = QPushButton("开始训练"); self.start_button.setObjectName("primaryButton")
         self.start_button.clicked.connect(lambda: self._start("train"))
-        self.pause_button = QPushButton("暂停"); self.pause_button.clicked.connect(self.worker.request_pause)
-        self.resume_button = QPushButton("从检查点继续"); self.resume_button.clicked.connect(lambda _checked=False: self._resume())
-        self.finish_button = QPushButton("结束并验证应用"); self.finish_button.clicked.connect(self._finish)
-        for button in (self.start_button, self.pause_button, self.resume_button, self.finish_button):
+        self.pause_button = QPushButton("暂停训练"); self.pause_button.clicked.connect(self._toggle_pause)
+        self.finish_button = QPushButton("结束并导出"); self.finish_button.clicked.connect(self._finish)
+        self.clear_button = QPushButton("结束并清除训练数据"); self.clear_button.clicked.connect(self._end_and_clear_training_data)
+        for button in (self.start_button, self.pause_button, self.finish_button, self.clear_button):
             if button is not self.start_button:
                 button.setObjectName("secondaryButton")
             actions.addWidget(button)
@@ -362,6 +364,45 @@ class VoiceTrainingPage(QScrollArea):
         else:
             self._resume(finish=True)
 
+    def _toggle_pause(self) -> None:
+        if self.worker.is_running:
+            self.worker.request_pause()
+        else:
+            self._resume()
+
+    def _end_and_clear_training_data(self) -> None:
+        job = self.worker.job or self._paused_job
+        if not job or job.get("action") != "train":
+            return
+        self._clear_training_requested = True
+        if self.worker.is_running:
+            self.worker.request_pause()
+            self.phase.setText("正在安全结束训练；随后清除本次实验结果。")
+        elif self._paused_job:
+            self._discard_training_results(self._paused_job)
+
+    def _discard_training_results(self, job: dict[str, object]) -> None:
+        try:
+            config = load_training_config(Path(str(job["config_path"])))
+            run_dir = config.run_dir.resolve()
+            character_root = (config.outputs_dir / str(job["character_id"])).resolve()
+            if config.character_id != job["character_id"] or run_dir.parent != character_root:
+                raise ValueError(f"拒绝清理范围外训练输出：{run_dir}")
+            if run_dir.exists():
+                shutil.rmtree(run_dir)
+            self.worker.discard_paused_job(job)
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            self._clear_training_requested = False
+            self.phase.setText(f"无法清除训练结果：{exc}")
+            return
+        self._paused_job = None
+        self._clear_training_requested = False
+        self.task_state.setText("任务状态：已结束并清除训练结果")
+        self.progress.setValue(0)
+        self.phase.setText("本次实验输出和检查点已清除；原始音频保留。")
+        self.logs.append_log("[voice] 已结束训练并清除本次实验结果")
+        self._buttons("IDLE")
+
     def _on_changed(self, job: dict[str, object]) -> None:
         self.task_state.setText(f"任务状态：{job.get('state')} · {job.get('phase')}")
         detail = str(job.get("detail") or "")
@@ -388,6 +429,11 @@ class VoiceTrainingPage(QScrollArea):
         self._config_path = None
         if state == "PAUSED":
             self._paused_job = job
+            if self._clear_training_requested:
+                self._discard_training_results(job)
+                return
+        else:
+            self._clear_training_requested = False
         if state == "COMPLETED" and job.get("action") == "train":
             self._paused_job = None
             self.models_changed.emit()
@@ -402,11 +448,11 @@ class VoiceTrainingPage(QScrollArea):
         training = self.worker.job is not None and self.worker.job.get("action") == "train"
         resumable = state in {"PAUSED", "FAILED"} and self._paused_job is not None and not self.worker.is_running
         self.start_button.setEnabled(not running and self._paused_job is None)
-        self.pause_button.setEnabled(state == "RUNNING" and training and self.worker.is_running)
-        self.pause_button.setText("正在保存检查点…" if state == "PAUSING" else "暂停")
-        self.resume_button.setEnabled(resumable)
+        self.pause_button.setEnabled((state == "RUNNING" and training and self.worker.is_running) or resumable)
+        self.pause_button.setText("正在保存检查点…" if state == "PAUSING" else "继续训练" if resumable else "暂停训练")
         self.finish_button.setEnabled((state == "RUNNING" and training and self.worker.is_running) or resumable)
-        for button in (self.start_button, self.pause_button, self.resume_button, self.finish_button):
+        self.clear_button.setEnabled((state in {"RUNNING", "PAUSING"} and training and self.worker.is_running) or resumable)
+        for button in (self.start_button, self.pause_button, self.finish_button, self.clear_button):
             button.setCursor(Qt.CursorShape.PointingHandCursor if button.isEnabled() else Qt.CursorShape.ArrowCursor)
 
     def refresh_models(self) -> None:

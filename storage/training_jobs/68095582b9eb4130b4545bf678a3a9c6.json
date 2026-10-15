@@ -1,0 +1,21 @@
+{
+  "job_id": "68095582b9eb4130b4545bf678a3a9c6",
+  "kind": "dataset",
+  "character_id": "elysia",
+  "config_path": "E:\\Alysia-chat\\storage\\training_jobs\\configs\\elysia-20261014-193623.yaml",
+  "state": "DATASET_READY",
+  "created_at": "2026-10-14T11:36:23.951590+00:00",
+  "updated_at": "2026-10-14T11:37:52.613144+00:00",
+  "error": "",
+  "progress": 100.0,
+  "phase": "complete",
+  "detail": "训练集已就绪，可开始训练。",
+  "metrics": {
+    "phase": "complete",
+    "completed": 1,
+    "total": 1,
+    "percent": 100.0,
+    "message": "训练集已就绪，可开始训练",
+    "accepted_examples": 116
+  }
+}

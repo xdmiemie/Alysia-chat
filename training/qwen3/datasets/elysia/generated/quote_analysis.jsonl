@@ -1,30 +1,30 @@
-{"quote_id": "quote_ee6a1f743ea4", "intent": ["表达情感"], "emotion": ["浪漫温暖"], "response_strategy": ["共鸣回应"], "possible_contexts": ["浪漫场景"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_741d4f98632d", "intent": ["表达情感"], "emotion": ["温柔", "浪漫", "诗意"], "response_strategy": ["自然亲切回应"], "possible_contexts": ["文学创作", "情感交流"], "style_features": ["浪漫诗意"]}
-{"quote_id": "quote_e30da5522a56", "intent": ["表达思念"], "emotion": ["深情"], "response_strategy": ["温柔回应"], "possible_contexts": ["重逢时刻"], "style_features": ["诗意浪漫"]}
-{"quote_id": "quote_32f4c7f24b11", "intent": ["表达情感"], "emotion": ["浪漫", "温暖", "希望"], "response_strategy": ["共鸣", "鼓励", "展望"], "possible_contexts": ["节日祝福", "个人情感表达", "梦想追求"], "style_features": ["诗意", "自然", "温柔"]}
-{"quote_id": "quote_77a483a14354", "intent": ["自我反思"], "emotion": ["忧伤"], "response_strategy": ["鼓励"], "possible_contexts": ["个人成长"], "style_features": ["诗意"]}
-{"quote_id": "quote_12714301efd0", "intent": ["表达情感"], "emotion": ["温柔"], "response_strategy": ["共鸣"], "possible_contexts": ["深夜独处"], "style_features": ["诗意"]}
-{"quote_id": "quote_a895c99f2d08", "intent": ["表达情感"], "emotion": ["温柔", "感动"], "response_strategy": ["共情回应"], "possible_contexts": ["亲密对话", "情感交流"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_cba5e041bdc3", "intent": ["表达情感"], "emotion": ["温柔", "浪漫"], "response_strategy": ["共鸣", "细腻描绘"], "possible_contexts": ["回忆往事", "情感交流"], "style_features": ["诗意", "细腻"]}
-{"quote_id": "quote_216f4a08e2f7", "intent": ["鼓励探索"], "emotion": ["温暖回忆"], "response_strategy": ["引导共鸣"], "possible_contexts": ["海边漫步", "回忆往事"], "style_features": ["诗意比喻"]}
-{"quote_id": "quote_b8507ee42e7a", "intent": ["表达信仰"], "emotion": ["温暖"], "response_strategy": ["引导共鸣"], "possible_contexts": ["宗教讨论", "情感交流"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_049f9745dc9e", "intent": ["激励人心"], "emotion": ["希望"], "response_strategy": ["用诗意语言回应"], "possible_contexts": ["困境中"], "style_features": ["浪漫诗意"]}
-{"quote_id": "quote_cbcf86455a6e", "intent": ["表达思念"], "emotion": ["深情"], "response_strategy": ["温柔回应"], "possible_contexts": ["离别场景"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_0012245c9a89", "intent": ["提醒珍惜当下"], "emotion": ["感慨", "温柔"], "response_strategy": ["共情回应"], "possible_contexts": ["人生感悟", "情感交流"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_7439be2bf5ac", "intent": ["表达感悟"], "emotion": ["积极向上"], "response_strategy": ["共鸣共情"], "possible_contexts": ["人生哲理讨论"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_6720abcac670", "intent": ["表达期待与情感"], "emotion": ["温柔", "期待", "浪漫"], "response_strategy": ["用诗意语言回应"], "possible_contexts": ["约会场景", "回忆过往"], "style_features": ["浪漫诗意", "自然亲切"]}
-{"quote_id": "quote_07a82bcb6e64", "intent": ["表达陪伴"], "emotion": ["温暖"], "response_strategy": ["主动关心"], "possible_contexts": ["重要时刻"], "style_features": ["浪漫诗意"]}
-{"quote_id": "quote_c1f62f2818d2", "intent": ["表达情感"], "emotion": ["浪漫", "温暖"], "response_strategy": ["共鸣回应"], "possible_contexts": ["浪漫场景", "情感交流"], "style_features": ["诗意语言"]}
-{"quote_id": "quote_225cd71d5224", "intent": ["表达爱慕"], "emotion": ["深情"], "response_strategy": ["温柔回应"], "possible_contexts": ["表白", "表达情感"], "style_features": ["浪漫"]}
-{"quote_id": "quote_66ce382cefa7", "intent": ["表达思念"], "emotion": ["深情"], "response_strategy": ["温柔回应"], "possible_contexts": ["恋爱中"], "style_features": ["诗意"]}
+{"quote_id": "quote_ee6a1f743ea4", "intent": ["表达情感"], "emotion": ["浪漫", "温暖"], "response_strategy": ["简洁回应"], "possible_contexts": ["约会对话"], "style_features": ["诗意表达"]}
+{"quote_id": "quote_741d4f98632d", "intent": ["表达情感"], "emotion": ["温柔", "浪漫", "深邃"], "response_strategy": ["用自然比喻"], "possible_contexts": ["诗歌创作", "情感交流"], "style_features": ["抒情", "比喻", "细腻"]}
+{"quote_id": "quote_e30da5522a56", "intent": ["表达思念"], "emotion": ["深情"], "response_strategy": ["温柔回应"], "possible_contexts": ["重逢时刻"], "style_features": ["浪漫抒情"]}
+{"quote_id": "quote_32f4c7f24b11", "intent": ["表达情感"], "emotion": ["浪漫", "希望", "温暖"], "response_strategy": ["温柔回应"], "possible_contexts": ["节日祝福", "情感表达"], "style_features": ["抒情", "比喻"]}
+{"quote_id": "quote_77a483a14354", "intent": ["自我反思", "激励前行"], "emotion": ["忧伤", "希望"], "response_strategy": ["温柔引导", "鼓励行动"], "possible_contexts": ["个人成长", "情感低落"], "style_features": ["诗意表达", "自然意象"]}
+{"quote_id": "quote_12714301efd0", "intent": ["表达情感"], "emotion": ["温柔"], "response_strategy": ["共鸣"], "possible_contexts": ["夜晚散步"], "style_features": ["浪漫"]}
+{"quote_id": "quote_a895c99f2d08", "intent": ["表达情感"], "emotion": ["温柔", "浪漫"], "response_strategy": ["自然回应"], "possible_contexts": ["对话中表达情感"], "style_features": ["抒情"]}
+{"quote_id": "quote_cba5e041bdc3", "intent": ["表达情感"], "emotion": ["温柔浪漫"], "response_strategy": ["细腻描绘"], "possible_contexts": ["回忆往事"], "style_features": ["抒情诗意"]}
+{"quote_id": "quote_216f4a08e2f7", "intent": ["鼓励探索"], "emotion": ["温暖回忆"], "response_strategy": ["唤起共鸣"], "possible_contexts": ["海边漫步", "回忆往事"], "style_features": ["诗意比喻"]}
+{"quote_id": "quote_b8507ee42e7a", "intent": ["表达信仰"], "emotion": ["温暖"], "response_strategy": ["引导共鸣"], "possible_contexts": ["宗教讨论", "个人信仰分享"], "style_features": ["诗意表达"]}
+{"quote_id": "quote_049f9745dc9e", "intent": ["激励希望"], "emotion": ["温暖坚定"], "response_strategy": ["用自然意象呼应"], "possible_contexts": ["困境中鼓励"], "style_features": ["诗意比喻"]}
+{"quote_id": "quote_cbcf86455a6e", "intent": ["表达期待"], "emotion": ["温柔", "期待"], "response_strategy": ["轻快自然"], "possible_contexts": ["等待重逢"], "style_features": ["浪漫抒情"]}
+{"quote_id": "quote_0012245c9a89", "intent": ["表达珍惜当下"], "emotion": ["感慨", "温暖"], "response_strategy": ["简短回应"], "possible_contexts": ["人生感悟", "情感交流"], "style_features": ["诗意表达"]}
+{"quote_id": "quote_7439be2bf5ac", "intent": ["表达感悟"], "emotion": ["积极向上"], "response_strategy": ["简洁回应"], "possible_contexts": ["生活感悟", "情感交流"], "style_features": ["诗意表达"]}
+{"quote_id": "quote_6720abcac670", "intent": ["表达期待与情感"], "emotion": ["温柔", "期待", "浪漫"], "response_strategy": ["含蓄表达", "情感共鸣", "诗意回应"], "possible_contexts": ["两人约定未来见面", "表达对未来的憧憬"], "style_features": ["浪漫抒情", "轻快自然", "含蓄优雅"]}
+{"quote_id": "quote_07a82bcb6e64", "intent": ["陪伴", "支持"], "emotion": ["温暖", "期待"], "response_strategy": ["温柔回应", "积极互动"], "possible_contexts": ["重要时刻", "情感交流"], "style_features": ["浪漫抒情", "轻快自然"]}
+{"quote_id": "quote_c1f62f2818d2", "intent": ["表达情感"], "emotion": ["浪漫", "惊喜"], "response_strategy": ["温柔回应"], "possible_contexts": ["相遇", "礼物"], "style_features": ["抒情", "自然"]}
+{"quote_id": "quote_225cd71d5224", "intent": ["表达爱慕"], "emotion": ["深情"], "response_strategy": ["直接表达"], "possible_contexts": ["表白", "感谢"], "style_features": ["浪漫"]}
+{"quote_id": "quote_66ce382cefa7", "intent": ["表达思念"], "emotion": ["深情", "期待"], "response_strategy": ["直接回应情感"], "possible_contexts": ["等待某人", "表达爱意"], "style_features": ["浪漫", "抒情"]}
 {"quote_id": "quote_a9b65ef271ff", "intent": ["表达情感"], "emotion": ["温暖", "怀念"], "response_strategy": ["共鸣回应"], "possible_contexts": ["回忆时光", "情感交流"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_bcc2216acaf9", "intent": ["表达情感"], "emotion": ["温柔", "浪漫"], "response_strategy": ["共情回应"], "possible_contexts": ["对话中表达情感"], "style_features": ["诗意语言"]}
-{"quote_id": "quote_95eb0c35a1f1", "intent": ["表达情感"], "emotion": ["积极温暖"], "response_strategy": ["共鸣回应"], "possible_contexts": ["日常对话", "情感交流"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_2b9a954ca46a", "intent": ["表达情感"], "emotion": ["浪漫", "希望"], "response_strategy": ["共鸣"], "possible_contexts": ["爱情讨论", "人生规划"], "style_features": ["诗意"]}
-{"quote_id": "quote_7762c7f17da8", "intent": ["表达情感"], "emotion": ["温柔", "浪漫"], "response_strategy": ["共鸣回应"], "possible_contexts": ["情感交流", "文学创作"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_12168e37894e", "intent": ["表达爱意"], "emotion": ["热烈真挚"], "response_strategy": ["温柔回应"], "possible_contexts": ["表白", "情感交流"], "style_features": ["浪漫诗意"]}
-{"quote_id": "quote_e837602dc1b8", "intent": ["表达承诺"], "emotion": ["温暖"], "response_strategy": ["共鸣"], "possible_contexts": ["浪漫对话"], "style_features": ["诗意"]}
-{"quote_id": "quote_f8ae5ec4c255", "intent": ["表达情感"], "emotion": ["忧伤"], "response_strategy": ["共情回应"], "possible_contexts": ["失去重要的人"], "style_features": ["诗意表达"]}
-{"quote_id": "quote_142e7576c0a4", "intent": ["表达惊喜"], "emotion": ["喜悦"], "response_strategy": ["共鸣"], "possible_contexts": ["浪漫对话"], "style_features": ["诗意"]}
-{"quote_id": "quote_7ee3e8332694", "intent": ["表达情感"], "emotion": ["浪漫", "希望", "憧憬"], "response_strategy": ["共鸣", "分享感受", "展望未来"], "possible_contexts": ["爱情", "友情", "人生旅程"], "style_features": ["诗意", "自然", "温柔"]}
-{"quote_id": "quote_9f19266ad270", "intent": ["表达情感"], "emotion": ["激动", "浪漫"], "response_strategy": ["共鸣"], "possible_contexts": ["浪漫对话", "情感交流"], "style_features": ["诗意"]}
+{"quote_id": "quote_bcc2216acaf9", "intent": ["表达情感"], "emotion": ["温柔", "浪漫"], "response_strategy": ["共鸣回应"], "possible_contexts": ["对话中表达情感"], "style_features": ["抒情", "自然"]}
+{"quote_id": "quote_95eb0c35a1f1", "intent": ["表达情感"], "emotion": ["积极乐观"], "response_strategy": ["用自然语言回应"], "possible_contexts": ["日常对话"], "style_features": ["浪漫抒情"]}
+{"quote_id": "quote_2b9a954ca46a", "intent": ["表达情感"], "emotion": ["浪漫"], "response_strategy": ["用比喻"], "possible_contexts": ["爱情讨论"], "style_features": ["抒情"]}
+{"quote_id": "quote_7762c7f17da8", "intent": ["表达情感"], "emotion": ["温柔"], "response_strategy": ["细腻回应"], "possible_contexts": ["浪漫对话"], "style_features": ["抒情"]}
+{"quote_id": "quote_12168e37894e", "intent": ["表达爱意"], "emotion": ["热烈真挚"], "response_strategy": ["直接回应"], "possible_contexts": ["表白", "情感交流"], "style_features": ["浪漫抒情"]}
+{"quote_id": "quote_e837602dc1b8", "intent": ["表达承诺"], "emotion": ["温暖"], "response_strategy": ["用自然语言回应"], "possible_contexts": ["浪漫对话"], "style_features": ["抒情"]}
+{"quote_id": "quote_f8ae5ec4c255", "intent": ["表达情感"], "emotion": ["悲伤"], "response_strategy": ["共情回应"], "possible_contexts": ["失去重要的人"], "style_features": ["浪漫抒情"]}
+{"quote_id": "quote_142e7576c0a4", "intent": ["表达惊喜"], "emotion": ["喜悦"], "response_strategy": ["轻快自然"], "possible_contexts": ["浪漫对话"], "style_features": ["浪漫抒情"]}
+{"quote_id": "quote_7ee3e8332694", "intent": ["表达情感"], "emotion": ["浪漫", "憧憬"], "response_strategy": ["用比喻回应"], "possible_contexts": ["讨论未来", "分享梦想"], "style_features": ["抒情", "自然"]}
+{"quote_id": "quote_9f19266ad270", "intent": ["表达情感"], "emotion": ["兴奋", "浪漫"], "response_strategy": ["共鸣回应"], "possible_contexts": ["浪漫对话", "探索主题"], "style_features": ["轻快自然", "浪漫抒情"]}

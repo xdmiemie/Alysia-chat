@@ -9,7 +9,7 @@ from uuid import uuid4
 from PySide6.QtCore import QPointF, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QPaintEvent, QPainter, QPolygonF
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QProgressBar, QScrollArea, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -84,33 +84,26 @@ class TrainingPage(QWidget):
         self.export_character_button.clicked.connect(self._export_selected)
         self.delete_character_button.clicked.connect(self._delete_selected)
 
-        cards = QGridLayout()
-        cards.setSpacing(14)
-        self.qwen_card_button = QPushButton("配置 Qwen3 训练")
-        self.qwen_card_button.setObjectName("primaryButton")
-        self.qwen_card_button.clicked.connect(self._open_qwen_training)
-        cards.addWidget(self._task_card("Qwen3 角色训练", "语录构造、LoRA 参数、导出与激活流程", self.qwen_card_button), 0, 0)
-        self.voice_card_button = QPushButton("配置 GPT-SoVITS 训练")
-        self.voice_card_button.setObjectName("primaryButton")
-        self.voice_card_button.clicked.connect(self._open_voice_training)
-        cards.addWidget(self._task_card("GPT-SoVITS 训练", "音频校验、S1/S2 训练、试听与自动应用", self.voice_card_button), 0, 1)
-        root.addLayout(cards)
-
         self.training_worker = Qwen3TrainingWorker(self)
         self._clear_training_data_requested = False
+        self._clear_dataset_requested = False
         self.teacher_service = FixedTeacherService(self)
         self._teacher_ready = False
         self._build_after_teacher_ready = False
+        self.training_sections = QTabWidget()
+        self.training_sections.setObjectName("trainingSections")
+        self.training_sections.tabBar().setObjectName("trainingSectionBar")
         self.training_tabs = QTabWidget()
         self.training_tabs.setObjectName("qwen3TrainingTabs")
-        self.training_tabs.addTab(self._build_source_tab(), "Qwen3 · 数据来源")
+        self.training_tabs.addTab(self._build_source_tab(), "数据来源")
         self.training_tabs.addTab(self._build_settings_tab(), "Teacher 与 LoRA")
         self.training_tabs.addTab(self._build_preview_tab(), "数据预览")
         self.training_tabs.addTab(self._build_task_tab(), "任务控制")
+        self.training_sections.addTab(self.training_tabs, "Qwen3 训练")
         self.voice_training_page = VoiceTrainingPage(self)
         self.voice_training_page.models_changed.connect(self.characters_changed)
-        self.training_tabs.addTab(self.voice_training_page, "GPT-SoVITS · 语音训练")
-        root.addWidget(self.training_tabs)
+        self.training_sections.addTab(self.voice_training_page, "GPT-SoVITS 训练")
+        root.addWidget(self.training_sections)
 
         log_header = QLabel("任务日志")
         log_header.setObjectName("sectionTitle")
@@ -133,30 +126,10 @@ class TrainingPage(QWidget):
         if incomplete:
             self._restored_job = incomplete[0]
             self._apply_job_state(self._restored_job)
-            self.log_console.append_log(f"[resume] 检测到暂停任务 {self._restored_job.job_id[:8]}；请在任务控制页继续或停止。")
+            target = "数据来源页" if self._restored_job.kind == "dataset" else "任务控制页"
+            self.log_console.append_log(f"[resume] 检测到暂停任务 {self._restored_job.job_id[:8]}；请在{target}继续或结束。")
         else:
             self._restored_job = None
-
-    @staticmethod
-    def _task_card(title: str, description: str, action: str | QPushButton) -> QFrame:
-        card = QFrame()
-        card.setObjectName("trainingCard")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 18, 18, 18)
-        title_label = QLabel(title)
-        title_label.setObjectName("cardHeading")
-        body = QLabel(description)
-        body.setObjectName("cardBody")
-        body.setWordWrap(True)
-        button = action if isinstance(action, QPushButton) else QPushButton(action)
-        if isinstance(action, str):
-            button.setObjectName("secondaryButton")
-            button.setEnabled(False)
-        layout.addWidget(title_label)
-        layout.addWidget(body)
-        layout.addStretch(1)
-        layout.addWidget(button)
-        return card
 
     def _build_source_tab(self) -> QWidget:
         tab, layout = self._scrollable_tab("qwenSourceTab", 420)
@@ -181,6 +154,15 @@ class TrainingPage(QWidget):
         self.build_dataset_button = QPushButton("一键准备模型并构造训练集"); self.build_dataset_button.setObjectName("primaryButton"); self.build_dataset_button.clicked.connect(self._start_dataset)
         actions.addWidget(self.validate_source_button); actions.addWidget(self.build_dataset_button); actions.addStretch(1); layout.addLayout(actions)
         self.source_stats_label = QLabel("尚未校验素材。"); self.source_stats_label.setObjectName("pageSubtitle"); layout.addWidget(self.source_stats_label)
+        layout.addWidget(QLabel("构造数据任务"))
+        self.dataset_state_label = QLabel("任务状态：空闲"); self.dataset_state_label.setObjectName("sectionTitle"); layout.addWidget(self.dataset_state_label)
+        self.dataset_progress = QProgressBar(); self.dataset_progress.setRange(0, 100); self.dataset_progress.setValue(0); layout.addWidget(self.dataset_progress)
+        self.dataset_detail_label = QLabel("等待构造训练集"); self.dataset_detail_label.setObjectName("pageSubtitle"); self.dataset_detail_label.setWordWrap(True); layout.addWidget(self.dataset_detail_label)
+        dataset_actions = QHBoxLayout()
+        self.dataset_pause_button = QPushButton("暂停构造"); self.dataset_pause_button.setObjectName("secondaryButton"); self.dataset_pause_button.clicked.connect(self._toggle_dataset_pause)
+        self.dataset_clear_button = QPushButton("结束并清除构造结果"); self.dataset_clear_button.setObjectName("secondaryButton"); self.dataset_clear_button.clicked.connect(self._end_and_clear_dataset)
+        dataset_actions.addWidget(self.dataset_pause_button); dataset_actions.addWidget(self.dataset_clear_button); dataset_actions.addStretch(1)
+        layout.addLayout(dataset_actions)
         return tab
 
     def _build_settings_tab(self) -> QWidget:
@@ -231,16 +213,14 @@ class TrainingPage(QWidget):
         self.task_progress = QProgressBar(); self.task_progress.setRange(0, 100); self.task_progress.setValue(0); self.task_progress.setFormat("%p%"); layout.addWidget(self.task_progress)
         self.task_detail_label = QLabel("等待任务开始"); self.task_detail_label.setObjectName("pageSubtitle"); self.task_detail_label.setWordWrap(True); layout.addWidget(self.task_detail_label)
         self.task_metrics_label = QLabel(""); self.task_metrics_label.setObjectName("pageSubtitle"); self.task_metrics_label.setWordWrap(True); layout.addWidget(self.task_metrics_label)
-        hint = QLabel("暂停会等待当前安全 step 保存完整 checkpoint，不导出、不注册、不激活。结束会保存当前成果并尝试导出、注册和激活。")
+        hint = QLabel("暂停会在安全 step 保存检查点；结束并导出会停止训练并导出模型；结束并清除会删除本次派生数据和训练输出，保留原始语录。")
         hint.setWordWrap(True); hint.setObjectName("pageSubtitle"); layout.addWidget(hint)
         actions = QHBoxLayout()
         self.start_training_button = QPushButton("开始训练"); self.start_training_button.setObjectName("primaryButton"); self.start_training_button.clicked.connect(lambda: self._start_training(False))
-        self.pause_training_button = QPushButton("暂停"); self.pause_training_button.setObjectName("secondaryButton"); self.pause_training_button.clicked.connect(self.training_worker.request_pause)
-        self.resume_training_button = QPushButton("继续训练"); self.resume_training_button.setObjectName("secondaryButton"); self.resume_training_button.clicked.connect(lambda: self._start_training(True))
-        self.stop_task_button = QPushButton("停止并保留已生成内容"); self.stop_task_button.setObjectName("secondaryButton"); self.stop_task_button.clicked.connect(self._stop_task)
+        self.pause_training_button = QPushButton("暂停训练"); self.pause_training_button.setObjectName("secondaryButton"); self.pause_training_button.clicked.connect(self._toggle_training_pause)
         self.clear_training_data_button = QPushButton("结束并清除训练数据"); self.clear_training_data_button.setObjectName("secondaryButton"); self.clear_training_data_button.clicked.connect(self._end_and_clear_training_data)
-        self.finish_training_button = QPushButton("结束并导出"); self.finish_training_button.setObjectName("secondaryButton"); self.finish_training_button.clicked.connect(self.training_worker.request_finish)
-        for button in (self.start_training_button, self.pause_training_button, self.resume_training_button, self.finish_training_button, self.stop_task_button, self.clear_training_data_button): actions.addWidget(button)
+        self.finish_training_button = QPushButton("结束并导出"); self.finish_training_button.setObjectName("secondaryButton"); self.finish_training_button.clicked.connect(self._finish_training)
+        for button in (self.start_training_button, self.pause_training_button, self.finish_training_button, self.clear_training_data_button): actions.addWidget(button)
         actions.addStretch(1); layout.addLayout(actions); self._set_task_buttons(Qwen3JobState.SOURCE_READY)
         return tab
 
@@ -456,8 +436,9 @@ training:
 
     def _start_dataset(self) -> None:
         if self._restored_job is not None:
-            self.source_stats_label.setText("已有暂停任务；请先在第 4 页继续或停止该任务。")
-            self.training_tabs.setCurrentIndex(3); return
+            target = 0 if self._restored_job.kind == "dataset" else 3
+            self.source_stats_label.setText("已有暂停任务；请先继续或结束该任务。")
+            self.training_tabs.setCurrentIndex(target); return
         if not self._teacher_ready:
             self._build_after_teacher_ready = True
             self.source_stats_label.setText("正在准备固定本地 Teacher；完成后将自动开始构造训练集。")
@@ -467,17 +448,20 @@ training:
         if path is None:
             return
         self.training_worker.start_dataset(self._selected_id(), path)
-        self.training_tabs.setCurrentIndex(3)
+        self.training_tabs.setCurrentIndex(0)
 
-    def _start_training(self, resume: bool) -> None:
-        if resume and self._restored_job is not None and self._restored_job.kind == "dataset":
-            self._ensure_teacher()
-            if self._teacher_ready:
-                self.training_worker.resume_dataset(self._restored_job)
-                self._restored_job = None
-            else:
-                self._build_after_teacher_ready = True
+    def _resume_dataset(self) -> None:
+        if self._restored_job is None or self._restored_job.kind != "dataset":
             return
+        if not self._teacher_ready:
+            self._build_after_teacher_ready = True
+            self._ensure_teacher()
+            return
+        self.training_worker.resume_dataset(self._restored_job)
+        self._restored_job = None
+        self.training_tabs.setCurrentIndex(0)
+
+    def _start_training(self, resume: bool, *, finish: bool = False) -> None:
         if resume and self._restored_job is not None and self._restored_job.kind == "training":
             # The local Teacher is only needed while generating the dataset.
             # Release it before QLoRA resumes so the checkpoint has the full
@@ -485,12 +469,12 @@ training:
             self._show_training_model_loading(resume=True)
             self.teacher_service.stop()
             self._teacher_ready = False
-            self.training_worker.resume_training(self._restored_job)
+            self.training_worker.resume_training(self._restored_job, finish=finish)
             self._restored_job = None
             self.training_tabs.setCurrentIndex(3)
             return
         if self._restored_job is not None:
-            self.training_tabs.setCurrentIndex(3); return
+            self.training_tabs.setCurrentIndex(0 if self._restored_job.kind == "dataset" else 3); return
         path = getattr(self, "_job_config_path", None) or self._save_job_config(require_teacher=False)
         if path is None:
             return
@@ -518,12 +502,6 @@ training:
     def _ensure_teacher(self) -> None:
         self.teacher_service.ensure_started()
 
-    def _open_qwen_training(self) -> None:
-        self.training_tabs.setCurrentIndex(0)
-
-    def _open_voice_training(self) -> None:
-        self.training_tabs.setCurrentWidget(self.voice_training_page)
-
     @Slot(str)
     def _on_teacher_status(self, message: str) -> None:
         self.teacher_status_label.setText(message)
@@ -535,7 +513,7 @@ training:
         self._sync_source_mode()
         if self._build_after_teacher_ready:
             self._build_after_teacher_ready = False
-            QTimer.singleShot(0, lambda: self._start_training(True) if self._restored_job is not None else self._start_dataset())
+            QTimer.singleShot(0, self._resume_dataset if self._restored_job is not None else self._start_dataset)
 
     @Slot(str)
     def _on_teacher_failed(self, message: str) -> None:
@@ -550,46 +528,100 @@ training:
 
     @Slot(object)
     def _apply_job_state(self, job: Qwen3Job) -> None:
-        self.job_state_label.setText(f"任务状态：{job.state.value} · {job.kind} · {job.job_id[:8]}")
-        self.task_progress.setValue(round(job.progress))
-        self.task_detail_label.setText(job.detail or job.phase or "任务正在准备")
-        if job.metrics:
+        if job.kind == "dataset":
+            self.dataset_state_label.setText(f"任务状态：{job.state.value} · {job.job_id[:8]}")
+            self.dataset_progress.setValue(round(job.progress))
+            self.dataset_detail_label.setText(job.detail or job.phase or "正在准备构造数据")
+        else:
+            self.job_state_label.setText(f"任务状态：{job.state.value} · {job.job_id[:8]}")
+            self.task_progress.setValue(round(job.progress))
+            self.task_detail_label.setText(job.detail or job.phase or "任务正在准备")
             self.task_metrics_label.setText(" · ".join(f"{key}={value}" for key, value in job.metrics.items() if key != "raw"))
-        self.pause_training_button.setText("暂停构造" if job.kind == "dataset" else "暂停训练")
-        self.resume_training_button.setText("继续构造" if job.kind == "dataset" else "继续训练")
-        self.stop_task_button.setText("停止并清空构造结果" if job.kind == "dataset" else "停止并保留已生成内容")
         self._set_task_buttons(job.state)
 
     @Slot(object)
     def _on_job_finished(self, job: Qwen3Job) -> None:
+        clearing = job.state is Qwen3JobState.PAUSED and (
+            (job.kind == "dataset" and self._clear_dataset_requested)
+            or (job.kind == "training" and self._clear_training_data_requested)
+        )
         if job.state is Qwen3JobState.PAUSED:
             self._restored_job = job
-            if job.kind == "training" and self._clear_training_data_requested:
+            if job.kind == "dataset" and self._clear_dataset_requested:
+                self._discard_dataset(job)
+            elif job.kind == "training" and self._clear_training_data_requested:
                 self._discard_training_data(job)
-        self._refresh_preview()
+        elif job.kind == "dataset":
+            self._clear_dataset_requested = False
+        else:
+            self._clear_training_data_requested = False
+        if not clearing:
+            self._refresh_preview()
         if job.state is Qwen3JobState.COMPLETED:
             self.characters_changed.emit()
             self.log_console.append_log("[done] Qwen3 模型已完成导出、注册和激活；模型列表可立即刷新。")
 
     def _set_task_buttons(self, state: Qwen3JobState) -> None:
         running = state in {Qwen3JobState.BUILDING_DATASET, Qwen3JobState.RUNNING, Qwen3JobState.PAUSING, Qwen3JobState.FINISHING, Qwen3JobState.EXPORTING}
-        # Training can start only after Quote-to-SFT has fully produced and
-        # validated its final split.  This avoids a misleading active button
-        # while the dataset worker is still running or awaiting the Teacher.
-        self.start_training_button.setEnabled(state is Qwen3JobState.DATASET_READY)
-        if hasattr(self, "build_dataset_button"):
-            self.build_dataset_button.setEnabled(not running and self.data_mode_combo.currentData() == "quotes")
-        # Dataset construction is also a long-running task.  It has durable
-        # checkpoints and must expose the same cooperative pause control.
-        self.pause_training_button.setEnabled(state in {Qwen3JobState.BUILDING_DATASET, Qwen3JobState.RUNNING})
         restored = getattr(self, "_restored_job", None)
-        job_kind = self.training_worker.job.kind if self.training_worker.job else (restored.kind if restored else "training")
-        self.finish_training_button.setEnabled(state is Qwen3JobState.RUNNING and job_kind == "training")
-        self.resume_training_button.setEnabled(state is Qwen3JobState.PAUSED)
-        self.stop_task_button.setEnabled(state in {Qwen3JobState.BUILDING_DATASET, Qwen3JobState.RUNNING, Qwen3JobState.PAUSED})
-        self.clear_training_data_button.setEnabled(
-            job_kind == "training" and state in {Qwen3JobState.RUNNING, Qwen3JobState.PAUSING, Qwen3JobState.PAUSED}
-        )
+        job = self.training_worker.job or restored
+        job_kind = job.kind if job else ""
+        self.start_training_button.setEnabled(state is Qwen3JobState.DATASET_READY)
+        self.build_dataset_button.setEnabled(not running and state is not Qwen3JobState.PAUSED and self.data_mode_combo.currentData() == "quotes")
+        dataset_job = job_kind == "dataset"
+        training_job = job_kind == "training"
+        self.dataset_pause_button.setText("继续构造" if dataset_job and state is Qwen3JobState.PAUSED else "暂停构造")
+        self.dataset_pause_button.setEnabled(dataset_job and state in {Qwen3JobState.BUILDING_DATASET, Qwen3JobState.PAUSED})
+        self.dataset_clear_button.setEnabled(dataset_job and state in {Qwen3JobState.BUILDING_DATASET, Qwen3JobState.PAUSING, Qwen3JobState.PAUSED})
+        self.pause_training_button.setText("继续训练" if training_job and state is Qwen3JobState.PAUSED else "暂停训练")
+        self.pause_training_button.setEnabled(training_job and state in {Qwen3JobState.RUNNING, Qwen3JobState.PAUSED})
+        self.finish_training_button.setEnabled(training_job and state in {Qwen3JobState.RUNNING, Qwen3JobState.PAUSED})
+        self.clear_training_data_button.setEnabled(training_job and state in {Qwen3JobState.RUNNING, Qwen3JobState.PAUSING, Qwen3JobState.PAUSED})
+
+    def _toggle_dataset_pause(self) -> None:
+        if self._restored_job is not None and self._restored_job.kind == "dataset":
+            self._resume_dataset()
+        elif self.training_worker.job and self.training_worker.job.kind == "dataset":
+            self.training_worker.request_pause()
+
+    def _toggle_training_pause(self) -> None:
+        if self._restored_job is not None and self._restored_job.kind == "training":
+            self._start_training(True)
+        elif self.training_worker.job and self.training_worker.job.kind == "training":
+            self.training_worker.request_pause()
+
+    def _finish_training(self) -> None:
+        if self._restored_job is not None and self._restored_job.kind == "training":
+            self._start_training(True, finish=True)
+        elif self.training_worker.job and self.training_worker.job.kind == "training":
+            self.training_worker.request_finish()
+
+    def _end_and_clear_dataset(self) -> None:
+        job = self.training_worker.job or self._restored_job
+        if job is None or job.kind != "dataset":
+            return
+        self._clear_dataset_requested = True
+        if self.training_worker.is_running:
+            self.training_worker.request_pause()
+            self.dataset_detail_label.setText("正在安全结束构造；随后清除构造结果。")
+        elif self._restored_job is not None:
+            self._discard_dataset(self._restored_job)
+
+    def _discard_dataset(self, job: Qwen3Job) -> None:
+        try:
+            cleared = self._clear_dataset_results(job)
+        except (OSError, ValueError) as exc:
+            self._clear_dataset_requested = False
+            self.dataset_detail_label.setText(f"无法清除构造结果：{exc}")
+            return
+        self.training_worker.dismiss_paused_job(job, discarded=True)
+        self._restored_job = None
+        self._clear_dataset_requested = False
+        self.persona_preview.clear(); self.coverage_preview.clear(); self.dataset_preview.clear()
+        self.dataset_state_label.setText("任务状态：已结束并清除构造结果")
+        self.dataset_progress.setValue(0)
+        self.dataset_detail_label.setText(f"已清除 {cleared} 个构造结果目录；原始语录保留。")
+        self._set_task_buttons(Qwen3JobState.SOURCE_READY)
 
     def _end_and_clear_training_data(self) -> None:
         job = self.training_worker.job or self._restored_job
@@ -605,43 +637,32 @@ training:
 
     def _discard_training_data(self, job: Qwen3Job) -> None:
         try:
-            cleared = self._clear_dataset_results(job)
+            cleared = self._clear_training_results(job)
         except (OSError, ValueError) as exc:
             self._clear_training_data_requested = False
             self.task_detail_label.setText(f"无法清除训练数据：{exc}")
             return
-        self.training_worker.dismiss_paused_job(job)
+        self.training_worker.dismiss_paused_job(job, discarded=True)
         self._restored_job = None
         self._clear_training_data_requested = False
         self.persona_preview.clear(); self.coverage_preview.clear(); self.dataset_preview.clear()
-        self.log_console.append_log(f"[training] 已结束训练并清除 {cleared} 个训练数据目录；原始语录和已导出模型未删除。")
+        self.log_console.append_log(f"[training] 已结束训练并清除 {cleared} 个训练结果目录；原始语录保留。")
         self.job_state_label.setText("任务状态：已结束并清除训练数据")
         self.task_progress.setValue(0)
-        self.task_detail_label.setText("训练数据已清除，可重新构造训练集。")
+        self.task_detail_label.setText("训练数据和本次训练输出已清除，可重新构造训练集。")
         self._set_task_buttons(Qwen3JobState.SOURCE_READY)
 
-    def _stop_task(self) -> None:
-        if self.training_worker.is_running:
-            self.training_worker.request_pause()
-            if self.training_worker.job and self.training_worker.job.kind == "dataset":
-                self.task_detail_label.setText("正在于安全边界停止；构造结果将在暂停完成后清空。")
-            else:
-                self.task_detail_label.setText("正在于安全边界停止；已生成文件会保留。")
-            return
-        if self._restored_job is not None:
-            if self._restored_job.kind == "dataset":
-                try:
-                    cleared = self._clear_dataset_results(self._restored_job)
-                except (OSError, ValueError) as exc:
-                    self.task_detail_label.setText(f"无法清空构造结果：{exc}")
-                    return
-                self.log_console.append_log(f"[dataset] 已清空 {cleared} 个构造结果目录；下次一键构造将从头开始。")
-                self.persona_preview.clear(); self.coverage_preview.clear(); self.dataset_preview.clear()
-            self.training_worker.dismiss_paused_job(self._restored_job)
-        self._restored_job = None
-        self.job_state_label.setText("任务状态：已停止（已生成内容仍保留在数据目录）")
-        self.task_detail_label.setText("可开始新的构造任务。" if self.training_worker.job and self.training_worker.job.kind == "dataset" else "可开始新的构造或训练任务。")
-        self._set_task_buttons(Qwen3JobState.SOURCE_READY)
+    def _clear_training_results(self, job: Qwen3Job) -> int:
+        config = load_training_config(Path(job.config_path))
+        run_dir = config.run_dir.resolve()
+        character_root = (config.outputs_dir / job.character_id).resolve()
+        if config.character_id != job.character_id or run_dir.parent != character_root:
+            raise ValueError(f"拒绝清理范围外训练输出：{run_dir}")
+        removed = self._clear_dataset_results(job)
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+            removed += 1
+        return removed
 
     def _clear_dataset_results(self, job: Qwen3Job) -> int:
         """Remove only derived files for a paused dataset job, never source quotes."""

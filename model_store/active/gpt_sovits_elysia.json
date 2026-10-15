@@ -1,27 +1,27 @@
 {
   "model_type": "gpt_sovits",
   "character_id": "elysia",
-  "model_id": "elysia-gpt-sovits-20261014-172519",
-  "version": "elysia-gpt-sovits-20261014-172519",
+  "model_id": "elysia-gpt-sovits-20261015-154108",
+  "version": "elysia-gpt-sovits-20261015-154108",
   "required_files": [
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/elysia-gpt-sovits-20261014-165727-1e099f-e5.ckpt",
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/elysia-gpt-sovits-20261014-165727-1e099f_e2_s480.pth",
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/references/neutral_01.wav",
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/references/neutral_02.wav",
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/references/neutral_03.wav",
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/references/neutral_04.wav",
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/references/neutral_05.wav",
-    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/references/neutral_06.wav"
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/elysia-gpt-sovits-20261015-153004-79d9b2-e2.ckpt",
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/elysia-gpt-sovits-20261015-153004-79d9b2_e2_s480.pth",
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/references/neutral_01.wav",
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/references/neutral_02.wav",
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/references/neutral_03.wav",
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/references/neutral_04.wav",
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/references/neutral_05.wav",
+    "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/references/neutral_06.wav"
   ],
   "registry_manifest": "model_store/registry/gpt_sovits/elysia/models.json",
   "runtime": {
-    "gpt_weight": "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/elysia-gpt-sovits-20261014-165727-1e099f-e5.ckpt",
-    "sovits_weight": "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/elysia-gpt-sovits-20261014-165727-1e099f_e2_s480.pth",
-    "reference_dir": "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261014-172519/references"
+    "gpt_weight": "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/elysia-gpt-sovits-20261015-153004-79d9b2-e2.ckpt",
+    "sovits_weight": "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/elysia-gpt-sovits-20261015-153004-79d9b2_e2_s480.pth",
+    "reference_dir": "model_store/registry/gpt_sovits/elysia/elysia-gpt-sovits-20261015-154108/references"
   },
   "data_hash": "89fb9f8e33f25c2fcf23ad35612824329c1208d544a1ae4df7ffb80913d600a6",
-  "config_hash": "06acdeb7fc68be3e938b156f661326c015f81ae7fd0f69c9a425c5709db3b293",
-  "source_run": "training/gpt_sovits/outputs/elysia/elysia-gpt-sovits-20261014-165727-1e099f",
-  "export_log": "training/gpt_sovits/outputs/elysia/elysia-gpt-sovits-20261014-165727-1e099f/export_log.json",
-  "activated_at": "2026-10-14T09:25:39.286655+00:00"
+  "config_hash": "43fee516ebefd69787fb257418510ed0997395416db0ba26d05254281807a03b",
+  "source_run": "training/gpt_sovits/outputs/elysia/elysia-gpt-sovits-20261015-153004-79d9b2",
+  "export_log": "training/gpt_sovits/outputs/elysia/elysia-gpt-sovits-20261015-153004-79d9b2/export_log.json",
+  "activated_at": "2026-10-15T07:41:33.650216+00:00"
 }

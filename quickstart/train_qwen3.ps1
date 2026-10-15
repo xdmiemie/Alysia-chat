@@ -33,12 +33,12 @@ function Invoke-TrainingPython {
 }
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AlysiaQwenPython -PythonOverride $Python
 } catch {
     throw "Qwen3 training requires quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }
 
-Write-Host "Using unified runtime Python: $RuntimePython"
+Write-Host "Using Qwen3 Python: $RuntimePython"
 if (-not [string]::IsNullOrWhiteSpace($Character)) {
     $Config = "training/qwen3/configs/characters/$Character.yaml"
 }

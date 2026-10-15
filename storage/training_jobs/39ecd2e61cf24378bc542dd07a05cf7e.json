@@ -1,0 +1,21 @@
+{
+  "job_id": "39ecd2e61cf24378bc542dd07a05cf7e",
+  "kind": "dataset",
+  "character_id": "fish",
+  "config_path": "E:\\Alysia-chat\\storage\\training_jobs\\configs\\fish-20261015-155159.yaml",
+  "state": "DATASET_READY",
+  "created_at": "2026-10-15T07:51:59.718916+00:00",
+  "updated_at": "2026-10-15T07:52:52.498256+00:00",
+  "error": "",
+  "progress": 100.0,
+  "phase": "complete",
+  "detail": "训练集已就绪，可开始训练。",
+  "metrics": {
+    "phase": "complete",
+    "completed": 1,
+    "total": 1,
+    "percent": 100.0,
+    "message": "训练集已就绪，可开始训练",
+    "accepted_examples": 230
+  }
+}

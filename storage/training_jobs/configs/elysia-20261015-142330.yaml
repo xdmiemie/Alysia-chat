@@ -1,0 +1,70 @@
+character_id: elysia
+run_name: elysia-qwen3-lora-20261014-102832-3495678c-20261014-193623-03bd2238-20261014-202318-540210de-20261015-142330-177a9eed
+model_name: "xiaoyu-test"
+assigned_character_ids: "elysia,fish"
+outputs_dir: "E:\\Alysia-chat\\training\\qwen3\\outputs"
+
+base_model:
+  model_id: "qwen3-8b-q4-k-m-base-v1"
+  gguf_path: "E:\\Alysia-chat\\model_store\\registry\\qwen3\\elysia\\qwen3-8b-q4-k-m-base-v1\\Qwen3-8B-Q4_K_M.gguf"
+  hf_path: "E:\\Alysia-chat\\model_store\\cache\\qwen3\\hf\\Qwen3-8B"
+
+data_source:
+  mode: quotes
+  quotes: "E:\\Alysia-chat\\qiyu.txt"
+  optional_profile: ""
+
+dataset:
+  raw: "E:\\Alysia-chat\\qiyu.txt"
+  normalized: "E:\\Alysia-chat\\training\\qwen3\\datasets\\elysia\\generated\\normalized_quotes.jsonl"
+  generated_dir: "E:\\Alysia-chat\\training\\qwen3\\datasets\\elysia\\generated"
+  train: "E:\\Alysia-chat\\training\\qwen3\\datasets\\elysia\\final\\train.jsonl"
+  validation: "E:\\Alysia-chat\\training\\qwen3\\datasets\\elysia\\final\\validation.jsonl"
+  validation_ratio: 0.1
+
+teacher:
+  generator:
+    provider: openai_compatible
+    model: "Qwen3-8B-Instruct"
+    base_url: "http://127.0.0.1:8081/v1"
+  judge:
+    provider: openai_compatible
+    model: "Qwen3-8B-Instruct"
+    base_url: "http://127.0.0.1:8081/v1"
+
+generation:
+  target_samples: 10
+  candidates_per_scene: 2
+  max_regenerate: 2
+  seed: 7
+  keep_metadata: true
+  auto_balance: true
+  min_persona_score: 0.7
+  min_relevance_score: 0.7
+  min_naturalness_score: 0.65
+  min_behavior_score: 0.65
+  max_copy_score: 0.3
+  max_assistant_like_penalty: 0.25
+  max_catchphrase_penalty: 0.35
+  max_near_duplicate_ratio: 0.92
+
+training:
+  method: qlora
+  resume_from: auto
+  save_steps: 200
+  save_total_limit: 5
+  best_checkpoint_name: "best"
+  max_steps: 1000
+  learning_rate: 0.0002
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  epochs: 1.0
+  sequence_length: 2048
+  assistant_only_loss: true
+  seed: 7
+  gradient_checkpointing: true
+  bf16: false
+  fp16: true

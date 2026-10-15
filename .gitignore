@@ -5,6 +5,7 @@ __pycache__/
 venv/
 runtime_python/
 runtime_env/
+runtime_env_qwen/
 tools/ffmpeg/
 tools/llama.cpp/
 
