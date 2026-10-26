@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from runtime.qq_adapter import OneBotClient, OneBotConfig
-from runtime.qq_adapter.chat import ChatPolicy, MessageStore, QQChatBridge
+from runtime.qq_adapter.chat import ChatPolicy, MessageStore, ConversationOrchestrator
 from runtime.qwen3.config import load_qwen3_config
 
 LOG = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ async def run(args: argparse.Namespace) -> None:
                 if not isinstance(status, dict) or not status.get("online") or not status.get("good"):
                     raise RuntimeError("QQ account or OneBot is not ready")
                 bot_id = int(login["user_id"])
-                bridge = QQChatBridge(bot_id, policy, store, qwen, model_version)
+                bridge = ConversationOrchestrator(bot_id, policy, store, qwen, model_version)
                 await bridge.load_friends(client)
                 LOG.info("QQ text chat ready for account %s", bot_id)
                 delay = 1.0
@@ -67,7 +67,7 @@ async def run(args: argparse.Namespace) -> None:
                 try:
                     while True:
                         event = await client.next_message()
-                        bridge.accept(event)
+                        bridge.handle_event("incoming_message", event)
                 finally:
                     worker.cancel()
                     try:

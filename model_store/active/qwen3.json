@@ -18,5 +18,5 @@
   "config_hash": "93dfa0c81b92df8711749a4679b3eebcc77e7d3df88dfbd87dbd70cd3c9f6768",
   "source_run": "training/qwen3/outputs/elysia/elysia-qwen3-lora",
   "export_log": "training/qwen3/outputs/elysia/elysia-qwen3-lora/export_log.json",
-  "activated_at": "2026-10-26T07:42:45.719509+00:00"
+  "activated_at": "2026-10-26T08:57:44.097571+00:00"
 }

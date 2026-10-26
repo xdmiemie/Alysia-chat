@@ -11,5 +11,20 @@
   "max_message_length": 2000,
   "min_interval_seconds": 1,
   "max_queue": 64,
-  "task_timeout_seconds": 150
+  "task_timeout_seconds": 150,
+  "max_turn_messages": 3,
+  "max_turn_characters": 500,
+  "max_reply_length": 250,
+  "max_turn_seconds": 120,
+  "always_reply": false,
+  "busy": false,
+  "timing": {
+    "enabled": true,
+    "mode": "smart",
+    "instant": [0.2, 0.7],
+    "quick": [0.7, 1.8],
+    "normal": [1.5, 3.5],
+    "thoughtful": [3.0, 6.0],
+    "max_delay": 8.0
+  }
 }
