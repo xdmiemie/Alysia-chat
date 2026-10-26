@@ -15,6 +15,7 @@ $PidFile = Join-Path $ProjectRoot "storage\temporary\stage6-started-pids.json"
 $QwenPidFile = Join-Path $ProjectRoot "storage\temporary\qwen3-llama-server.pid"
 $GptCharacterFile = Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.character"
 $GptModelFile = Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream.model"
+$GptOwnedFile = Join-Path $ProjectRoot "storage\temporary\gpt-sovits-upstream-owned.json"
 $GptStdoutLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.out.log"
 $GptStderrLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.err.log"
 
@@ -160,6 +161,11 @@ try {
             -RedirectStandardOutput $GptStdoutLog `
             -RedirectStandardError $GptStderrLog `
             -PassThru
+        [ordered]@{
+            pid = $GptProcess.Id
+            executable = $GptProcess.Path
+            started_at_utc = $GptProcess.StartTime.ToUniversalTime().ToString("o")
+        } | ConvertTo-Json | Set-Content -LiteralPath $GptOwnedFile -Encoding UTF8
         $Started += [pscustomobject]@{ name = "GPT-SoVITS upstream"; pid = $GptProcess.Id }
         Wait-TcpPort -HostName "127.0.0.1" -Port 9880 -Name "GPT-SoVITS upstream"
     }
@@ -188,6 +194,7 @@ try {
             Remove-Item -LiteralPath $QwenPidFile -Force -ErrorAction SilentlyContinue
         }
     }
+    & (Join-Path $ProjectRoot "scripts\stop_gpt_sovits_upstream.ps1")
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
     if (-not (Test-TcpPort -HostName "127.0.0.1" -Port 9880)) {
         Remove-Item -LiteralPath $GptCharacterFile -Force -ErrorAction SilentlyContinue

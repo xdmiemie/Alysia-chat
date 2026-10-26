@@ -48,6 +48,37 @@ class AlysiaCore:
         self.asr_fallback_text = asr_fallback_text
         self.llm_fallback_text = llm_fallback_text
 
+    def process_text(self, message: UnifiedMessage) -> AlysiaReply:
+        """Run the shared session/character pipeline for text-only channels."""
+        if message.message_type != "text" or not (message.text or "").strip():
+            raise ValueError("a nonempty text message is required")
+        started = time.perf_counter()
+        try:
+            result = self.sessions.get(message.session_id).chat(message.text or "")
+            elapsed = _elapsed_ms(started)
+            return AlysiaReply(
+                request_id=message.request_id, session_id=message.session_id,
+                channel=message.channel, ok=True, text=result.reply,
+                message_type="text", audio_path="", state="COMPLETED",
+                states=("ACCEPTED", "GENERATING_REPLY", "COMPLETED"),
+                error_code=ErrorCode.NONE.value, error="", transcription=None,
+                reply=result.to_dict(), timings=CoreTiming(
+                    llm_first_token_ms=elapsed, llm_total_ms=elapsed, total_ms=elapsed),
+                metadata=dict(message.metadata),
+            )
+        except Exception as exc:
+            elapsed = _elapsed_ms(started)
+            return AlysiaReply(
+                request_id=message.request_id, session_id=message.session_id,
+                channel=message.channel, ok=False, text=self.llm_fallback_text,
+                message_type="text", audio_path="", state="FAILED",
+                states=("ACCEPTED", "GENERATING_REPLY", "FAILED"),
+                error_code=ErrorCode.LLM_FAILED.value,
+                error=f"Qwen3 failed: {type(exc).__name__}", transcription=None,
+                reply=None, timings=CoreTiming(llm_total_ms=elapsed, total_ms=elapsed),
+                metadata=dict(message.metadata),
+            )
+
     def process(self, message: UnifiedMessage) -> AlysiaReply:
         states: list[str] = []
         started = time.perf_counter()

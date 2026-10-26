@@ -1,0 +1,15 @@
+{
+  "use_friend_list": true,
+  "private_users": [],
+  "groups": [],
+  "group_requires_at": true,
+  "disabled_users": [],
+  "disabled_groups": [],
+  "user_characters": {},
+  "group_characters": {},
+  "character": "elysia",
+  "max_message_length": 2000,
+  "min_interval_seconds": 1,
+  "max_queue": 64,
+  "task_timeout_seconds": 150
+}

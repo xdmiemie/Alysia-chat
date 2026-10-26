@@ -21,18 +21,18 @@ stages:
 
 ## Clone-To-Code Quickstart
 
-For a new machine, use the root-level `quickstart/` scripts to make the code
-runtime self-initializing. Runtime now uses a single Python environment centered
+For a new machine, use `quickstart/bootstrap.ps1` explicitly to prepare the code
+runtime. Runtime uses a single Python environment centered
 on GPT-SoVITS compatibility. The default Python path is the project-local
 `runtime_env` interpreter: `runtime_env/python.exe` for a packed conda-style
 environment, or `runtime_env/Scripts/python.exe` for a venv built by
 `quickstart/bootstrap.ps1`. Explicit overrides can still be provided through
 `-Python`, `ALYSIA_PYTHON`, or `GPT_SOVITS_PYTHON`. This does not bundle GPU
-drivers, but it pulls Git LFS files, clones the GPT-SoVITS upstream source,
+drivers. Bootstrap pulls Git LFS files, clones the GPT-SoVITS upstream source,
 downloads project-local FFmpeg and llama.cpp tools, creates/reuses the
 project-local unified runtime environment, installs the Python dependencies,
-downloads the Qwen3 and SenseVoice model files, runs the doctor, and then starts
-the app through the normal Stage 6 entry.
+downloads the Qwen3 and SenseVoice model files, and runs the doctor. The separate
+`quickstart/run.ps1` entry starts the app with local files only.
 
 Initialize code dependencies only:
 
@@ -40,11 +40,13 @@ Initialize code dependencies only:
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1
 ```
 
-Initialize if needed and run the realtime app:
+Run the realtime app using files and dependencies already installed locally. Startup does not run bootstrap or check for updates:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia
 ```
+
+Run `quickstart/bootstrap.ps1` separately when you choose to install missing dependencies; it may access the network. GPT-SoVITS dependency installation is separate from normal startup.
 
 Choose a Qwen3 model during quickstart startup:
 
@@ -87,7 +89,7 @@ For a lighter setup that skips the heavy SenseVoice model dependency install:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1 -Lightweight
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -LightweightBootstrap
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia
 ```
 
 For an offline or code-only setup that skips model downloads:

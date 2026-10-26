@@ -6,35 +6,18 @@ param(
     [string]$Python = "",
     [switch]$Qwen3Interactive,
     [switch]$GPTSoVITSInteractive,
-    [switch]$SkipBootstrap,
-    [switch]$LightweightBootstrap,
-    [switch]$SkipLfsPull,
-    [switch]$SkipThirdParty,
-    [switch]$SkipModelDownloads,
-    [switch]$SkipHealth
+    [switch]$SkipHealth,
+    [switch]$EnableQQ,
+    [string]$QQPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
-if (-not $SkipBootstrap) {
-    $BootstrapArgs = @()
-    if (-not [string]::IsNullOrWhiteSpace($Python)) {
-        $BootstrapArgs += @("-Python", $Python)
-    }
-    if ($LightweightBootstrap) {
-        $BootstrapArgs += "-Lightweight"
-    }
-    if ($SkipLfsPull) {
-        $BootstrapArgs += "-SkipLfsPull"
-    }
-    if ($SkipThirdParty) {
-        $BootstrapArgs += "-SkipThirdParty"
-    }
-    if ($SkipModelDownloads) {
-        $BootstrapArgs += "-SkipModelDownloads"
-    }
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "quickstart\bootstrap.ps1") @BootstrapArgs
+if ($EnableQQ) {
+    $QQParams = @{}
+    if ($QQPath) { $QQParams.QQPath = $QQPath }
+    & (Join-Path $ProjectRoot "scripts\start_snowluma.ps1") @QQParams
 }
 
 $StartArgs = @()
@@ -62,5 +45,9 @@ if ($MaxTurns -gt 0) {
 if ($SkipHealth) {
     $StartArgs += "-SkipHealth"
 }
-
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\start_app.ps1") @StartArgs
+try {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\start_app.ps1") @StartArgs
+} finally {
+    & (Join-Path $ProjectRoot "scripts\stop_qwen3_server.ps1")
+    & (Join-Path $ProjectRoot "scripts\stop_gpt_sovits_upstream.ps1")
+}

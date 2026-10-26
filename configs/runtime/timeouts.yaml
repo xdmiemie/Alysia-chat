@@ -1,0 +1,7 @@
+timeouts:
+  asr_seconds: 30
+  llm_seconds: 90
+  tts_seconds: 120
+  model_start_seconds: 180
+  model_switch_seconds: 240
+  training_stop_seconds: 300

@@ -624,6 +624,7 @@ try {
         "runtime/audio/requirements.txt",
         "runtime/qwen3/requirements.txt",
         "runtime/gpt_sovits/requirements.txt",
+        "runtime/qq_adapter/requirements.txt",
         "runtime/app/requirements.txt"
     )
     if ($Lightweight) {

@@ -83,6 +83,23 @@ def test_core_processes_text_message_and_preserves_session_context(tmp_path):
     assert Path(first.audio_path).exists()
 
 
+def test_core_text_only_channel_preserves_twenty_turns_without_tts(tmp_path):
+    sessions: dict[str, StatefulChatSession] = {}
+    synth = FakeSynthesizer(tmp_path)
+    core = AlysiaCore(
+        transcriber=FakeTranscriber(),
+        chat_session_factory=lambda session_id: sessions.setdefault(session_id, StatefulChatSession(session_id)),
+        synthesizer=synth, output_dir=tmp_path / "out",
+    )
+    replies = [core.process_text(UnifiedMessage(
+        request_id=f"qq-999-{index}", channel="qq", session_id="qq:private:999:123",
+        sender_id="123", sender_name="Alice", message_type="text", text=f"turn {index}",
+    )) for index in range(20)]
+    assert all(reply.ok and reply.message_type == "text" and not reply.audio_path for reply in replies)
+    assert replies[-1].text == "qq:private:999:123:20:turn 19"
+    assert synth.calls == []
+
+
 def test_core_processes_audio_message_through_same_pipeline(tmp_path):
     wav_path = tmp_path / "input.wav"
     write_pcm16_wav(wav_path, array("h", [0, 1200, -1200, 600] * 1000).tobytes(), 16000, 1)
