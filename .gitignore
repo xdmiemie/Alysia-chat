@@ -5,8 +5,24 @@ __pycache__/
 venv/
 runtime_python/
 runtime_env/
+runtime_env_qwen/
 tools/ffmpeg/
 tools/llama.cpp/
+
+# Local credentials and QQ client/session data. Commit example configs only.
+.env
+.env.*
+!.env.example
+*.token
+*.sqlite
+*.sqlite3
+*.db
+configs/qq_agent/local.*
+storage/qq/
+storage/database/
+storage/desktop/
+storage/state/
+storage/training_jobs/
 
 storage/logs/*
 storage/temporary/*
@@ -26,6 +42,7 @@ datasets/**/test/
 
 training/**/runs/
 training/**/outputs/
+training/**/checkpoints/
 training/gpt_sovits/datasets/*/raw/
 training/gpt_sovits/datasets/*/work/
 

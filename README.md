@@ -1,5 +1,8 @@
 # Companion Robot Prototype
 
+The QQ Agent development route starts at [QQ Stage 11](docs/qq_agent/README.md).
+The original stage roadmap below remains as the historical WeChat plan.
+
 This repository follows the staged plan in `项目阶段要求.md`.
 
 Stage 0 establishes the project skeleton, configuration files, environment
