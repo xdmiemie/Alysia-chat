@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from runtime.audio.audio_format import WaveMetrics
-from runtime.core.models import AlysiaReply, UnifiedMessage, new_request_id
-from runtime.core.service import AlysiaCore, DEFAULT_ASR_FALLBACK_TEXT, DEFAULT_LLM_FALLBACK_TEXT
+from runtime.core.models import AstrbotChatReply, UnifiedMessage, new_request_id
+from runtime.core.service import AstrbotChatCore, DEFAULT_ASR_FALLBACK_TEXT, DEFAULT_LLM_FALLBACK_TEXT
 from runtime.gpt_sovits.types import SpeechRequest, SpeechResult
 from runtime.qwen3.types import CharacterReply
 from runtime.sensevoice.types import TranscriptionResult
@@ -104,7 +104,7 @@ class Stage5DialogueRunner:
         self.tts_character_id = tts_character_id or character_id
         self.asr_fallback_text = asr_fallback_text
         self.llm_fallback_text = llm_fallback_text
-        self.core = AlysiaCore(
+        self.core = AstrbotChatCore(
             transcriber=transcriber,
             chat_session_factory=chat_session_factory or (lambda _session_id: chat_session),
             synthesizer=synthesizer,
@@ -180,7 +180,7 @@ class RealtimeDialogueRunner:
         self.tts_character_id = tts_character_id or character_id
         self.asr_fallback_text = asr_fallback_text
         self.llm_fallback_text = llm_fallback_text
-        self.core = AlysiaCore(
+        self.core = AstrbotChatCore(
             transcriber=transcriber,
             chat_session_factory=chat_session_factory or (lambda _session_id: chat_session),
             synthesizer=synthesizer,
@@ -224,7 +224,7 @@ class RealtimeDialogueRunner:
         output_path = ""
         ok = False
         error = ""
-        core_reply: AlysiaReply | None = None
+        core_reply: AstrbotChatReply | None = None
 
         def set_state(state: str) -> str:
             states.append(state)
@@ -314,7 +314,7 @@ def default_stage6_output_dir(base_dir: str | Path = "storage/generated_audio/st
     return Path(base_dir) / timestamp
 
 
-def _dialogue_result_from_core(index: int, input_audio: str, core_reply: AlysiaReply) -> DialogueTurnResult:
+def _dialogue_result_from_core(index: int, input_audio: str, core_reply: AstrbotChatReply) -> DialogueTurnResult:
     states = tuple(["IDLE", *core_reply.states, "IDLE"])
     return DialogueTurnResult(
         request_id=core_reply.request_id,

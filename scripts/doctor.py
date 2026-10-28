@@ -137,7 +137,7 @@ def _runtime_env_path(*parts: str) -> Path:
         if candidate.exists():
             return candidate
 
-    for env_var in ("ALYSIA_PYTHON", "GPT_SOVITS_PYTHON"):
+    for env_var in ("ASTRBOT_CHAT_PYTHON", "ALYSIA_PYTHON", "GPT_SOVITS_PYTHON"):
         value = os.environ.get(env_var)
         if value:
             return Path(value).parent / Path(*parts)

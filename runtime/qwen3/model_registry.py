@@ -214,16 +214,16 @@ def resolve_model(character_id: str | None = None, model_id: str | None = None) 
 
 def ensure_default_elysia_base() -> Qwen3ModelEntry:
     character_id = "elysia"
-    model_id = "qwen3-8b-q4-k-m-base-v1"
-    new_path = REGISTRY_ROOT / character_id / model_id / "Qwen3-8B-Q4_K_M.gguf"
-    legacy_path = REGISTRY_ROOT / "qwen3-8b" / "q4-k-m-base-v1" / "Qwen3-8B-Q4_K_M.gguf"
+    model_id = "qwen3-14b-q4-k-m-base-v1"
+    new_path = REGISTRY_ROOT / character_id / model_id / "Qwen3-14B-Q4_K_M.gguf"
+    legacy_path = REGISTRY_ROOT / "qwen3-14b" / "q4-k-m-base-v1" / "Qwen3-14B-Q4_K_M.gguf"
     if not new_path.exists() and legacy_path.exists():
         new_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(legacy_path), str(new_path))
     return register_model(
         character_id=character_id,
         model_id=model_id,
-        display_name="Qwen3-8B Q4_K_M base",
+        display_name="Qwen3-14B Q4_K_M base",
         kind="base",
         model_format="gguf",
         required_files=[new_path],

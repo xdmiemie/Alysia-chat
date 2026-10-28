@@ -8,7 +8,6 @@ param(
     [switch]$GPTSoVITSInteractive,
     [switch]$SkipBootstrap,
     [switch]$LightweightBootstrap,
-    [switch]$SkipLfsPull,
     [switch]$SkipThirdParty,
     [switch]$SkipModelDownloads,
     [switch]$SkipHealth
@@ -24,9 +23,6 @@ if (-not $SkipBootstrap) {
     }
     if ($LightweightBootstrap) {
         $BootstrapArgs += "-Lightweight"
-    }
-    if ($SkipLfsPull) {
-        $BootstrapArgs += "-SkipLfsPull"
     }
     if ($SkipThirdParty) {
         $BootstrapArgs += "-SkipThirdParty"

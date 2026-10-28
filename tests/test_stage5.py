@@ -180,7 +180,7 @@ def test_stage5_can_keep_tts_on_default_character(tmp_path, monkeypatch):
         synthesizer=synth,
         input_dir=input_dir,
         output_dir=output_dir,
-        character_id="fish",
+        character_id="demo",
         tts_character_id="elysia",
     )
 

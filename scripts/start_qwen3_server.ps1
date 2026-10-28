@@ -13,7 +13,7 @@ $StdoutLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.out.log"
 $StderrLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.err.log"
 
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
-$Python = Resolve-AlysiaRuntimePython
+$Python = Resolve-AstrbotChatRuntimePython
 
 $ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json")
 $PromptForModel = $Interactive -or ((-not $Background) -and [string]::IsNullOrWhiteSpace($Character) -and [string]::IsNullOrWhiteSpace($ModelVersion))

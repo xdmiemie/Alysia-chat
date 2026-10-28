@@ -91,7 +91,7 @@ class CoreTiming:
 
 
 @dataclass(frozen=True)
-class AlysiaReply:
+class AstrbotChatReply:
     request_id: str
     session_id: str
     channel: str
@@ -113,3 +113,7 @@ class AlysiaReply:
         data = asdict(self)
         data["timings"] = self.timings.to_dict()
         return data
+
+
+# Stage 10 callers can migrate without changing behavior.
+AlysiaReply = AstrbotChatReply

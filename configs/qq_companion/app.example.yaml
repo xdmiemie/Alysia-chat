@@ -1,0 +1,23 @@
+# Planned AstrBot integration contract; this file is not a runnable AstrBot config.
+character_id: elysia
+qwen:
+  active_manifest: model_store/active/qwen3.json
+  model_id: qwen3-14b-q4-k-m-base-v1
+  gguf_path: model_store/registry/qwen3/elysia/qwen3-14b-q4-k-m-base-v1/Qwen3-14B-Q4_K_M.gguf
+  openai_api_base: http://127.0.0.1:8080/v1
+tts:
+  active_manifest: model_store/active/gpt_sovits_elysia.json
+  model_id: bailu-v1
+  reference_dir: model_store/registry/gpt_sovits/elysia/bailu-v1/references
+  upstream_url: http://127.0.0.1:9880/tts
+  wrapper_url: http://127.0.0.1:5002/v1/audio/speech
+cover:
+  rvc_model_id: FeiyuVoice-RVC-v1
+  bundle: model_store/registry/rvc/feiyu/v1
+  weight: model_store/registry/rvc/feiyu/v1/FeiyuVoice-RVC-v1.pth
+  index: model_store/registry/rvc/feiyu/v1/FeiyuVoice-RVC-v1.index
+  applio_repo: external/Applio
+  python: envs/song/Scripts/python.exe
+qq:
+  onebot_reverse_ws: ws://127.0.0.1:6199/ws
+  snowluma_repo: external/SnowLuma

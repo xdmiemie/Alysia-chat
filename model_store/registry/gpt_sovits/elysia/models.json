@@ -1,0 +1,19 @@
+{
+  "character_id": "elysia",
+  "active_model_id": "bailu-v1",
+  "models": [
+    {
+      "id": "bailu-v1",
+      "display_name": "elysia Bailu GPT-SoVITS",
+      "kind": "base",
+      "required_files": [
+        "model_store/registry/gpt_sovits/elysia/bailu-v1/Bailu-e10.ckpt",
+        "model_store/registry/gpt_sovits/elysia/bailu-v1/Bailu_e10_s820.pth",
+        "model_store/registry/gpt_sovits/elysia/bailu-v1/references/neutral.wav",
+        "model_store/registry/gpt_sovits/elysia/bailu-v1/references/happy.wav",
+        "model_store/registry/gpt_sovits/elysia/bailu-v1/references/sad.wav",
+        "model_store/registry/gpt_sovits/elysia/bailu-v1/references/surprised.wav"
+      ]
+    }
+  ]
+}

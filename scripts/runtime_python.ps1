@@ -1,4 +1,4 @@
-function Resolve-AlysiaRuntimePython {
+function Resolve-AstrbotChatRuntimePython {
     param([string]$PythonOverride = "")
 
     $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -20,7 +20,7 @@ function Resolve-AlysiaRuntimePython {
         }
     }
 
-    foreach ($EnvVarName in @("ALYSIA_PYTHON", "GPT_SOVITS_PYTHON")) {
+    foreach ($EnvVarName in @("ASTRBOT_CHAT_PYTHON", "ALYSIA_PYTHON", "GPT_SOVITS_PYTHON")) {
         $Value = [Environment]::GetEnvironmentVariable($EnvVarName)
         if (-not [string]::IsNullOrWhiteSpace($Value)) {
             if (-not (Test-Path -LiteralPath $Value)) {
@@ -30,5 +30,11 @@ function Resolve-AlysiaRuntimePython {
         }
     }
 
-    throw "Could not find unified runtime Python. Prepare runtime_env\python.exe, prepare runtime_env\Scripts\python.exe, or set ALYSIA_PYTHON/GPT_SOVITS_PYTHON."
+    throw "Could not find unified runtime Python. Prepare runtime_env\python.exe, prepare runtime_env\Scripts\python.exe, or set ASTRBOT_CHAT_PYTHON."
+}
+
+# Compatibility with scripts written before the project rename.
+function Resolve-AlysiaRuntimePython {
+    param([string]$PythonOverride = "")
+    Resolve-AstrbotChatRuntimePython -PythonOverride $PythonOverride
 }

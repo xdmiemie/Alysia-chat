@@ -2,9 +2,9 @@ param(
     [string]$Character = "",
     [string]$DisplayName = "",
     [string]$DatasetFileName = "",
-    [string]$BaseModelId = "qwen3-8b-q4-k-m-base-v1",
-    [string]$BaseGgufPath = "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf",
-    [string]$HfPath = "model_store/cache/qwen3/hf/Qwen3-8B",
+    [string]$BaseModelId = "qwen3-14b-q4-k-m-base-v1",
+    [string]$BaseGgufPath = "model_store/registry/qwen3/elysia/qwen3-14b-q4-k-m-base-v1/Qwen3-14B-Q4_K_M.gguf",
+    [string]$HfPath = "model_store/cache/qwen3/hf/Qwen3-14B",
     [switch]$Force
 )
 
@@ -15,7 +15,7 @@ function Convert-ToSafeCharacterId {
     param([string]$Value)
     $Clean = $Value.Trim().ToLowerInvariant()
     if ($Clean -notmatch "^[a-z0-9][a-z0-9_-]*$") {
-        throw "Character id must match ^[a-z0-9][a-z0-9_-]*$. Example: fish"
+        throw "Character id must match ^[a-z0-9][a-z0-9_-]*$. Example: demo"
     }
     return $Clean
 }
@@ -31,7 +31,7 @@ function Write-TextFile {
 }
 
 if ([string]::IsNullOrWhiteSpace($Character)) {
-    $Character = Read-Host "Character id, for example fish"
+    $Character = Read-Host "Character id, for example demo"
 }
 $Character = Convert-ToSafeCharacterId -Value $Character
 
@@ -167,7 +167,7 @@ $ModelsManifest = [ordered]@{
     models = @(
         [ordered]@{
             id = $BaseModelId
-            display_name = "Qwen3-8B Q4_K_M base"
+            display_name = "Qwen3-14B Q4_K_M base"
             kind = "base"
             format = "gguf"
             required_files = @($BaseGgufPath.Replace("\", "/"))

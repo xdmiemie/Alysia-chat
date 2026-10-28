@@ -9,13 +9,13 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-DEFAULT_REPO_ID = "Qwen/Qwen3-8B-GGUF"
-DEFAULT_FILENAME = "Qwen3-8B-Q4_K_M.gguf"
+DEFAULT_REPO_ID = "Qwen/Qwen3-14B-GGUF"
+DEFAULT_FILENAME = "Qwen3-14B-Q4_K_M.gguf"
 DEFAULT_MANIFEST = "model_store/active/qwen3.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Download Qwen3-8B Q4_K_M GGUF into model_store.")
+    parser = argparse.ArgumentParser(description="Download Qwen3-14B Q4_K_M GGUF into model_store.")
     parser.add_argument("--repo-id", default=DEFAULT_REPO_ID)
     parser.add_argument("--filename", default=DEFAULT_FILENAME)
     parser.add_argument("--manifest", default=DEFAULT_MANIFEST)

@@ -70,8 +70,8 @@ def load_training_config(path: str | Path) -> TrainingConfig:
             validation_ratio=float(dataset.get("validation_ratio", 0.1)),
         ),
         base_model=BaseModelConfig(
-            model_id=str(base_model.get("model_id", "qwen3-8b-q4-k-m-base-v1")),
-            gguf_path=_project_path(base_model.get("gguf_path", "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf")),
+            model_id=str(base_model.get("model_id", "qwen3-14b-q4-k-m-base-v1")),
+            gguf_path=_project_path(base_model.get("gguf_path", "model_store/registry/qwen3/elysia/qwen3-14b-q4-k-m-base-v1/Qwen3-14B-Q4_K_M.gguf")),
             hf_path=_optional_project_path(base_model.get("hf_path")),
         ),
         outputs_dir=_project_path(raw.get("outputs_dir", "training/qwen3/outputs")),

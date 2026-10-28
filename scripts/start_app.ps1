@@ -19,7 +19,7 @@ $GptStdoutLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.out.log
 $GptStderrLog = Join-Path $ProjectRoot "storage\logs\gpt-sovits-upstream.err.log"
 
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
-$RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+$RuntimePython = Resolve-AstrbotChatRuntimePython -PythonOverride $Python
 
 function Test-TcpPort {
     param([string]$HostName, [int]$Port)

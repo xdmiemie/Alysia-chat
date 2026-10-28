@@ -1,6 +1,6 @@
-neutral: neutral_trimmed.wav
+neutral: neutral.wav
 happy: happy.wav
-gentle: gentle.wav
+gentle: neutral.wav
 sad: sad.wav
 surprised: surprised.wav
-serious: serious.wav
+serious: sad.wav

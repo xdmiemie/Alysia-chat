@@ -83,7 +83,7 @@ if ([string]::IsNullOrWhiteSpace($Config)) {
     if (-not [string]::IsNullOrWhiteSpace($Model)) {
         $InferConfigArgs += @("--model", $Model)
     }
-    & (Resolve-AlysiaRuntimePython -PythonOverride $Python) @InferConfigArgs
+    & (Resolve-AstrbotChatRuntimePython -PythonOverride $Python) @InferConfigArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Could not generate GPT-SoVITS upstream infer config from active model."
     }
@@ -97,7 +97,7 @@ $Config = Resolve-ProjectPath -PathValue $Config -BasePath $ProjectRoot
 $ResolvedConfig = Join-Path $ProjectRoot "storage\temporary\gpt_sovits_tts_infer_$Character.resolved.yaml"
 Convert-TtsConfigToResolvedPaths -SourceConfig $Config -OutputConfig $ResolvedConfig -ProjectRoot $ProjectRoot -GptSoVitsRepo $Repo
 
-$ResolvedPython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+$ResolvedPython = Resolve-AstrbotChatRuntimePython -PythonOverride $Python
 
 Set-Location $Repo
 Write-Host "Using GPT-SoVITS Python: $ResolvedPython"

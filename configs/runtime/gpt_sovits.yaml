@@ -5,7 +5,7 @@ model_manifest: model_store/active/gpt_sovits_elysia.json
 character_id: elysia
 emotion_map: configs/characters/elysia/emotion_map.yaml
 reference_texts: configs/characters/elysia/reference_texts.yaml
-reference_dir: model_store/registry/gpt_sovits/elysia/base-v1/references
+reference_dir: model_store/registry/gpt_sovits/elysia/bailu-v1/references
 generated_dir: storage/generated_audio
 upstream_url: http://127.0.0.1:9880/tts
 text_lang: zh

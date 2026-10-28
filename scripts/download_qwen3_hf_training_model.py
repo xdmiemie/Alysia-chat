@@ -7,8 +7,8 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REPO_ID = "Qwen/Qwen3-8B"
-DEFAULT_TARGET = "model_store/cache/qwen3/hf/Qwen3-8B"
+DEFAULT_REPO_ID = "Qwen/Qwen3-14B"
+DEFAULT_TARGET = "model_store/cache/qwen3/hf/Qwen3-14B"
 DEFAULT_HF_CACHE = "model_store/cache/huggingface"
 DEFAULT_CONFIG = "training/qwen3/configs/characters/elysia.yaml"
 

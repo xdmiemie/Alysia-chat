@@ -1,7 +1,6 @@
 param(
     [string]$Python = "",
     [switch]$Lightweight,
-    [switch]$SkipLfsPull,
     [switch]$SkipThirdParty,
     [switch]$SkipModelDownloads,
     [switch]$SkipDoctor
@@ -130,7 +129,7 @@ function New-VenvRuntimeEnv {
 function Resolve-OrCreateRuntimePython {
     param([string]$PythonOverride)
     try {
-        return Resolve-AlysiaRuntimePython -PythonOverride $PythonOverride
+        return Resolve-AstrbotChatRuntimePython -PythonOverride $PythonOverride
     } catch {
         Write-Host $_.Exception.Message
         return New-VenvRuntimeEnv -EnvPath (Join-Path $ProjectRoot "runtime_env")
@@ -216,28 +215,6 @@ function Invoke-Git {
     & $Git.Source @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "git command failed: git $($Arguments -join ' ')"
-    }
-}
-
-function Invoke-GitLfsPull {
-    $Git = Get-Command git -ErrorAction SilentlyContinue
-    if (-not $Git) {
-        throw "Could not find git. Install Git for Windows, then rerun quickstart/bootstrap.ps1."
-    }
-
-    & $Git.Source lfs version | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Git LFS is not available. Install Git LFS, then rerun quickstart/bootstrap.ps1."
-    }
-
-    Write-Host "Pulling Git LFS model files..."
-    & $Git.Source lfs install --local | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "git lfs install --local failed."
-    }
-    & $Git.Source lfs pull
-    if ($LASTEXITCODE -ne 0) {
-        throw "git lfs pull failed."
     }
 }
 
@@ -478,7 +455,7 @@ function Resolve-LlamaRelease {
             -Uri $LlamaReleaseApiUrl `
             -Headers @{
                 "Accept" = "application/vnd.github+json"
-                "User-Agent" = "Alysia-chat-bootstrap"
+                "User-Agent" = "astrbot-chat-bootstrap"
                 "X-GitHub-Api-Version" = "2022-11-28"
             }
     } catch {
@@ -595,11 +572,7 @@ function Write-OptionalToolStatus {
 
 Push-Location $ProjectRoot
 try {
-    if ($SkipLfsPull) {
-        Write-Host "Skipping Git LFS pull."
-    } else {
-        Invoke-GitLfsPull
-    }
+    # Model weights are local assets under model_store and are not pulled from Git LFS.
 
     if ($SkipThirdParty) {
         Write-Host "Skipping third-party source download."
@@ -678,7 +651,7 @@ try {
         -Hint "Prepare third_party/GPT-SoVITS before starting TTS."
     Write-OptionalToolStatus `
         -Name "Qwen3 model files" `
-        -Probe { Test-Path (Join-Path $ProjectRoot "model_store\registry\qwen3\elysia\qwen3-8b-q4-k-m-base-v1\Qwen3-8B-Q4_K_M.gguf") } `
+        -Probe { Test-Path (Join-Path $ProjectRoot "model_store\registry\qwen3\elysia\qwen3-14b-q4-k-m-base-v1\Qwen3-14B-Q4_K_M.gguf") } `
         -Hint "Run quickstart/bootstrap.ps1 to download Qwen3."
     Write-OptionalToolStatus `
         -Name "GPT-SoVITS pretrained assets" `

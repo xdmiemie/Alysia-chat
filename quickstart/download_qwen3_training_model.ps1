@@ -1,8 +1,8 @@
 param(
     [string]$Python = "",
-    [string]$RepoId = "Qwen/Qwen3-8B",
+    [string]$RepoId = "Qwen/Qwen3-14B",
     [string]$Revision = "",
-    [string]$TargetDir = "model_store/cache/qwen3/hf/Qwen3-8B",
+    [string]$TargetDir = "model_store/cache/qwen3/hf/Qwen3-14B",
     [string]$HfCacheDir = "model_store/cache/huggingface",
     [string]$Config = "training/qwen3/configs/characters/elysia.yaml",
     [int]$MaxWorkers = 4,
@@ -17,7 +17,7 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AstrbotChatRuntimePython -PythonOverride $Python
 } catch {
     throw "Qwen3 HF training model download requires quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }

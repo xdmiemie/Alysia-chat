@@ -12,7 +12,7 @@ $LogsDir = Join-Path $ProjectRoot "storage\logs"
 $OutLog = Join-Path $LogsDir "gpt-sovits-upstream.out.log"
 $ErrLog = Join-Path $LogsDir "gpt-sovits-upstream.err.log"
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
-$ClientPython = Resolve-AlysiaRuntimePython
+$ClientPython = Resolve-AstrbotChatRuntimePython
 
 if ([string]::IsNullOrWhiteSpace($Text)) {
     $Text = -join ([char[]](36763, 33510, 21862, 65292, 20170, 22825, 20808, 20241, 24687, 19968, 19979, 12290))

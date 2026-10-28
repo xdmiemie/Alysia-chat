@@ -7,7 +7,7 @@ from typing import Callable, Protocol
 from runtime.audio.audio_format import inspect_wav
 from runtime.conversation.session_manager import ChatSession, ChatSessionManager
 from runtime.core.errors import ErrorCode
-from runtime.core.models import AlysiaReply, CoreTiming, UnifiedMessage
+from runtime.core.models import AstrbotChatReply, CoreTiming, UnifiedMessage
 from runtime.gpt_sovits.backend import write_audio_bytes
 from runtime.gpt_sovits.types import SpeechRequest, SpeechResult
 from runtime.qwen3.types import CharacterReply
@@ -28,7 +28,7 @@ class Synthesizer(Protocol):
         ...
 
 
-class AlysiaCore:
+class AstrbotChatCore:
     def __init__(
         self,
         *,
@@ -48,7 +48,7 @@ class AlysiaCore:
         self.asr_fallback_text = asr_fallback_text
         self.llm_fallback_text = llm_fallback_text
 
-    def process(self, message: UnifiedMessage) -> AlysiaReply:
+    def process(self, message: UnifiedMessage) -> AstrbotChatReply:
         states: list[str] = []
         started = time.perf_counter()
         timings = {
@@ -140,7 +140,7 @@ class AlysiaCore:
         finally:
             timings["total_ms"] = _elapsed_ms_since(started)
 
-        return AlysiaReply(
+        return AstrbotChatReply(
             request_id=message.request_id,
             session_id=message.session_id,
             channel=message.channel,
@@ -206,3 +206,7 @@ def _elapsed_ms(started: float) -> int:
 
 def _elapsed_ms_since(started: float) -> int:
     return _elapsed_ms(started)
+
+
+# Compatibility for callers of the Stage 10 API.
+AlysiaCore = AstrbotChatCore

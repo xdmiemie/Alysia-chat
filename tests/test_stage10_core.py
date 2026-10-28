@@ -4,7 +4,7 @@ from array import array
 from pathlib import Path
 
 from runtime.audio.audio_format import write_pcm16_wav
-from runtime.core import AlysiaCore, UnifiedMessage
+from runtime.core import AstrbotChatCore, UnifiedMessage
 from runtime.gpt_sovits.types import ReferenceAudio, SpeechRequest, SpeechResult
 from runtime.qwen3.types import CharacterReply
 from runtime.sensevoice.types import TranscriptionResult
@@ -63,7 +63,7 @@ class FakeSynthesizer:
 def test_core_processes_text_message_and_preserves_session_context(tmp_path):
     sessions: dict[str, StatefulChatSession] = {}
     synth = FakeSynthesizer(tmp_path)
-    core = AlysiaCore(
+    core = AstrbotChatCore(
         transcriber=FakeTranscriber(),
         chat_session_factory=lambda session_id: sessions.setdefault(session_id, StatefulChatSession(session_id)),
         synthesizer=synth,
@@ -87,7 +87,7 @@ def test_core_processes_audio_message_through_same_pipeline(tmp_path):
     wav_path = tmp_path / "input.wav"
     write_pcm16_wav(wav_path, array("h", [0, 1200, -1200, 600] * 1000).tobytes(), 16000, 1)
     transcriber = FakeTranscriber()
-    core = AlysiaCore(
+    core = AstrbotChatCore(
         transcriber=transcriber,
         chat_session_factory=lambda session_id: StatefulChatSession(session_id),
         synthesizer=FakeSynthesizer(tmp_path),

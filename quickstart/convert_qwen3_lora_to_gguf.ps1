@@ -89,7 +89,7 @@ function Ensure-LlamaCppSource {
 }
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AstrbotChatRuntimePython -PythonOverride $Python
 } catch {
     throw "Qwen3 LoRA conversion requires quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }

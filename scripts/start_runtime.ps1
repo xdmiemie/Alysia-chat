@@ -14,7 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
-$Python = Resolve-AlysiaRuntimePython
+$Python = Resolve-AstrbotChatRuntimePython
 
 if ($Doctor -or (-not $AudioLoopback -and -not $SenseVoice -and -not $Qwen3 -and -not $LlamaServer -and -not $GPTSoVITS -and -not $GPTSoVITSWrapper)) {
     & $Python (Join-Path $ProjectRoot "scripts\doctor.py")

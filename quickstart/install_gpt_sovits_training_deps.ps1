@@ -61,7 +61,7 @@ function Get-MissingStage8Modules {
 }
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AstrbotChatRuntimePython -PythonOverride $Python
 } catch {
     throw "GPT-SoVITS training dependencies require quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }

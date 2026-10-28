@@ -16,7 +16,7 @@ class GPTSoVITSConfig:
     character_id: str = "elysia"
     emotion_map: Path = Path("configs/characters/elysia/emotion_map.yaml")
     reference_texts: Path = Path("configs/characters/elysia/reference_texts.yaml")
-    reference_dir: Path = Path("model_store/registry/gpt_sovits/elysia/base-v1/references")
+    reference_dir: Path = Path("model_store/registry/gpt_sovits/elysia/bailu-v1/references")
     generated_dir: Path = Path("storage/generated_audio")
     upstream_url: str = "http://127.0.0.1:9880/tts"
     text_lang: str = "zh"

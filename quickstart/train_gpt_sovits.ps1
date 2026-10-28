@@ -27,7 +27,7 @@ function Invoke-TrainingPython {
 }
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AstrbotChatRuntimePython -PythonOverride $Python
 } catch {
     throw "GPT-SoVITS training requires quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }

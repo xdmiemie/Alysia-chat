@@ -1,6 +1,15 @@
-# Companion Robot Prototype
+# astrbot-chat
 
-This repository follows the staged plan in `项目阶段要求.md`.
+This repository follows `astrbot-chat项目阶段计划.md` for current QQ development.
+The expired WeChat stage plan is retained only as an archive.
+
+The selected character is `elysia`. Its active chat model is Qwen3-14B
+Q4_K_M, and its GPT-SoVITS voice is `bailu-v1`. FeiyuVoice-RVC-v1 is the
+selected singing conversion model. Local paths are defined in
+`configs/qq_companion/app.example.yaml`. The old 8B LoRA cannot be applied to
+the 14B base; the LoRA training and export code remains for a future 14B run.
+The AstrBot plugin and unified service scripts are planned, as described in
+`integrations/qq_astrbot/README.md`.
 
 Stage 0 establishes the project skeleton, configuration files, environment
 definitions, model manifests, Git repository, and diagnostics. Stages 1-6 build
@@ -9,12 +18,9 @@ stops the required model services.
 
 ## Stage Roadmap
 
-Stages 0-10 are complete. The remaining plan starts with the WeChat adapter
-stages:
-
-- Stage 11: WeChat text message receive/send.
-- Stage 12: WeChat voice receive and SenseVoice transcription.
-- Stage 13: WeChat audio file/native voice replies.
+The Stage 0-10 local core is the baseline. QQ development follows stages Q0-Q11
+in the AstrBot plan. The local runtime and training sections below remain useful
+for that baseline.
 
 ## Clone-To-Code Quickstart
 
@@ -24,8 +30,8 @@ on GPT-SoVITS compatibility. The default Python path is the project-local
 `runtime_env` interpreter: `runtime_env/python.exe` for a packed conda-style
 environment, or `runtime_env/Scripts/python.exe` for a venv built by
 `quickstart/bootstrap.ps1`. Explicit overrides can still be provided through
-`-Python`, `ALYSIA_PYTHON`, or `GPT_SOVITS_PYTHON`. This does not bundle GPU
-drivers, but it pulls Git LFS files, clones the GPT-SoVITS upstream source,
+`-Python`, `ASTRBOT_CHAT_PYTHON`, or `GPT_SOVITS_PYTHON`. This does not bundle GPU
+drivers. It clones the GPT-SoVITS upstream source,
 downloads project-local FFmpeg and llama.cpp tools, creates/reuses the
 project-local unified runtime environment, installs the Python dependencies,
 downloads the Qwen3 and SenseVoice model files, runs the doctor, and then starts
@@ -47,7 +53,7 @@ Choose a Qwen3 model during quickstart startup:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -Qwen3Interactive
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -Qwen3Model qwen3-8b-q4-k-m-base-v1
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character elysia -Qwen3Model qwen3-14b-q4-k-m-base-v1
 ```
 
 Qwen3 training dependencies are intentionally separate from normal runtime
@@ -72,7 +78,7 @@ The HF training model download also uses a project-local cache:
 
 ```text
 model_store/cache/huggingface/
-model_store/cache/qwen3/hf/Qwen3-8B/
+model_store/cache/qwen3/hf/Qwen3-14B/
 ```
 
 Rerun `quickstart/download_qwen3_training_model.ps1` after an interrupted
@@ -90,12 +96,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Characte
 For an offline or code-only setup that skips model downloads:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1 -SkipLfsPull -SkipThirdParty -SkipModelDownloads
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/bootstrap.ps1 -SkipThirdParty -SkipModelDownloads
 ```
 
 Use the skip switches only when the corresponding files are already present or
-you only want to prepare code dependencies; the realtime app still requires Git
-LFS TTS files, GPT-SoVITS source, Qwen3, and SenseVoice before it can run.
+you only want to prepare code dependencies. The realtime app still requires the
+local elysia Bailu weights and references, GPT-SoVITS source, Qwen3-14B, and
+SenseVoice before it can run.
 
 External runtime items are still checked or reported by the scripts:
 
@@ -104,13 +111,14 @@ External runtime items are still checked or reported by the scripts:
 - `third_party/GPT-SoVITS`
 - unified Python from `runtime_env/python.exe` or `runtime_env/Scripts/python.exe`
 - model files referenced by `model_store/active/*.json`; Qwen3 and SenseVoice
-  are downloaded by bootstrap, and the current TTS base is tracked in Git/LFS
+  are downloaded by bootstrap. Bailu TTS weights stay local under
+  `model_store/registry/gpt_sovits/elysia/bailu-v1/`.
 
 For manual Python commands in the sections below, resolve the unified runtime
 Python once:
 
 ```powershell
-$Python = (& powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\runtime_python.ps1; Resolve-AlysiaRuntimePython").Trim()
+$Python = (& powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\runtime_python.ps1; Resolve-AstrbotChatRuntimePython").Trim()
 ```
 
 `runtime_python/` and `runtime_env/` are local runtime artifacts and are ignored
@@ -325,27 +333,27 @@ Create a new role scaffold. This creates the Qwen3 text-training files and the
 matching GPT-SoVITS voice-training config/directories:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/add_qwen3_character.ps1 -Character fish -DisplayName Fish
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/add_qwen3_character.ps1 -Character demo -DisplayName Demo
 ```
 
 Then put role data at the path printed by the script, train with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -Character fish
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_qwen3.ps1 -Character demo
 ```
 
 Put voice WAV clips under the printed GPT-SoVITS `raw/` directory, then prepare
 or train with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character fish -ValidateOnly
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character fish
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character demo -ValidateOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.ps1 -Character demo
 ```
 
 After training/exporting, run and select the character/model:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character fish -Qwen3Interactive
+powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/run.ps1 -Character demo -Qwen3Interactive
 ```
 
 The run wrapper selects the Qwen3 role/model first, then selects the
@@ -355,7 +363,7 @@ to skip the voice-model prompt.
 `hf_path` points at the Hugging Face safetensors base model used for training:
 
 ```text
-model_store/cache/qwen3/hf/Qwen3-8B
+model_store/cache/qwen3/hf/Qwen3-14B
 ```
 
 The runtime GGUF stays under `model_store/registry/qwen3/...`; GGUF is for
@@ -390,7 +398,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start_qwen3_server.ps1
 Or choose non-interactively:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/start_qwen3_server.ps1 -Character elysia -ModelVersion qwen3-8b-q4-k-m-base-v1
+powershell -ExecutionPolicy Bypass -File scripts/start_qwen3_server.ps1 -Character elysia -ModelVersion qwen3-14b-q4-k-m-base-v1
 ```
 
 ## Stage 8 GPT-SoVITS Voice Training
@@ -430,7 +438,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File quickstart/train_gpt_sovits.
 ```
 
 For real training, run the same wrapper without `-DryRun`. The checked-in
-`s1.command` and `s2.command` entries call Alysia's recipe runner, which
+`s1.command` and `s2.command` entries call the project's recipe runner, which
 generates the upstream GPT-SoVITS filelist/configs from the processed raw WAV
 dataset at runtime:
 
@@ -472,14 +480,12 @@ Prepare GPT-SoVITS weights and reference audio under the paths listed in
 `model_store/active/gpt_sovits_elysia.json`:
 
 ```text
-model_store/registry/gpt_sovits/elysia/base-v1/gpt.ckpt
-model_store/registry/gpt_sovits/elysia/base-v1/sovits.pth
-model_store/registry/gpt_sovits/elysia/base-v1/references/neutral.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/happy.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/gentle.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/sad.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/surprised.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/serious.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/Bailu-e10.ckpt
+model_store/registry/gpt_sovits/elysia/bailu-v1/Bailu_e10_s820.pth
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/neutral.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/happy.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/sad.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/surprised.wav
 ```
 
 Put the exact transcript for each reference clip in
@@ -536,20 +542,17 @@ The request body is:
 The current Elysia GPT-SoVITS assets are:
 
 ```text
-model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2-e15.ckpt
-model_store/registry/gpt_sovits/elysia/base-v1/Elysia_v2_e24_s13080.pth
-model_store/registry/gpt_sovits/elysia/base-v1/references/neutral_trimmed.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/happy.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/gentle.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/sad.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/surprised.wav
-model_store/registry/gpt_sovits/elysia/base-v1/references/serious.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/Bailu-e10.ckpt
+model_store/registry/gpt_sovits/elysia/bailu-v1/Bailu_e10_s820.pth
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/neutral.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/happy.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/sad.wav
+model_store/registry/gpt_sovits/elysia/bailu-v1/references/surprised.wav
 ```
 
-Each reference clip needs a same-name `.txt` transcript beside the `.wav`.
-GPT-SoVITS requires reference audio to be between 3 and 10 seconds; the neutral
-emotion uses `neutral_trimmed.wav` because the original `neutral.wav` is longer
-than 10 seconds.
+Each reference clip has a same-name `.txt` transcript beside the `.wav`.
+`gentle` falls back to the Bailu neutral clip and `serious` to sad, as defined
+in `configs/characters/elysia/emotion_map.yaml`.
 
 Start the official upstream API on port `9880`:
 

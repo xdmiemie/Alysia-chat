@@ -1,33 +1,15 @@
 {
   "character_id": "elysia",
-  "active_model_id": "elysia-qwen3-lora-final",
+  "active_model_id": "qwen3-14b-q4-k-m-base-v1",
   "models": [
     {
-      "id": "qwen3-8b-q4-k-m-base-v1",
-      "display_name": "Qwen3-8B Q4_K_M base",
+      "id": "qwen3-14b-q4-k-m-base-v1",
+      "display_name": "Qwen3-14B Q4_K_M base",
       "kind": "base",
       "format": "gguf",
       "required_files": [
-        "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf"
-      ],
-      "created_at": "2026-07-26T06:11:36+00:00"
-    },
-    {
-      "id": "elysia-qwen3-lora-final",
-      "display_name": "elysia Qwen3 LoRA final",
-      "kind": "trained",
-      "format": "lora",
-      "required_files": [
-        "model_store/registry/qwen3/elysia/qwen3-8b-q4-k-m-base-v1/Qwen3-8B-Q4_K_M.gguf",
-        "model_store/registry/qwen3/elysia/elysia-qwen3-lora-final/adapter_model.gguf"
-      ],
-      "created_at": "2026-07-26T10:38:47.518110+00:00",
-      "base_model_id": "qwen3-8b-q4-k-m-base-v1",
-      "data_hash": "400ea5958afca66b05d7d1e37ca5274cde5cce4ecc2cc990ca1146f216efc1fe",
-      "config_hash": "93dfa0c81b92df8711749a4679b3eebcc77e7d3df88dfbd87dbd70cd3c9f6768",
-      "source_run": "training/qwen3/outputs/elysia/elysia-qwen3-lora",
-      "export_log": "training/qwen3/outputs/elysia/elysia-qwen3-lora/export_log.json"
+        "model_store/registry/qwen3/elysia/qwen3-14b-q4-k-m-base-v1/Qwen3-14B-Q4_K_M.gguf"
+      ]
     }
-  ],
-  "activated_at": "2026-07-26T10:50:40.131569+00:00"
+  ]
 }

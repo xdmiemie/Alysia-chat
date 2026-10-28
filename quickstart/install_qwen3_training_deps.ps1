@@ -135,7 +135,7 @@ function Get-MissingTrainingModules {
 }
 
 try {
-    $RuntimePython = Resolve-AlysiaRuntimePython -PythonOverride $Python
+    $RuntimePython = Resolve-AstrbotChatRuntimePython -PythonOverride $Python
 } catch {
     throw "Qwen3 training dependencies require quickstart/bootstrap.ps1 first. $($_.Exception.Message)"
 }

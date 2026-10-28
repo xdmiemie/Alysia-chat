@@ -1,4 +1,7 @@
-from runtime.core.models import AlysiaReply, UnifiedMessage
-from runtime.core.service import AlysiaCore
+from runtime.core.models import AstrbotChatReply, UnifiedMessage
+from runtime.core.service import AstrbotChatCore
 
-__all__ = ["AlysiaCore", "AlysiaReply", "UnifiedMessage"]
+AlysiaCore = AstrbotChatCore
+AlysiaReply = AstrbotChatReply
+
+__all__ = ["AstrbotChatCore", "AstrbotChatReply", "UnifiedMessage", "AlysiaCore", "AlysiaReply"]
