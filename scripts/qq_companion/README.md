@@ -1,6 +1,6 @@
 # QQ companion scripts
 
-Run from the project root. See [operations](../../docs/qq_companion/operations.md) for Q0–Q2 setup, acceptance and shutdown. The existing Feiyu song installers remain Q4 reference utilities.
+Run from the project root. See [operations](../../docs/qq_companion/operations.md) for Q0–Q3 setup, acceptance and shutdown. The existing Feiyu song installers remain Q4 reference utilities.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/install_astrbot.ps1
@@ -10,6 +10,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/start_a
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/start_all.ps1 -WithTTS
 runtime_env/python.exe -m scripts.qq_companion.probe_media --count 10
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/stop_all.ps1
+```
+
+Q3 local acceptance uses the pinned AstrBot Python environment and fake
+transport/inference; it never connects to QQ or starts a model:
+
+```powershell
+envs/astrbot/Scripts/python.exe scripts/qq_companion/probe_q3_local.py
+runtime_env/python.exe -m pytest tests/test_qq_q3.py -q --basetemp storage/temporary/pytest_q3
 ```
 
 During authorized live tests, `runtime_env/python.exe scripts/qq_companion/live_counts.py` shows aggregate inbound private, group, @, image, voice and reply counts from ignored local SQLite. `live_media_probe.py` can send a small image and one-second tone to an explicitly authorized friend or the sole test group; run `--help` for required target options. Confirm delivery on the other QQ client before recording an acceptance result.

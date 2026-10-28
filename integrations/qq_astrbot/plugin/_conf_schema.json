@@ -1,0 +1,13 @@
+{
+  "wake_words": {"description": "群聊明确唤醒词", "type": "list", "default": ["爱莉希雅", "elysia"]},
+  "context_messages": {"description": "群暂存消息数（1–100）", "type": "int", "default": 20},
+  "context_ttl_seconds": {"description": "群暂存 TTL 秒（1–3600）", "type": "int", "default": 300},
+  "context_token_budget": {"description": "暂存输入保守 token 上限（按 UTF-8 字节计，512–16384）", "type": "int", "default": 2048},
+  "merge_seconds": {"description": "连续分条合并等待秒（0–5）；@ 和引用机器人立即处理", "type": "float", "default": 1.5},
+  "auto_probability": {"description": "群自动接话概率（0–1），默认关闭", "type": "float", "default": 0},
+  "auto_hourly_limit": {"description": "每群自动接话每小时上限（0–3）", "type": "int", "default": 3},
+  "auto_cooldown_seconds": {"description": "群自动接话冷却秒（至少60）", "type": "float", "default": 60},
+  "max_group_members": {"description": "群人数上限；已知超限的群停止响应", "type": "int", "default": 2000},
+  "dm_allowlist": {"description": "主动私聊收件人白名单（Q3仅提供权限层，无主动发送工具）", "type": "list", "default": []},
+  "dm_daily_limit": {"description": "白名单主动私聊每人每日上限", "type": "int", "default": 1}
+}

@@ -15,6 +15,8 @@ ASTRBOT = ROOT / "external" / "AstrBot"
 SNOWLUMA = ROOT / "external" / "SnowLuma" / "v2.1.1"
 BACKUPS = ROOT / "storage" / "qq_companion" / "config_backups"
 WS_URL = "ws://127.0.0.1:6199/ws"
+PLUGIN_FILES = ("main.py", "guard.py", "reply_pacing.py", "message_router.py",
+                "memory_context.py", "permissions.py", "prompt_loader.py", "_conf_schema.json", "metadata.yaml")
 
 
 def read_json(path: Path) -> dict:
@@ -102,7 +104,7 @@ def main() -> int:
         plugin_src = ROOT / "integrations" / "qq_astrbot" / "plugin"
         plugin_dest = ASTRBOT / "data" / "plugins" / "astrbot_chat_q1"
         plugin_dest.mkdir(parents=True, exist_ok=True)
-        for name in ("main.py", "guard.py", "reply_pacing.py", "metadata.yaml"):
+        for name in PLUGIN_FILES:
             source = plugin_src / name
             target = plugin_dest / name
             if not target.exists() or source.read_bytes() != target.read_bytes():

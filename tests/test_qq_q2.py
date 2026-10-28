@@ -11,6 +11,13 @@ from scripts.qq_companion.configure_model import configure
 from scripts.qq_companion.gpu_broker import GPUResourceBroker
 from services.media_api.app import SpeechPayload, _token, create_app
 
+
+@pytest.fixture(autouse=True)
+def isolated_broker_state(tmp_path, monkeypatch):
+    # Unit tests must never contend with the operator's running model stack.
+    from scripts.qq_companion import gpu_broker
+    monkeypatch.setattr(gpu_broker, "STATE", tmp_path / "broker")
+
 def route(app, path):
     return next(item.endpoint for item in app.routes if item.path == path)
 

@@ -1,0 +1,1 @@
+在编写代码时如果涉及到提示词，将提示词放在configs\qq_companion\prompts.yaml中，然后再在代码中进行调用。

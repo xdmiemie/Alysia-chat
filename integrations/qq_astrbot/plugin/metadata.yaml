@@ -1,4 +1,4 @@
 name: astrbot_chat_q1
-desc: OneBot inbound guard, paced sentence replies and optional follow-up
+desc: Scoped QQ conversations, group routing, permissions and paced replies
 author: astrbot-chat
-version: 0.4.1
+version: 0.5.1

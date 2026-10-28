@@ -51,3 +51,46 @@ The plugin now requests a structured thinking tier in the same LLM reply and sub
 Plugin 0.4.0 loaded at 17:48:41 and OneBot reconnected at 17:48:44. The AstrBot hook probe sent a two-sentence first reply as two ordered QQ message chains, then a one-sentence follow-up through the same event, and verified that the follow-up entered the saved run history. Seven pacing/splitting parser tests and all 17 targeted Q0–Q2 tests passed. A direct local Qwen3 probe returned valid JSON with an appropriate optional question for the singing request and reciprocal sleep greeting, and `null` after a completed thanks exchange. The full repository suite was interrupted during the unrelated, long-running GPT-SoVITS tests; its first attempt also needed a workspace pytest temp directory due sandbox permissions.
 
 The phone operator sent one private message at 17:53:20. AstrBot recorded one inbound text event and a three-sentence primary reply. SnowLuma sent those sentences in three separate QQ messages at 17:53:25, 17:53:27 and 17:53:34. The first send at 17:53:25.391 was 5.279 seconds after AstrBot inbound at 17:53:20.112, matching tier 3 (2.75 seconds) plus six CJK ideographs (2.4 seconds) and one other character (0.12 seconds) in the first sentence. A second Qwen3 task then decided to ask a natural question, which SnowLuma sent as one further QQ message at 17:53:39. AstrBot's latest persisted conversation had trailing roles `user, assistant, assistant` and contained the follow-up text. The extra-call retry setting initially produced a harmless AstrBot fallback warning; version 0.4.1 sets the supported minimum directly. The final managed restart loaded 0.4.1 and OneBot reconnected at 17:56:25; services remain running.
+
+## Q3 acceptance record — local gate passed
+
+Date: 2026-10-28 (Asia/Hong_Kong). Plugin version 0.5.0. Per the user's instruction,
+tests use local events instead of connecting to QQ or asking for phone messages.
+No QQ connection, outgoing QQ message, model startup, or live stack restart was
+performed for Q3. The new version installs at the next normal managed startup.
+
+| Gate | Result | Evidence |
+|---|---|---|
+| Canonical sessions / old history isolation | Pass locally | Numeric identity validation; separate bot, DM and group keys before Runner history lookup; legacy group context is replaced |
+| Two interleaved participants / three groups | Pass locally | Unit checks cover ten alternating messages per group; real AstrBot-class probe interleaves ten private messages per participant plus three ten-message groups, with same display names and unique numeric IDs |
+| Structured context / TTL / size | Pass | Sender, name, mention and reply ID retained; 20-entry / 300-second defaults; JSON UTF-8 byte budget tested; bounded session cache and exact-owner memory filter |
+| Fragment merging / priority | Pass | Same-sender adjacent fragments merge; latest fragment owns the turn; wake phrase remains effective across fragments; @bot and quote-to-bot bypass delay; plain group traffic stops before Runner |
+| Deduplication / self / system events | Pass | Persistent guard and real event hooks reject duplicate message IDs, self messages and notice events |
+| Group controls / quiet periods / size | Pass | OneBot owner/admin only, per-bot/group persisted controls, midnight-crossing quiet periods, pending-reply invalidation, maximum group size and cached size lookup |
+| Automatic participation | Pass | Default off, probability test, per-group 60-second minimum cooldown and three/hour rolling cap; reservations survive restart; unknown size prevents automatic participation |
+| Permissions / outbound quota | Pass | Prohibited/unknown capabilities denied; Qzone requires gate, author and public candidate; private-send reservation is atomic, persistent, idempotent and shared across source groups |
+| Tool enforcement in actual AstrBot convention | Pass locally | Copied tool set exposes only the audited echo adapter; actual `call_local_llm_tool` passes event plus schema arguments successfully; execution after group stop is rejected |
+| Reply style / spam prevention | Pass locally | Original pacing JSON cleaned from response and history; group primary reply capped at three sends, private at six; combined final segment preserves text; group optional follow-up disabled |
+| Q0–Q3 and pacing automated checks | Pass | 44 passed; Q2 Broker tests use disposable state instead of the active stack lock |
+| Stage 5/6/10 and training regression | Pass | 33 passed across Stage 5, Stage 6, Stage 10 core, Qwen3 training and GPT-SoVITS training tests |
+| Pinned AstrBot integration probe | Pass locally | `envs/astrbot/Scripts/python.exe scripts/qq_companion/probe_q3_local.py` prints `Q3_LOCAL_PASS`; uses real AstrBot classes with fake transport/inference and disposable state |
+
+Stage Q3's implementation and local acceptance are complete. This record does
+not upgrade Q1's outstanding live-count gate or claim new live QQ evidence.
+
+## Editable prompt follow-up (0.5.1)
+
+On 2026-10-28, the current QQ main-reply and private-continuation instructions
+were moved to `configs/qq_companion/prompts.yaml`. Every section documents its
+purpose, trigger and editing constraints. The plugin reads this file per request;
+persona content is retained. This also replaces currently active AstrBot safety,
+full-schema tool and date reminder text, plus approved echo tool descriptions.
+No upstream source or live QQ configuration was modified.
+
+The prompt, Q0–Q3 and pacing suite passed 50 tests. The pinned AstrBot local probe
+also passed: temporary file edits reached the actual main/follow-up request and
+tool schema, the persona survived, and intentionally invalid YAML stopped the
+affected inference. The probe's configuration-error log is expected for that
+fault-injection check. No QQ connection, outgoing QQ message or model call was
+used. Normal managed startup installs the new loader with plugin 0.5.1; later
+prompt-only edits need no restart.

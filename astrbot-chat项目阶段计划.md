@@ -517,6 +517,8 @@ Date:   Mon Oct 26 09:35:51 2026 +0800
 
 ## 8. Stage Q3 — 多人私聊/群聊、权限、回复风格与防刷屏（P0）
 
+**完成记录（2026-10-28）**：Q3 代码及本地验收已完成，插件版本 `0.5.0`。Q0–Q3/回复节奏测试 44 项、Stage 5/6/10 与两条训练管线回归 33 项通过；锁定版 AstrBot 的本地事件/发送路由/工具执行探针通过。按本次用户要求未连接 QQ、未发送 QQ 测试消息、未重启现有服务；下次正常启动时自动安装新版。具体证据和使用方式见 `docs/qq_companion/acceptance.md`、`docs/qq_companion/operations.md`。此完成记录不替代 Q1 尚未完成的实机计数验收。
+
 **模块**：`integrations/qq_astrbot/plugin/{message_router,permissions,memory_context}.py`。
 
 - 会话 ID：私聊 `qq:{bot_uin}:dm:{sender_uin}`；群聊 `qq:{bot_uin}:group:{group_id}`。群上下文中的每条消息必须标记 `sender_uin`、显示名、是否 @、回复关联 ID。**上下文/长期记忆以 QQ ID 与群 ID 为边界**，不可把别人的私聊原文带到群里。
