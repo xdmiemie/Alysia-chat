@@ -102,7 +102,7 @@ def main() -> int:
         plugin_src = ROOT / "integrations" / "qq_astrbot" / "plugin"
         plugin_dest = ASTRBOT / "data" / "plugins" / "astrbot_chat_q1"
         plugin_dest.mkdir(parents=True, exist_ok=True)
-        for name in ("main.py", "guard.py", "metadata.yaml"):
+        for name in ("main.py", "guard.py", "reply_pacing.py", "metadata.yaml"):
             source = plugin_src / name
             target = plugin_dest / name
             if not target.exists() or source.read_bytes() != target.read_bytes():

@@ -1,4 +1,4 @@
 name: astrbot_chat_q1
-desc: OneBot inbound deduplication and Q1 ping probe
+desc: OneBot inbound guard, paced sentence replies and optional follow-up
 author: astrbot-chat
-version: 0.1.0
+version: 0.4.1

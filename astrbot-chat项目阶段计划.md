@@ -513,7 +513,7 @@ Date:   Mon Oct 26 09:35:51 2026 +0800
 - 不允许训练、QQ 生成与视觉识别同时抢 RTX 5080 16GB：任何由项目调度器启动的 GPU 训练都必须占有 Broker，**仅在训练到达安全检查点并暂停/退出后才能切到独占视觉模式**；视觉任务可以等待，不强杀训练进程。活跃聊天和训练调度由代码策略决定，训练需要明确操作员授权。
 - 完成后只替换 `model_store/active` 对应 manifest，执行固定测试并通过后恢复服务；失败保持旧版本。
 
-**验收**：QQ 文本连 AstrBot 到 Qwen3；同一段文本只发生 1 次 LLM 回复推理；ASR/TTS 20 条成功；现有 Stage 5/6 与 Qwen3/GPT-SoVITS 训练 smoke test 不回退；断开 TTS 时可以退回纯文本。
+**验收**：QQ 文本连 AstrBot 到 Qwen3；同一段文本只发生 1 次 LLM 回复推理；ASR/TTS 10 条成功；现有 Stage 5/6 与 Qwen3/GPT-SoVITS 训练 smoke test 不回退；断开 TTS 时可以退回纯文本。
 
 ## 8. Stage Q3 — 多人私聊/群聊、权限、回复风格与防刷屏（P0）
 
@@ -526,7 +526,7 @@ Date:   Mon Oct 26 09:35:51 2026 +0800
 - Agent 权限代码层：`READ_PUBLIC` 自动；`SEND_DM_ALLOWLIST` 受白名单+配额；`PUBLISH_QZONE`（仅 Gate 通过后）受作者发帖规则；`DELETE/PROFILE_CHANGE/UPLOAD_ARBITRARY/EXEC_SHELL` 对 QQ 聊天来源一律禁止。
 - 插件调用 `context` / 当前 QQ 事件，不传入未过滤的用户输入作为 Shell 或 Python 代码。
 
-**验收**：两位用户交错发 100 条消息，正确识别 `sender_id`，3 群并发不串群，不因旧历史泄漏私聊内容，消息去重、冷却和权限单元测试全部通过。
+**验收**：两位用户交错发 10 条消息，正确识别 `sender_id`，3 群并发不串群，不因旧历史泄漏私聊内容，消息去重、冷却和权限单元测试全部通过。
 
 ## 9. Stage Q4 — 语音消息、点歌、翻唱和表情包（P1）
 

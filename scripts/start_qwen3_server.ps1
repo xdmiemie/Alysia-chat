@@ -79,7 +79,8 @@ $ServerArgs = @(
     "--host", "127.0.0.1",
     "--port", "8080",
     "--ctx-size", "8192",
-    "--n-gpu-layers", "99"
+    "--n-gpu-layers", "99",
+    "--reasoning", "off"
 )
 if ($LoraAdapter) {
     $ServerArgs += @("--lora", $LoraAdapter)

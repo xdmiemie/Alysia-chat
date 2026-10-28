@@ -1,12 +1,14 @@
 # QQ companion scripts
 
-Run from the project root. See [operations](../../docs/qq_companion/operations.md) for Q0–Q1 setup, acceptance and shutdown. The existing Feiyu song installers remain Q4 reference utilities.
+Run from the project root. See [operations](../../docs/qq_companion/operations.md) for Q0–Q2 setup, acceptance and shutdown. The existing Feiyu song installers remain Q4 reference utilities.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/install_astrbot.ps1
 runtime_env/python.exe scripts/qq_companion/configure.py --apply
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/doctor.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/start_all.ps1 -NoModels
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/start_all.ps1 -WithTTS
+runtime_env/python.exe -m scripts.qq_companion.probe_media --count 10
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/stop_all.ps1
 ```
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -13,6 +14,11 @@ import time
 from pathlib import Path
 
 import psutil
+
+try:
+    from scripts.qq_companion.gpu_broker import GPUResourceBroker
+except ModuleNotFoundError:  # direct script execution
+    from gpu_broker import GPUResourceBroker
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / "storage" / "qq_companion"
@@ -83,8 +89,9 @@ def preflight(no_models: bool, with_tts: bool) -> None:
         if port_open(port):
             raise RuntimeError(f"Port {port} is already occupied; stop the existing service first")
     if not no_models:
-        if port_open(8080):
-            raise RuntimeError("Port 8080 is already occupied; Qwen would not be owned by this supervisor")
+        for port in (8080, 5001, 8765):
+            if port_open(port):
+                raise RuntimeError(f"Port {port} is already occupied; model/media service would not be owned by this supervisor")
         manifest = json.loads((ROOT / "model_store" / "active" / "qwen3.json").read_text(encoding="utf-8"))
         if not (ROOT / manifest["runtime"]["model_file"]).exists():
             raise RuntimeError("Active Qwen GGUF is missing")
@@ -114,6 +121,7 @@ def run(no_models: bool, with_tts: bool) -> None:
     handles = []
     restart_specs: dict[str, tuple[list[str], Path, dict | None, int, int]] = {}
     restart_history: dict[str, list[float]] = {}
+    broker = GPUResourceBroker()
 
     def launch(name: str, argv: list[str], cwd: Path, env: dict | None = None) -> subprocess.Popen:
         log = (LOGS / f"{name}.log").open("ab", buffering=0)
@@ -133,16 +141,34 @@ def run(no_models: bool, with_tts: bool) -> None:
 
     try:
         if not no_models:
+            broker.acquire("qq_runtime")
             start_service("qwen3", ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                                     str(ROOT / "scripts" / "start_qwen3_server.ps1"),
                                     "-UseActive"], ROOT, 8080, 180)
+            model_config = subprocess.run([str(MODEL_PYTHON), str(ROOT / "scripts/qq_companion/configure_model.py"), "--apply"],
+                                          cwd=ROOT, check=False)
+            if model_config.returncode:
+                raise RuntimeError("Qwen3 chat/tool probe or AstrBot provider configuration failed")
+            start_service("sensevoice", [str(MODEL_PYTHON), "-m", "uvicorn", "runtime.sensevoice.api:app",
+                                         "--host", "127.0.0.1", "--port", "5001"], ROOT, 5001, 30)
         if with_tts:
             start_service("gpt_sovits", ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                                          str(ROOT / "scripts" / "start_gpt_sovits_upstream.ps1")], ROOT, 9880, 240)
             start_service("tts_wrapper", [str(MODEL_PYTHON), "-m", "uvicorn", "runtime.gpt_sovits.api:app",
                                           "--host", "127.0.0.1", "--port", "5002"], ROOT, 5002, 30)
+        if not no_models:
+            token_path = STATE / "media_token"
+            if not token_path.exists():
+                token_path.write_text(secrets.token_urlsafe(32), encoding="ascii")
+            media_env = os.environ.copy()
+            media_env["QQ_COMPANION_MEDIA_TOKEN"] = token_path.read_text(encoding="ascii").strip()
+            start_service("media_api", [str(MODEL_PYTHON), "-m", "uvicorn", "services.media_api.app:app",
+                                        "--host", "127.0.0.1", "--port", "8765"], ROOT, 8765, 30, media_env)
         astr_env = os.environ.copy()
         astr_env["ASTRBOT_CHAT_STATE_DIR"] = str(STATE)
+        if not no_models:
+            active = json.loads((ROOT / "model_store/active/qwen3.json").read_text(encoding="utf-8"))
+            astr_env["ASTRBOT_CHAT_CHARACTER_ID"] = active["character_id"]
         astr_env["PYTHONIOENCODING"] = "utf-8"
         astr_env["PYTHONUTF8"] = "1"
         astr_env["ASTRBOT_DISABLE_METRICS"] = "1"
@@ -151,17 +177,23 @@ def run(no_models: bool, with_tts: bool) -> None:
         snow_env = os.environ.copy()
         snow_env["PATH"] = str(SNOWLUMA) + os.pathsep + snow_env.get("PATH", "")
         start_service("snowluma", [str(SNOWLUMA / "node.exe"), "index.mjs"], SNOWLUMA, 5099, 45, snow_env)
-        print("Q1 services started. NTQQ must be logged in. Ctrl+C stops managed services.", flush=True)
+        print("Q2 services started. NTQQ must be logged in. Ctrl+C stops managed services.", flush=True)
         while not STOP_FLAG.exists():
             for entry in list(children):
                 if not psutil.pid_exists(entry["pid"]):
                     name = entry["name"]
-                    if name not in ("astrbot", "snowluma"):
+                    optional = name in ("gpt_sovits", "tts_wrapper", "sensevoice", "media_api")
+                    if name not in ("astrbot", "snowluma") and not optional:
                         raise RuntimeError(f"Managed service {name} exited; see ignored logs")
                     now = time.monotonic()
                     recent = [moment for moment in restart_history.get(name, []) if now - moment < 300]
                     if len(recent) >= 3:
-                        raise RuntimeError(f"{name} exited four times in five minutes; see ignored logs")
+                        if not optional:
+                            raise RuntimeError(f"{name} exited four times in five minutes; see ignored logs")
+                        print(f"{name} unavailable after three restarts; text chat remains active", flush=True)
+                        children.remove(entry)
+                        REGISTRY.write_text(json.dumps({"supervisor_pid": os.getpid(), "children": children}, indent=2), encoding="utf-8")
+                        continue
                     recent.append(now)
                     restart_history[name] = recent
                     delay = 2 ** len(recent)
@@ -177,6 +209,7 @@ def run(no_models: bool, with_tts: bool) -> None:
     finally:
         if REGISTRY.exists():
             stop_recorded()
+        broker.release()
         for handle in handles:
             handle.close()
         STOP_FLAG.unlink(missing_ok=True)

@@ -1,0 +1,5 @@
+# Install only in the existing Python 3.10 model runtime.
+fastapi==0.139.2
+pydantic==2.10.6
+python-multipart==0.0.32
+uvicorn==0.50.1
