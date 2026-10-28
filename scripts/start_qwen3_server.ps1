@@ -3,7 +3,8 @@ param(
     [string]$Character = "",
     [string]$ModelVersion = "",
     [switch]$Interactive,
-    [switch]$Background
+    [switch]$Background,
+    [switch]$UseActive
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,8 +17,12 @@ $StderrLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.err.log"
 $Python = Resolve-AstrbotChatRuntimePython
 
 $ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json")
-$PromptForModel = $Interactive -or ((-not $Background) -and [string]::IsNullOrWhiteSpace($Character) -and [string]::IsNullOrWhiteSpace($ModelVersion))
-if ($PromptForModel) {
+$PromptForModel = (-not $UseActive) -and ($Interactive -or ((-not $Background) -and [string]::IsNullOrWhiteSpace($Character) -and [string]::IsNullOrWhiteSpace($ModelVersion)))
+if ($UseActive) {
+    if (-not [string]::IsNullOrWhiteSpace($Character) -or -not [string]::IsNullOrWhiteSpace($ModelVersion)) {
+        throw "-UseActive cannot be combined with -Character or -ModelVersion."
+    }
+} elseif ($PromptForModel) {
     $ResolveArgs += @("--interactive", "--activate")
     if (-not [string]::IsNullOrWhiteSpace($Character)) {
         $ResolveArgs += @("--character", $Character)
