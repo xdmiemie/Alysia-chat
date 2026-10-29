@@ -9,5 +9,8 @@
   "auto_cooldown_seconds": {"description": "群自动接话冷却秒（至少60）", "type": "float", "default": 60},
   "max_group_members": {"description": "群人数上限；已知超限的群停止响应", "type": "int", "default": 2000},
   "dm_allowlist": {"description": "主动私聊收件人白名单（Q3仅提供权限层，无主动发送工具）", "type": "list", "default": []},
-  "dm_daily_limit": {"description": "白名单主动私聊每人每日上限", "type": "int", "default": 1}
+  "dm_daily_limit": {"description": "白名单主动私聊每人每日上限", "type": "int", "default": 1},
+  "agent_max_requests": {"description": "单个前台 Agent 全局模型请求预算（含语义检查与受限收尾，4–64）", "type": "int", "default": 16},
+  "agent_max_tools": {"description": "单个前台 Agent 工具调用预算（1–64）", "type": "int", "default": 16},
+  "agent_max_seconds": {"description": "单个前台 Agent 全局执行秒数（10–600），语义检查固定最多3次", "type": "int", "default": 180}
 }

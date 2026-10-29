@@ -11,10 +11,15 @@ import yaml
 
 
 REQUIRED_PROMPTS = frozenset({
-    "qq_context", "reply_output", "followup_system", "followup_user",
+    "qq_context", "reply_output",
     "astrbot_safety", "astrbot_tool_call", "datetime_reminder",
     "echo_description", "echo_value_description",
     "media_decisions", "music_result", "music_selection", "music_clarification",
+    "agent_policy", "agent_completion_check", "agent_continue", "agent_repair", "agent_check_failed",
+    "agent_restricted_close", "agent_budget_reply", "tool_emotion", "tool_musiccover", "tool_music",
+    "tool_sticker", "tool_weapi", "tool_speech_text", "tool_emotion_value", "tool_song_id",
+    "tool_sticker_tag", "tool_weapi_action", "tool_music_query", "tool_music_page", "tool_song_action",
+    "tool_candidate", "agent_summary", "agent_execution_state", "agent_unverified_claim", "music_reselection",
 })
 
 
@@ -68,6 +73,10 @@ def apply_tool_descriptions(tool_set, prompts: dict[str, str]) -> None:
     if tool_set is None:
         return
     for tool in tool_set.tools:
+        if tool.name in {"emotion", "musiccover", "music", "sticker", "weapi"}:
+            from .agent_tools import schemas
+            tool.description = prompts["tool_" + tool.name]
+            tool.parameters = schemas(prompts)[tool.name]
         if tool.name == "q2_echo":
             tool.description = prompts["echo_description"]
             tool.parameters = deepcopy(tool.parameters)

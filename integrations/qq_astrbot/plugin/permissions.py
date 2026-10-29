@@ -13,7 +13,8 @@ from typing import Callable
 FORBIDDEN = frozenset({"DELETE", "PROFILE_CHANGE", "UPLOAD_ARBITRARY", "EXEC_SHELL",
                        "MODEL_ACTIVATE", "TRAIN", "WRITE_SYSTEM_FILES"})
 # Trusted source registration, never inferred from a tool name/description/model output.
-TOOL_ACTIONS = {"q2_echo": "READ_PUBLIC"}
+TOOL_ACTIONS = {"q2_echo": "READ_PUBLIC", "weapi": "READ_PUBLIC", "emotion": "SPEECH",
+                "music": "MUSIC", "musiccover": "MUSIC", "sticker": "STICKER"}
 
 
 class PermissionPolicy:
@@ -35,7 +36,7 @@ class PermissionPolicy:
                 public_candidate: bool = False) -> bool:
         if action in FORBIDDEN:
             return False
-        if action == "READ_PUBLIC":
+        if action in {"READ_PUBLIC", "SPEECH", "MUSIC", "STICKER"}:
             return True
         if action == "SEND_DM_ALLOWLIST":
             return recipient in self.dm_allowlist and self.dm_daily_limit > 0
@@ -72,8 +73,8 @@ class PermissionPolicy:
     def restrict_tools(self, tool_set, active: Callable[[], bool], *, handlers: dict[str, Callable]):
         """Copy before filtering; wrap execution rather than relying on a hook veto.
 
-        Only the audited, read-only Q2 echo adapter exists in Q3. Future side-effect
-        adapters must reserve their capability at execution, then be registered here.
+        Bind only the plugin's registered handlers. Action receipts and conversation
+        revisions are checked again inside every side-effect tool.
         """
         if tool_set is None:
             return None
@@ -81,7 +82,7 @@ class PermissionPolicy:
         safe.tools = []
         for tool in tool_set.tools:
             action = TOOL_ACTIONS.get(tool.name)
-            if action != "READ_PUBLIC" or not self.allowed(action) or tool.name not in handlers:
+            if not self.allowed(action) or tool.name not in handlers:
                 continue
             wrapped = copy(tool)
             # Bind the audited adapter supplied by our plugin. A tool from

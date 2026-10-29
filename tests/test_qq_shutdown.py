@@ -159,6 +159,7 @@ supervisor.STOP_FLAG = directory / 'stop.requested'
 supervisor.LOGS = directory / 'logs'
 supervisor.preflight = lambda *args, **kwargs: None
 supervisor.wait_port = wait_port
+supervisor.wait_onebot = lambda *args, **kwargs: None
 supervisor.GPUResourceBroker = Broker
 supervisor.subprocess.run = lambda *args, **kwargs: type('Result', (), {'returncode': 0})()
 if scenario != 'startup':

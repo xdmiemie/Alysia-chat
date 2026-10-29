@@ -34,6 +34,10 @@ def main() -> int:
     astr_python = ROOT / "envs" / "astrbot" / "Scripts" / "python.exe"
     all_ok &= check("isolated AstrBot Python 3.12", astr_python.exists())
     all_ok &= check("SnowLuma v2.1.1", (SNOWLUMA / "release.json").exists())
+    runtime_path = SNOWLUMA / "config/runtime.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8-sig")) if runtime_path.exists() else {}
+    all_ok &= check("SnowLuma QQ hook auto-load", runtime.get("hookAutoLoad") is True,
+                    "normal startup must attach to the logged-in NTQQ process")
     all_ok &= check("FFmpeg", (ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe").exists())
     selected = os.environ.get("QQ_COMPANION_SNOWLUMA_CONFIG")
     configs = [Path(selected).resolve()] if selected else list((SNOWLUMA / "config").glob("onebot_*.json"))

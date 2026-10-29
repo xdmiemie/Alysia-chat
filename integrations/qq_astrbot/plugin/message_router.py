@@ -119,6 +119,11 @@ class MessageRouter:
     def generation(self, scope: str) -> int:
         return self.settings(scope).get("generation", 0)
 
+    def explicitly_addressed(self, msg: Incoming) -> bool:
+        return (not msg.group_id or msg.at_bot or bool(msg.reply_to and msg.reply_sender == msg.bot_uin) or
+                any(re.search(r"(?<![a-zA-Z0-9_])" + re.escape(w) + r"(?![a-zA-Z0-9_])", msg.text, re.I)
+                    if w.isascii() else w in msg.text for w in self.wake_words))
+
     def route(self, msg: Incoming, *, now: float | None = None,
               local_now: datetime | None = None, roll: float | None = None) -> RouteDecision:
         now = time.time() if now is None else now

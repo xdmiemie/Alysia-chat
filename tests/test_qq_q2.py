@@ -49,6 +49,56 @@ def test_one_runner_provider_and_persona_are_idempotent():
     assert twice["provider"][-1]["custom_extra_body"]["reasoning_budget_tokens"] > 0
     assert twice["agent_runner"]["config"]["model"]["provider_id"] == "astrbot_chat_qwen3"
     assert twice["agent_runner"]["config"]["persona"]["persona_id"] == "elysia"
+    assert twice["provider"][-1]["modalities"] == ["text", "tool_use"]
+    assert len(twice["provider_sources"]) == 1
+    assert twice["provider"][-1]["provider_source_id"] == twice["provider_sources"][0]["id"]
+
+
+def test_repeated_sync_of_migrated_config_does_not_accumulate_provider_sources():
+    old = {"id": "astrbot_chat_qwen3_source", "provider": "openai", "type": "openai_chat_completion"}
+    config = {"provider_sources": [{"id": "unrelated"}, old.copy(), old.copy()],
+              "provider": [{"id": "astrbot_chat_qwen3", "provider_source_id": old["id"], "modalities": []}]}
+    result = configure(configure(config, "model", "elysia"), "model", "elysia")
+    assert [s["id"] for s in result["provider_sources"]] == ["unrelated", old["id"]]
+
+
+def test_shared_model_file_drives_server_and_astrbot_limits(tmp_path):
+    from runtime.qwen3.config import load_qwen3_config
+    path = tmp_path / 'model.yaml'
+    path.write_text('context_size: 24576\nmax_tokens: 2048\ncontext_margin_tokens: 512\n'
+                    'reasoning_budget_tokens: 768\ncache_type_k: q8_0\ncache_type_v: q8_0\n', encoding='utf-8')
+    runtime = load_qwen3_config(path)
+    server = runtime.server_args()
+    astrbot = configure({}, 'model', 'elysia', model_config=runtime)
+    provider = astrbot['provider'][0]
+    assert server[server.index('--ctx-size') + 1] == str(provider['max_context_tokens']) == '24576'
+    assert server[server.index('--cache-type-k') + 1] == server[server.index('--cache-type-v') + 1] == 'q8_0'
+    assert provider['custom_extra_body']['max_tokens'] == 2048
+    assert provider['custom_extra_body']['reasoning_budget_tokens'] == 768
+    assert provider['context_margin_tokens'] == 512
+    assert runtime.server_args(port=18080)[3] == '18080'
+    assert provider['custom_extra_body']['temperature'] == runtime.temperature
+    assert provider['custom_extra_body']['top_p'] == runtime.top_p
+    assert provider['custom_extra_body']['top_k'] == runtime.top_k
+    assert provider['thinking_phases']['check'] is False
+    assert provider['thinking_phases']['compression'] is False
+
+
+def test_persona_sync_updates_prompt_and_clears_disabled_old_examples(tmp_path):
+    import sqlite3
+    from scripts.qq_companion.configure_model import sync_persona
+    from runtime.qwen3.config import Qwen3Config
+    path = tmp_path / 'personas.db'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE personas (persona_id TEXT PRIMARY KEY, system_prompt TEXT, begin_dialogs TEXT, '
+                   'tools TEXT, skills TEXT, sort_order INTEGER, created_at TEXT, updated_at TEXT)')
+    config = Qwen3Config(few_shot_examples=0)
+    sync_persona(path, 'elysia', 'current persona', model_config=config)
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE personas SET begin_dialogs='[\"old example\"]'")
+    sync_persona(path, 'elysia', 'updated persona', model_config=config)
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT system_prompt,begin_dialogs FROM personas').fetchone() == ('updated persona', '[]')
 
 
 def test_media_auth_and_rejected_audio(monkeypatch):

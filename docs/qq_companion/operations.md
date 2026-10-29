@@ -1,6 +1,10 @@
-# Q0–Q4 operations (Windows 11)
+# QQ companion operations (Windows 11)
 
 Q4 voice, music, whole-song cover, GPU switching and local acceptance are documented in [q4.md](q4.md). Normal startup now includes TTS; `-WithoutTTS` explicitly disables it. All Q4 development tests use local transport instead of QQ.
+
+Plugin 0.7.0's current Agent, native tools, interruption guards and acceptance
+are documented in [agent.md](agent.md). Older six-field and optional-follow-up
+acceptance records describe historical behavior.
 
 ## Install and configure
 
@@ -11,34 +15,62 @@ Q4 voice, music, whole-song cover, GPU switching and local acceptance are docume
 
 ## Start and stop
 
-Qwen now starts with thinking enabled and a 1024-token reasoning budget. The
-provider also requests `enable_thinking=true`; reasoning is separated from
-visible replies. Existing running processes need a normal stop/start to load
+Qwen starts with thinking enabled and a 1024-token reasoning budget. Per-request
+phase switches in `configs/runtime/qwen3.yaml` keep main planning and song selection
+enabled; completion checks, repair, close, result notifications and summary disable
+thinking with a zero reasoning budget. Sampling settings reach both llama.cpp and
+the AstrBot request adapter. Legacy Elysia examples are explicitly disabled for
+the current QQ persona. Existing running processes need a normal stop/start to load
 the new launch arguments, plugin and Media API. Configuration writes are backed
 up; development probes use request-level thinking and never send QQ messages.
 
 `scripts/qq_companion/start_all.ps1 -NoModels` pairs the local OneBot token, installs the guard, then starts the Q1 OneBot protocol and `/q1ping` test. Normal startup reserves the GPU with the Broker, starts Qwen3, SenseVoice, GPT-SoVITS and its wrapper, probes Qwen3 chat/tool calling, discovers its model ID, syncs the role prompt, and binds AstrBot's sole Runner to that provider. `-WithoutTTS` explicitly disables TTS; `-WithTTS` remains compatible. The authenticated facade at `127.0.0.1:8765` proxies ASR at 5001 and TTS at 5002 without loading another model. Q4 routes voice messages through this facade; TTS failure falls back to text. The script does not run the old local Agent or force NTQQ login. SnowLuma attaches to the already logged-in client.
 
+Managed configuration enables SnowLuma's `hookAutoLoad`, so a newly started QQ
+client is attached without a separate WebUI action. Startup waits up to 90 seconds
+for authenticated OneBot `get_login_info` and `get_status` to confirm the selected
+account is online. WebUI port 5099 alone is insufficient. If attachment fails,
+startup reports the connection failure and cleans up its services; inspect
+`storage/qq_companion/logs/snowluma.log`. NTQQ stays open.
+
 The ignored `storage/qq_companion/media_token` is generated once. Use its value only in a local `Authorization: Bearer …` header; keep it out of chat, logs and tracked configuration. `GET /health`, `GET /v1/characters`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech`, and `GET /v1/jobs/{id}` require that token. Transcription accepts at most 12 MiB and 60 seconds of WAV or Ogg Opus; speech accepts the active `character_id`, a configured emotion, and WAV output. Model activation and training are operator-only CLI actions; the QQ Agent cannot invoke them through this API.
 
-QQ text replies use the guard plugin's pacing hooks. The first LLM response contains `reply` and an integer `thinking_level` from 1 to 5; the JSON wrapper is removed before AstrBot saves history or sends text. Thinking times are 0.5, 1.5, 2.75, 4.25 and 6 seconds. Typing time adds 0.4 seconds per CJK ideograph and 0.12 seconds per other Unicode character. The plugin splits the visible reply at sentence endings and newlines, then sends one sentence per QQ message. For the first sentence, it waits until `thinking + typing(first sentence)` from inbound receipt. Later sentences use the same inbound timer and cumulative typing time, so model and code time are deducted before each send; an elapsed target sends immediately.
+QQ replies use one native AstrBot tool loop. Tool calls run through the native
+executor; only complete tool-free candidates enter semantic completion checks.
+Candidates contain exactly `reply`, integer `thinking_level` (1–5), and boolean
+`voice`. The checker can continue twice; a third continuation requests one
+tool-free close. Tools, fallback and compression do not reset this count.
+Default limits are 16 model requests, 16 tool calls and 180 seconds per run.
 
-After the last sentence in private chat, one extra call to the same local Qwen3 provider decides whether a natural follow-up is useful. It can return one sentence or `null`; the follow-up has its own thinking tier and typing delay measured from the start of that extra call. There is no chain of further follow-ups. A newer inbound message cancels a pending follow-up; a sent follow-up enters AstrBot's history. Follow-ups have a 60-second cooldown. Q3 disables optional follow-ups in groups and caps primary replies at three outgoing group messages or six private messages, combining remaining sentences into the final message. Invalid JSON or a failed extra call produces no follow-up. This path applies only to non-streaming QQ LLM text replies, not `/q1ping` or other deterministic messages. Prompt text lives in `configs/qq_companion/prompts.yaml`; splitting and arithmetic remain in `integrations/qq_astrbot/plugin/reply_pacing.py`. Startup installs all plugin modules listed in `configure.py`.
+There is no separate private follow-up Agent. Natural conversational additions
+are considered by the same completion checker before sending. New user inputs
+invalidate old drafts, including approved drafts still waiting to send. Only
+confirmed sends become assistant dialogue; drafts and checks have separate audit
+records. Responses wait for their thinking tier (0.5, 1.5, 2.75, 4.25 or 6 seconds)
+plus typing time (0.4 seconds per CJK character, 0.12 per other character), less
+elapsed time since input. Each textual segment uses cumulative typing time;
+prepared voice is sent without a simulated typing delay. Sentence splitting caps delivery at three group or six
+private messages. Prompt text lives in `configs/qq_companion/prompts.yaml`.
+Startup installs every plugin module listed in `configure.py`.
 
 ## Editable QQ prompts
 
-Plugin 0.6.0 reads the single UTF-8 file
+Plugin 0.7.0 reads the single UTF-8 file
 [`configs/qq_companion/prompts.yaml`](../../configs/qq_companion/prompts.yaml)
-on each main-reply or private-follow-up request. Each section has Chinese
+on each main-reply or internal-check request. Each section has Chinese
 comments explaining purpose, trigger and editing constraints. YAML comments are
 not sent to the model. Persona text remains in the character's `system_prompt.txt`.
 
 | Key | Model-facing content |
 |---|---|
 | `qq_context` | Structured QQ input, numeric speaker identity, privacy and reply style |
-| `reply_output` | Primary reply JSON and thinking tier |
-| `followup_system` | Optional private continuation decision |
-| `followup_user` | Final task message for the continuation decision |
+| `reply_output` | Strict three-field candidate JSON |
+| `agent_policy` | Generic tool use, receipts, continuation and draft handling |
+| `agent_completion_check` | Task completion and natural conversational completeness |
+| `agent_continue`, `agent_repair`, `agent_check_failed` | Internal continuation and bounded repair |
+| `agent_restricted_close`, `agent_budget_reply` | Tool-free close and deterministic fallback |
+| `tool_*` | Native tool descriptions and argument descriptions |
+| `music_result`, `music_clarification` | Background song result notification |
 | `astrbot_safety` | Replacement for the safety block when AstrBot enables it |
 | `astrbot_tool_call` | Replacement for the current full-schema tool-call instructions |
 | `datetime_reminder` | Current date/time reminder; `$current_time` and `$weekday` are runtime values |
@@ -47,10 +79,10 @@ not sent to the model. Persona text remains in the character's `system_prompt.tx
 
 Keep YAML indentation and key names. Edit the text under `|`; preserve the JSON
 fields described in the comments because the reply parser uses them. Main replies
-and private follow-ups load a fresh bundle, so saved edits take effect on the next
+and internal checks load a fresh bundle, so saved edits take effect on the next
 request after the new plugin has first been loaded. An already in-flight request
 keeps the text it read. A broken or incomplete file stops the affected main
-inference request or skips the optional follow-up and logs the file/key problem;
+inference request and logs the file/key problem;
 there is no hidden fallback copy of the prompt text.
 
 The loader finds the same project file both from the source tree and from the
@@ -79,8 +111,8 @@ Record private chat 50 turns, group 50 turns, @ 20 turns, image ingress 10 messa
 
 ## Q3 group routing, controls and permissions
 
-The next normal managed startup installs plugin 0.5.1, including its schema and
-three new routing/permission/context modules. Q3 development and local acceptance
+The next normal managed startup installs plugin 0.7.0, including its schema and
+Agent, routing, permission and context modules. Q3 development and local acceptance
 do not restart or connect the QQ stack. For manual deployment while the stack is
 stopped, use the existing `configure.py --apply`; it copies the same complete
 file list. The AstrBot plugin settings UI exposes the following defaults:

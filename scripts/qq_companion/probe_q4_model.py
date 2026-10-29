@@ -11,6 +11,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from runtime.qwen3.config import load_qwen3_config
 import psutil
 from integrations.qq_astrbot.plugin.prompt_loader import load_prompts
 from integrations.qq_astrbot.plugin.reply_pacing import parse_reply
@@ -62,9 +63,7 @@ def run():
             if sock.connect_ex(("127.0.0.1", 18080)) == 0:
                 raise RuntimeError("Acceptance port 18080 is already occupied")
         process = subprocess.Popen([str(ROOT / "tools/llama.cpp/llama-server.exe"), "--model",
-            str(ROOT / active["runtime"]["model_file"]), "--host", "127.0.0.1", "--port", "18080",
-            "--ctx-size", "8192", "--n-gpu-layers", "99", "--reasoning", "on", "--reasoning-format", "deepseek",
-            "--reasoning-budget", "1024", "--slots"],
+            str(ROOT / active["runtime"]["model_file"]), "--slots"] + load_qwen3_config().server_args(port=18080),
             cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW)
         created = psutil.Process(process.pid).create_time()

@@ -1,5 +1,10 @@
 # QQ Q0–Q3 architecture
 
+The current 0.7.0 lifecycle, native media tools, versioned delivery and history
+provenance are described in [大肥鱼原生工具 Agent](agent.md). The Q0–Q3 foundations
+below remain; the Q3-only echo restriction has been extended to the five native
+media tools through the same guarded registration path.
+
 ```
 NTQQ (user managed)
   ↕ local attachment

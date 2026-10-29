@@ -13,6 +13,8 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import ProxyHandler, Request, build_opener
 
 import psutil
 
@@ -77,6 +79,54 @@ def wait_port(name: str, port: int, process: subprocess.Popen, timeout: int) -> 
             return
         time.sleep(1)
     raise RuntimeError(f"{name} did not open port {port}; inspect ignored log under {LOGS}")
+
+
+def onebot_ready(config: dict, expected_account: str) -> bool:
+    """Read-only protocol health, with account/token values kept out of output."""
+    servers = config.get("networks", {}).get("httpServers", [])
+    server = next((s for s in servers if s.get("port") == 3000), None)
+    if not server or server.get("host") not in {"127.0.0.1", "localhost"}:
+        raise RuntimeError("SnowLuma OneBot HTTP listener on loopback:3000 is required")
+    headers = {"Content-Type": "application/json"}
+    if server.get("accessToken"):
+        headers["Authorization"] = "Bearer " + server["accessToken"]
+    opener = build_opener(ProxyHandler({}))
+    try:
+        results = []
+        for action in ("get_login_info", "get_status"):
+            request = Request(f"http://127.0.0.1:3000/{action}", data=b"{}", headers=headers, method="POST")
+            with opener.open(request, timeout=3) as response:
+                result = json.load(response)
+            if not isinstance(result, dict) or result.get("retcode") != 0 or not isinstance(result.get("data"), dict):
+                return False
+            results.append(result["data"])
+        return (str(results[0].get("user_id")) == expected_account and results[1].get("online") is True
+                and results[1].get("good", True) is True)
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise RuntimeError("SnowLuma OneBot authentication failed; reapply local pairing") from None
+        return False
+    except (OSError, URLError, ValueError):
+        return False
+
+
+def wait_onebot(process: subprocess.Popen, timeout: int = 90) -> None:
+    from scripts.qq_companion.configure import locate_snowluma_config, read_json
+    path = locate_snowluma_config(os.environ.get("QQ_COMPANION_SNOWLUMA_CONFIG"))
+    config = read_json(path)
+    expected_account = path.stem.removeprefix("onebot_")
+    deadline = time.monotonic() + timeout
+    print("Waiting for SnowLuma to attach to the logged-in QQ account and expose OneBot...", flush=True)
+    while time.monotonic() < deadline:
+        if STOP_FLAG.exists():
+            raise KeyboardInterrupt
+        if process.poll() is not None:
+            raise RuntimeError("SnowLuma exited before OneBot became ready; inspect snowluma.log")
+        if onebot_ready(config, expected_account):
+            print("SnowLuma OneBot account is online and ready (account details suppressed).", flush=True)
+            return
+        time.sleep(1)
+    raise RuntimeError("SnowLuma WebUI started but OneBot is not ready: confirm NTQQ is logged in; inspect snowluma.log")
 
 
 def stop_tree(pid: int, started: float) -> None:
@@ -209,10 +259,11 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
         return proc
 
     def start_service(name: str, argv: list[str], cwd: Path, port: int, timeout: int,
-                      env: dict | None = None) -> None:
+                      env: dict | None = None) -> subprocess.Popen:
         restart_specs[name] = (argv, cwd, env, port, timeout)
         process = launch(name, argv, cwd, env)
         wait_port(name, port, process, timeout)
+        return process
 
     def stop_models(stopped):
         # An HTTP cancellation can leave inference running after its caller has
@@ -367,6 +418,8 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
             dispatcher = CoverDispatcher(STATE, broker=broker, stop_models=stop_models,
                 restore_models=restore_models, verify_gpu=verify_gpu, run_worker=run_song_worker,
                 stopping=STOP_FLAG.exists)
+            from scripts.qq_companion.song_source_prepare import prepare_source
+            dispatcher.prepare_source = lambda key: prepare_source(dispatcher.jobs, key)
             dispatcher.jobs.recover()
             dispatcher.state.set_mode("ready")
         if local_q4:
@@ -411,7 +464,8 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
                       ASTRBOT, 6199, 120, astr_env)
         snow_env = os.environ.copy()
         snow_env["PATH"] = str(SNOWLUMA) + os.pathsep + snow_env.get("PATH", "")
-        start_service("snowluma", [str(SNOWLUMA / "node.exe"), "index.mjs"], SNOWLUMA, 5099, 45, snow_env)
+        snow_process = start_service("snowluma", [str(SNOWLUMA / "node.exe"), "index.mjs"], SNOWLUMA, 5099, 45, snow_env)
+        wait_onebot(snow_process)
         print("Q2 services started. NTQQ must be logged in. Ctrl+C stops managed services.", flush=True)
         while not STOP_FLAG.exists():
             if dispatcher is not None and dispatcher.state.mode() == "ready":
@@ -445,7 +499,9 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
                     if STOP_FLAG.exists():
                         break
                     argv, cwd, env, port, timeout = restart_specs[name]
-                    start_service(name, argv, cwd, port, timeout, env)
+                    restarted = start_service(name, argv, cwd, port, timeout, env)
+                    if name == "snowluma":
+                        wait_onebot(restarted)
             time.sleep(1)
     finally:
         # Repeated Ctrl+C must not interrupt cleanup halfway through the list.

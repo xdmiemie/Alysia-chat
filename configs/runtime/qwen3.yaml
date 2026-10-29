@@ -2,13 +2,32 @@ service_name: llama-server
 host: 127.0.0.1
 port: 8080
 model_manifest: model_store/active/qwen3.json
-context_size: 8192
+# Shared by llama.cpp, AstrBot provider generation, and local model probes.
+context_size: 32768
+gpu_layers: 99
+cache_type_k: q8_0
+cache_type_v: q8_0
+enable_thinking: true
+# Per-request phases; no extra model call to choose the switch.
+thinking_agent: true
+thinking_selection: true
+thinking_check: false
+thinking_repair: false
+thinking_close: false
+thinking_music_result: false
+thinking_compression: false
+reasoning_format: deepseek
+reasoning_budget_tokens: 1024
+context_margin_tokens: 256
 temperature: 0.7
+utility_temperature: 0.0
+result_temperature: 0.5
 top_p: 0.9
 top_k: 20
-max_tokens: 256
+max_tokens: 1536
 max_history_turns: 8
-few_shot_examples: 6
+# Legacy examples describe Elysia, conflicting with the current QQ persona.
+few_shot_examples: 0
 request_timeout_seconds: 60
 character_config: configs/characters/elysia/character.yaml
 system_prompt: configs/characters/elysia/system_prompt.txt

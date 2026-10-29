@@ -1,6 +1,16 @@
 # QQ companion scripts
 
+NetEase account QR login and persistent encrypted sessions:
+[login instructions](../../docs/qq_companion/netease_login.md).
+Run `envs/astrbot/Scripts/python.exe scripts/qq_companion/netease_login.py`;
+use `--status` for a read-only login check. This does not start any bot or model.
+
 Run from the project root. See [operations](../../docs/qq_companion/operations.md) for Q0–Q4 setup, acceptance and shutdown. The Feiyu song installers maintain Q4's local model assets.
+
+Qwen3 runtime settings are shared in [`configs/runtime/qwen3.yaml`](../../configs/runtime/qwen3.yaml):
+32768 context tokens, Q8_0 K/V cache, 1536 output tokens, and a 1024-token thinking budget.
+The launcher and AstrBot provider generator read the same file; restart the managed
+stack after changes to apply both. Internal request budgeting uses the generated provider settings.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/install_astrbot.ps1

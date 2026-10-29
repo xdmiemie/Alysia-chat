@@ -5,11 +5,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
 import re
 import secrets
 import urllib.parse
 from dataclasses import dataclass, replace
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ _IV = b"0102030405060708"
 _SONG_LINK = re.compile(r"(?:https?://)?music\.163\.com/(?:#?/)?song\?id=(\d{1,12})")
 _AUDIO_HOST = re.compile(r"(?:^|\.)(?:music\.126\.net|music\.163\.com)$")
 RETRYABLE_SOURCE_STATUS = frozenset({429, 500, 502, 503, 504})
+PLAYER_URL_ROUTE = "song/enhance/player/url/v1"
 
 
 class SongSourceError(ValueError):
@@ -98,6 +99,22 @@ def weapi_form(payload: dict[str, Any]) -> dict[str, str]:
     return {"params": params, "encSecKey": enc_key}
 
 
+def player_request_headers(cookie: str) -> dict[str, str]:
+    """Use desktop playback context without changing the account or its grants.
+
+    A MUSIC_U-only request is treated as a web player and can receive URLs
+    requiring a separate, failing CDN auth flow. Declare os=pc when requesting
+    a player URL, retaining all account credentials. Do not persist this change
+    or send these headers to the audio CDN. Anonymous requests stay anonymous.
+    """
+    if not cookie:
+        return {}
+    parsed = SimpleCookie()
+    parsed.load(cookie)
+    parsed["os"] = "pc"
+    return {"Cookie": "; ".join(f"{key}={item.coded_value}" for key, item in parsed.items())}
+
+
 class NetEaseSource:
     version = "weapi-v1"
 
@@ -110,11 +127,16 @@ class NetEaseSource:
 
     @classmethod
     def from_environment(cls) -> "NetEaseSource":
-        return cls(os.environ.get("ASTRBOT_CHAT_NETEASE_COOKIE") or os.environ.get("ALYSIA_NETEASE_COOKIE", ""))
+        from .netease_auth import resolve_cookie
+
+        return cls(resolve_cookie())
 
     def _post(self, route: str, payload: dict[str, Any]) -> dict[str, Any]:
+        options = {}
+        if route == PLAYER_URL_ROUTE:
+            options["headers"] = player_request_headers(self.http.headers.get("Cookie", ""))
         response = self.http.post("https://music.163.com/weapi/" + route,
-                                  data=weapi_form(payload), timeout=(5, 15), allow_redirects=False)
+                                  data=weapi_form(payload), timeout=(5, 15), allow_redirects=False, **options)
         try:
             if response.is_redirect:
                 raise SongSourceError("source_redirect_refused")
@@ -149,8 +171,8 @@ class NetEaseSource:
                     album=str(album.get("name") or "")[:160] if isinstance(album, dict) else "",
                     aliases=tuple(str(item)[:120] for item in aliases[:5]) if isinstance(aliases, list) else ())
 
-    def search(self, query: str, page: int = 1, *, limit: int = 20) -> list[Song]:
-        if not query.strip() or len(query) > 120 or not 1 <= page <= 5 or not 1 <= limit <= 20:
+    def search(self, query: str, page: int = 1, *, limit: int = 10) -> list[Song]:
+        if not query.strip() or len(query) > 120 or not 1 <= page <= 5 or not 1 <= limit <= 10:
             raise ValueError("invalid song search")
         data = self._post("search/get", {"s": query, "type": 1,
                                          "limit": limit, "offset": (page - 1) * limit,
@@ -175,7 +197,7 @@ class NetEaseSource:
     def _playable_ids(self, song_ids: list[int]) -> set[int]:
         if not song_ids:
             return set()
-        data = self._post("song/enhance/player/url/v1",
+        data = self._post(PLAYER_URL_ROUTE,
                           {"ids": json.dumps(song_ids, separators=(",", ":")),
                            "level": "standard", "encodeType": "mp3"})
         return {int(item["id"]) for item in data.get("data") or []
@@ -183,7 +205,7 @@ class NetEaseSource:
                 and not item.get("freeTrialInfo") and not (item.get("freeTrialPrivilege") or {}).get("listenType")}
 
     def playable_url(self, song_id: int) -> str:
-        data = self._post("song/enhance/player/url/v1", {"ids": f"[{song_id}]",
+        data = self._post(PLAYER_URL_ROUTE, {"ids": f"[{song_id}]",
                                                           "level": "standard", "encodeType": "mp3"})
         items = data.get("data") or []
         item = next((row for row in items if int(row.get("id", 0)) == song_id), None)

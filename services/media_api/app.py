@@ -52,6 +52,22 @@ class SongPayload(BaseModel):
 
 class SongSelectionPayload(BaseModel):
     song_id: int | None = Field(strict=True)
+    retry_revision: int | None = Field(default=None, strict=True, ge=1)
+    selection_error: bool = False
+
+
+class SelectedSongPayload(SongPayload):
+    song_id: int = Field(strict=True, gt=0, lt=10**12)
+    source_receipt: str = Field(pattern=r"^[a-f0-9]{32}$")
+    candidate_receipts: list[str] = Field(default_factory=list, max_length=200)
+
+
+class WeapiPayload(BaseModel):
+    scope: str = Field(pattern=r"^qq:[0-9]{1,20}:(?:dm|group):[0-9]{1,20}$")
+    action: str
+    query: str = Field(default="", max_length=120)
+    song_id: int | None = Field(default=None, strict=True, gt=0, lt=10**12)
+    page: int = Field(default=1, strict=True, ge=1, le=5)
 
 
 def state_dir() -> Path:
@@ -227,6 +243,64 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/v1/music/weapi", dependencies=[Depends(_token)])
+    def weapi(payload: WeapiPayload):
+        from .song_source import NetEaseSource
+        try:
+            source = NetEaseSource.from_environment()
+            if payload.action == "search" and payload.query.strip():
+                songs = source.search(payload.query, payload.page)
+            elif payload.action == "resolve" and payload.song_id:
+                songs = [source.detail(payload.song_id)]
+            else:
+                raise ValueError("search_requires_query_or_resolve_requires_song_id")
+            result = []
+            for song in songs:
+                row = {**song.public(), "link": f"https://music.163.com/song?id={song.song_id}"}
+                if payload.action == "resolve":
+                    try:
+                        row["audio_url"] = source.playable_url(song.song_id)
+                    except PermissionError:
+                        row["audio_url"] = None
+                row["source_receipt"] = SongStore(state_dir()).remember_candidate(payload.scope, row)
+                result.append(row)
+            return {"ok": True, "status": "completed", "songs": result}
+        except Exception as exc:
+            # Cookies and upstream responses are never returned in tool errors.
+            return {"ok": False, "status": "failed", "error": type(exc).__name__, "songs": []}
+
+    @app.post("/v1/songs/selected", dependencies=[Depends(_token)])
+    def submit_selected_song(payload: SelectedSongPayload):
+        store = SongStore(state_dir())
+        try:
+            # Recover an already accepted idempotency key without another source call.
+            try:
+                old = store.get(payload.request_id, payload.scope)
+                if ((old["initial_song_id"] or old["selection"].get("song_id")) != payload.song_id or old["payload"] != payload.music
+                        or old["user_request"] != payload.user_request or old["request_context"] != payload.request_context):
+                    raise ValueError("Conflicting selected song")
+                return store.public(payload.request_id, payload.scope)
+            except KeyError:
+                pass
+            # Trust only metadata previously obtained by this API for this scope;
+            # never search, resolve metadata or select a version a second time.
+            data = store.candidate(payload.source_receipt, payload.scope, payload.song_id)
+            pool = store.candidate_pool(payload.candidate_receipts, payload.scope) if payload.candidate_receipts else [data]
+            store.submit(payload.request_id, payload.scope, payload.music, user_request=payload.user_request,
+                         request_context=payload.request_context, selected_song=data, await_commit=True, candidates=pool)
+            return store.public(payload.request_id, payload.scope)
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid selected song request") from exc
+
+    @app.post("/v1/songs/{job_id}/commit", dependencies=[Depends(_token)])
+    def commit_song(job_id: str, scope: str):
+        store = SongStore(state_dir())
+        try:
+            store.commit(job_id, scope)
+            return store.public(job_id, scope)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "Song job not found") from exc
+
     @app.get("/v1/songs/{job_id}", dependencies=[Depends(_token)])
     def song_status(job_id: str, scope: str):
         try:
@@ -246,7 +320,10 @@ def create_app() -> FastAPI:
     def select_song(job_id: str, scope: str, payload: SongSelectionPayload):
         store = SongStore(state_dir())
         try:
-            store.choose(job_id, scope, payload.song_id)
+            if payload.retry_revision is not None:
+                store.reselect(job_id, scope, payload.song_id, payload.retry_revision, selection_error=payload.selection_error)
+            else:
+                store.choose(job_id, scope, payload.song_id)
             return store.public(job_id, scope)
         except KeyError as exc:
             raise HTTPException(404, "Song job not found") from exc

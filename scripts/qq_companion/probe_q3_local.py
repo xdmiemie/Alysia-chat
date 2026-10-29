@@ -115,6 +115,9 @@ def main() -> int:
             def __init__(self):
                 self.calls = []
 
+            def add_llm_tools(self, *tools):
+                self.tools = tools
+
             async def llm_generate(self, **kwargs):
                 assert kwargs["chat_provider_id"] == "astrbot_chat_qwen3"
                 self.calls.append(kwargs)
@@ -180,12 +183,14 @@ def main() -> int:
                 # Stop a group after inference but before decoration/send.
                 pending = event(group="401", at=True)
                 await plugin.filter_inbound(pending)
+                await plugin.request_paced_reply(pending, ProviderRequest())
+                pending.set_extra("qq_agent_approved", True)
                 pending.set_extra("qq_thinking_level", 1)
                 pending.set_result(MessageEventResult().message("应被取消").set_result_content_type(ResultContentType.LLM_RESULT))
                 command = event(group="401", text="/q3 off", role="admin")
                 await plugin.filter_inbound(command)
                 await plugin.delay_paced_reply(pending)
-                assert pending.is_stopped() and not pending.get_result().chain
+                assert not plugin._event_active(pending) and not pending.get_result().chain
                 command_on = event(group="401", text="/q3 on", role="admin")
                 await plugin.filter_inbound(command_on)
                 assert not plugin._event_active(pending), "Re-enabling revived a canceled reply"
@@ -196,9 +201,13 @@ def main() -> int:
                 # Existing sentence pacing keeps all text, bounded to three
                 # outgoing messages in a group and without a second model call.
                 allowed.set_extra("qq_reply_started_at", time.monotonic() - 100)
-                raw = '{"reply":"一。二。三。四。五。","thinking_level":1}'
+                await plugin.request_paced_reply(allowed, ProviderRequest())
+                allowed.set_extra("qq_agent_approved", True)
+                raw = '{"reply":"一。二。三。四。五。","thinking_level":1,"voice":false}'
                 response = LLMResponse(role="assistant", completion_text=raw)
-                history = SimpleNamespace(messages=[Message(role="assistant", content=[TextPart(text=raw)])])
+                history = SimpleNamespace(messages=[])
+                allowed.set_extra("qq_agent_lifecycle", SimpleNamespace(sent=lambda text, **kw:
+                    history.messages.append(Message(role="assistant", content=text))))
                 await plugin.unpack_paced_reply(allowed, history, response)
                 allowed.set_result(MessageEventResult().message(response.completion_text).set_result_content_type(ResultContentType.LLM_RESULT))
                 await plugin.delay_paced_reply(allowed)
@@ -206,7 +215,8 @@ def main() -> int:
                 await allowed.send(allowed.get_result())
                 await plugin.finish_paced_reply(allowed)
                 assert len(bot.sent) - before == 3
-                assert history.messages[-1].content[0].text == "一。二。三。四。五。"
+                assert [m.content for m in history.messages] == ["一。", "二。", "三。四。五。"]
+                assert not plugin.context.calls
 
                 # Exercise the real AstrBot tool-call convention: event is
                 # positional, schema arguments are keyword arguments.
@@ -215,7 +225,7 @@ def main() -> int:
                     FunctionTool(name="astrbot_execute_shell", description="blocked", parameters={"type": "object"}, handler=plugin.q2_echo),
                 ]))
                 await plugin.request_paced_reply(allowed, request)
-                assert [t.name for t in request.func_tool.tools] == ["q2_echo"]
+                assert {t.name for t in request.func_tool.tools} == {"q2_echo", "emotion", "music", "musiccover", "sticker", "weapi"}
                 tool = request.func_tool.tools[0]
                 context = SimpleNamespace(context=SimpleNamespace(event=allowed))
                 results = [r async for r in call_local_llm_tool(context, tool.handler, "decorator_handler", value="q3-local")]
@@ -235,10 +245,10 @@ def main() -> int:
                 await plugin.filter_inbound(unknown2)
                 assert bot.info_calls == 1
 
-                # Saved edits must affect the actual next main/follow-up payload,
+                # Saved edits must affect the actual next main Agent payload,
                 # including upstream blocks, while preserving the persona.
                 prompts = load_prompts()
-                for key in ("qq_context", "followup_system", "followup_user", "astrbot_safety",
+                for key in ("qq_context", "agent_policy", "astrbot_safety",
                             "astrbot_tool_call", "datetime_reminder", "echo_description", "echo_value_description"):
                     prompts[key] = "FILE " + key
                 prompt_file = state / "editable-prompts.yaml"
@@ -253,16 +263,12 @@ def main() -> int:
                         parameters={"type": "object", "properties": {"value": {"type": "string"}}}, handler=plugin.q2_echo)]))
                 await plugin.request_paced_reply(edited, req)
                 assert "PERSONA UNCHANGED" in req.system_prompt
-                for key in ("qq_context", "astrbot_safety", "astrbot_tool_call"):
+                for key in ("qq_context", "agent_policy", "astrbot_safety", "astrbot_tool_call"):
                     assert "FILE " + key in req.system_prompt
                 assert req.extra_user_content_parts[0].text == "FILE datetime_reminder"
                 assert req.func_tool.tools[0].description == "FILE echo_description"
                 assert req.func_tool.tools[0].parameters["properties"]["value"]["description"] == "FILE echo_value_description"
-                edited.set_extra("qq_run_context", SimpleNamespace(messages=[Message(role="assistant", content="已回复")]))
-                await plugin._maybe_followup(edited)
-                assert plugin.context.calls[-1]["contexts"][-1]["content"] == "FILE followup_user"
-                assert "FILE followup_system" in plugin.context.calls[-1]["system_prompt"]
-                assert "PERSONA UNCHANGED" in plugin.context.calls[-1]["system_prompt"]
+                assert not plugin.context.calls, "Separate follow-up inference was restarted"
                 prompt_file.write_text("invalid: [", encoding="utf-8")
                 broken = event(group="601", at=True)
                 await plugin.filter_inbound(broken)

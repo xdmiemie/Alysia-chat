@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 from services.media_api.songs import SongStore
 from services.media_api.song_audio import SongAudioConfig, SongAudioPipeline, inspect_audio
-from services.media_api.song_source import NetEaseSource
+from scripts.qq_companion.song_source_prepare import prepare_source
 
 
 async def run(store: SongStore, job_id: str, *, local_source: Path | None = None):
@@ -28,7 +28,7 @@ async def run(store: SongStore, job_id: str, *, local_source: Path | None = None
         # CLI-only self-authored acceptance fixture; never available to Agent/API.
         shutil.copyfile(local_source, source)
     else:
-        await asyncio.to_thread(NetEaseSource.from_environment().download, song["song_id"], source)
+        source = await asyncio.to_thread(prepare_source, store, job_id)
     ffmpeg = str(ROOT / "tools/ffmpeg/bin/ffmpeg.exe")
     ffprobe = str(ROOT / "tools/ffmpeg/bin/ffprobe.exe")
     info = await asyncio.to_thread(inspect_audio, source, ffprobe)

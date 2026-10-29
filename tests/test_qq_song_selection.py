@@ -20,6 +20,20 @@ CANDIDATES = [Song("netease", 1, "雨爱", "原唱歌手", 260, False).public(),
               Song("netease", 3, "雨爱司凤版", "司凤", 250, True).public()]
 
 
+def test_search_requests_ten_per_page_and_bounds_upstream_response(monkeypatch):
+    calls = []
+    source = NetEaseSource()
+    def post(route, payload):
+        calls.append(payload)
+        return {"result": {"songs": [{"id": i + 1, "name": "song", "dt": 1000} for i in range(20)]}}
+    monkeypatch.setattr(source, "_post", post)
+    monkeypatch.setattr(source, "_playable_ids", lambda ids: set(ids))
+    assert len(source.search("雨爱", page=2)) == 10
+    assert calls == [{"s": "雨爱", "type": 1, "limit": 10, "offset": 10, "total": "true"}]
+    with pytest.raises(ValueError):
+        source.search("雨爱", limit=20)
+
+
 @pytest.mark.parametrize("raw,valid,chosen", [('{"song_id":3}', True, 3), ('{"song_id":null}', True, None),
     ('{"song_id":true}', False, None), ('{"song_id":"3"}', False, None), ('{"song_id":99}', False, None),
     ('{}', False, None), ('选第三首', False, None)])

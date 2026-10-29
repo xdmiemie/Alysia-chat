@@ -17,7 +17,8 @@ BACKUPS = ROOT / "storage" / "qq_companion" / "config_backups"
 WS_URL = "ws://127.0.0.1:6199/ws"
 PLUGIN_FILES = ("main.py", "guard.py", "reply_pacing.py", "message_router.py",
                 "memory_context.py", "permissions.py", "prompt_loader.py", "api_client.py",
-                "media_state.py", "media_decision.py", "media_router.py", "_conf_schema.json", "metadata.yaml")
+                "media_state.py", "media_decision.py", "media_router.py", "agent_state.py",
+                "agent_runtime.py", "agent_tools.py", "reply_content.py", "request_provider.py", "context_budget.py", "song_tasks.py", "_conf_schema.json", "metadata.yaml")
 
 
 def read_json(path: Path) -> dict:
@@ -96,12 +97,17 @@ def main() -> int:
     if not astr_path.exists():
         raise SystemExit("AstrBot config is absent. Initialize AstrBot first, then rerun configure.py.")
     runtime_path = SNOWLUMA / "config" / "runtime.json"
-    if runtime_path.exists() and read_json(runtime_path).get("webuiHost") not in ("127.0.0.1", "localhost"):
+    runtime = read_json(runtime_path) if runtime_path.exists() else {"webuiHost": "127.0.0.1", "webuiPort": 5099}
+    if runtime.get("webuiHost") not in ("127.0.0.1", "localhost"):
         raise SystemExit("SnowLuma WebUI must bind to loopback before configuring the pair")
+    # A WebUI listener alone does not attach to a newly started NTQQ process.
+    # The managed pair must load its hook before OneBot can receive messages.
+    runtime["hookAutoLoad"] = True
     astr, snow = configure(read_json(astr_path), read_json(snow_path), token_override=os.getenv("SNOWLUMA_ONEBOT_TOKEN"))
     if args.apply:
         save_json(astr_path, astr)
         save_json(snow_path, snow)
+        save_json(runtime_path, runtime)
         plugin_src = ROOT / "integrations" / "qq_astrbot" / "plugin"
         plugin_dest = ASTRBOT / "data" / "plugins" / "astrbot_chat_q1"
         plugin_dest.mkdir(parents=True, exist_ok=True)
@@ -110,7 +116,7 @@ def main() -> int:
             target = plugin_dest / name
             if not target.exists() or source.read_bytes() != target.read_bytes():
                 shutil.copy2(source, target)
-        print("Configured OneBot reverse WS on loopback. Backups are in ignored storage/qq_companion/config_backups.")
+        print("Configured OneBot reverse WS and QQ hook auto-load on loopback. Backups are in ignored storage/qq_companion/config_backups.")
     else:
         print("Configuration is valid in memory. Use --apply while both services are stopped.")
     return 0

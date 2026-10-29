@@ -12,14 +12,14 @@ import time
 
 from astrbot.api import llm_tool, star
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.core.agent.message import Message, TextPart
 from astrbot.core.astr_main_agent_resources import LLM_SAFETY_MODE_SYSTEM_PROMPT, TOOL_CALL_PROMPT
 from astrbot.core.message.components import At, Image, Plain, Record, Reply
 from astrbot.core.message.message_event_result import MessageChain
 
 from .guard import InboundGuard
+from .agent_state import AgentStore, BudgetExhausted, Superseded
+from .agent_tools import AgentTools
 from .media_router import MediaRouter
-from .media_decision import MediaDecision, parse_media
 from .memory_context import ContextMessage, MemoryContext
 from .message_router import Incoming, MessageRouter
 from .permissions import PermissionPolicy
@@ -31,11 +31,10 @@ from .prompt_loader import (
     replace_framework_prompts,
 )
 from .reply_pacing import (
-    parse_followup,
-    parse_reply,
     remaining_seconds,
     split_sentences,
 )
+from .reply_content import chat_history, spoken_text
 
 
 class Q1Guard(star.Star):
@@ -60,11 +59,23 @@ class Q1Guard(star.Star):
                                             dm_allowlist=tuple(config.get("dm_allowlist", [])),
                                             dm_daily_limit=int(config.get("dm_daily_limit", 1)))
         self.latest_inbound: dict[str, int] = {}
-        self.last_followup_at: dict[str, float] = {}
+        self.agent_store = AgentStore(state_dir / "agent.sqlite3")
+        self.agent_limits = {"max_requests": max(4, min(64, int(config.get("agent_max_requests", 16)))),
+                             "max_tools": max(1, min(64, int(config.get("agent_max_tools", 16)))),
+                             "max_seconds": max(10, min(600, float(config.get("agent_max_seconds", 180))))}
+        self.agent_tools = AgentTools(self)
+        self.native_tools = self.agent_tools.registered()
+        self.context.add_llm_tools(*self.native_tools)
         self.group_sizes: dict[tuple[str, str], tuple[float, int | None]] = {}
         self.media = MediaRouter(context, state_dir, character_id=os.environ.get("ASTRBOT_CHAT_CHARACTER_ID", "elysia"))
         self.media.active_group = lambda scope, generation: (
             self.router.is_active(scope) and self.router.generation(scope) == generation)
+        self.media.active_version = self.agent_store.current
+        self.media.agent_store = self.agent_store
+        self.media.run_status = self.agent_store.run_status
+        self.media.run_active = lambda run_id: any(r.run_id == run_id and not r.cancel.is_set()
+                                                   for r in self.agent_store.active.values())
+        self.media.record_delivery = self.agent_store.record_id
         self.media.record_group_result = lambda scope, key, text: self.router.context.add(scope, ContextMessage(
             scope.split(":")[1], "bot", text, ["song:" + key], False, None, time.time(), "assistant"))
 
@@ -132,7 +143,7 @@ class Q1Guard(star.Star):
             at_bot=any(isinstance(part, At) and str(part.qq) == str(event.get_self_id()) for part in chain),
             reply_to=next((str(p.id) for p in chain if isinstance(p, Reply)), None),
             reply_sender=next((str(p.sender_id) for p in chain if isinstance(p, Reply)), ""),
-            member_count=await self._group_size(event),
+            member_count=None,
             is_group_admin=sender.get("role") in ("owner", "admin"),
         )
         try:
@@ -146,18 +157,29 @@ class Q1Guard(star.Star):
         event.session_id = scope
         event.set_extra("qq_scope", scope)
         event.set_extra("qq_incoming", incoming)
-        session = event.unified_msg_origin
-        sequence = self.latest_inbound.get(session, 0) + 1
-        self.latest_inbound[session] = sequence
-        if len(self.latest_inbound) > 512:
-            expired = next(iter(self.latest_inbound))
-            self.latest_inbound.pop(expired)
-            self.last_followup_at.pop(expired, None)
-        event.set_extra("qq_inbound_sequence", sequence)
+        # Group controls do not need GPU admission or a group-info await.
+        generation = self.router.generation(scope)
         control = self.router.control(incoming)
         if control is not None:
+            self._observe_request(event, incoming)
+            if self.router.generation(scope) != generation:
+                rows = self.media.song_tasks.cancel(scope, reason="group_control_changed")
+                self.media.spawn(self.media.cancel_song_tasks(rows))
             event.stop_event()
-            await event.send(MessageChain().message(control))
+            try:
+                await event.send(MessageChain().message(control))
+            finally:
+                self._release_song_hold(event)
+            return
+        # Ordinary group chatter remains context, but is not a new bot request.
+        # Directed requests invalidate foreground drafts and hold only this
+        # requester's accepted music before the first asynchronous operation.
+        sequence = self._observe_request(event, incoming) if self.router.explicitly_addressed(incoming) else None
+        incoming = replace(incoming, member_count=await self._group_size(event))
+        event.set_extra("qq_incoming", incoming)
+        if sequence is not None and not self.agent_store.current(scope, sequence):
+            event.stop_event()
+            self._release_song_hold(event)
             return
         decision = self.router.route(incoming)
         event.set_extra("qq_route", decision)
@@ -165,12 +187,20 @@ class Q1Guard(star.Star):
         # Keep deterministic Q1 diagnostics, subject to group on/off/quiet policy.
         ping = incoming.text.strip() == "/q1ping" and decision.trigger != "disabled"
         if ping:
+            if sequence is None:
+                self._observe_request(event, incoming)
             event.stop_event()
-            await event.send(MessageChain().message("q1pong"))
+            try:
+                await event.send(MessageChain().message("q1pong"))
+            finally:
+                self._release_song_hold(event)
             return
         if not decision.should_reply:
             event.stop_event()
+            self._release_song_hold(event)
             return
+        if sequence is None:
+            self._observe_request(event, incoming, hold_music=decision.trigger != 'auto')
         event.is_at_or_wake_command = True
         event.is_wake = True
         # @ and quote-to-bot bypass the fragment delay. Other admitted events
@@ -179,9 +209,11 @@ class Q1Guard(star.Star):
             await asyncio.sleep(self.router.context.merge_seconds)
             if not self.router.is_latest(incoming, decision):
                 event.stop_event()
+                self._release_song_hold(event)
                 return
         if not self._event_active(event):
             event.stop_event()
+            self._release_song_hold(event)
             return
         record = next((p for p in chain if isinstance(p, Record)), None)
         if record is not None:
@@ -189,7 +221,10 @@ class Q1Guard(star.Star):
                 transcript = await self.media.input_voice(event, record)
             except Exception:
                 event.stop_event()
-                await event.send(MessageChain().message("这段语音我暂时没听清，可以再说一次吗？"))
+                try:
+                    await event.send(MessageChain().message("这段语音我暂时没听清，可以再说一次吗？"))
+                finally:
+                    self._release_song_hold(event)
                 return
             incoming = replace(incoming, text=transcript)
             event.set_extra("qq_incoming", incoming)
@@ -197,10 +232,29 @@ class Q1Guard(star.Star):
             self.router.context.replace_text(scope, incoming.message_id, transcript)
         event.message_str = self.router.context.text_for(scope, incoming.message_id, incoming.text)
 
+    def _observe_request(self, event, incoming, *, hold_music=True):
+        sequence = self.agent_store.observe(incoming.scope, incoming.message_id)
+        session = event.unified_msg_origin
+        self.latest_inbound[session] = sequence
+        if len(self.latest_inbound) > 512:
+            self.latest_inbound.pop(next(iter(self.latest_inbound)))
+        event.set_extra("qq_inbound_sequence", sequence)
+        self.agent_store.guard_sender(event, incoming.scope, sequence)
+        if hold_music:
+            self.media.song_tasks.hold(incoming.scope, incoming.sender_uin, sequence)
+        return sequence
+
+    def _release_song_hold(self, event):
+        incoming = event.get_extra("qq_incoming")
+        tasks = getattr(self.media, 'song_tasks', None)
+        if tasks and incoming:
+            tasks.release(incoming.scope, incoming.sender_uin, event.get_extra("qq_inbound_sequence"))
+
     def _event_active(self, event: AstrMessageEvent) -> bool:
         scope = event.get_extra("qq_scope")
         incoming = event.get_extra("qq_incoming")
         return bool(scope and incoming and not event.is_stopped() and
+                    self.agent_store.current(scope, event.get_extra("qq_inbound_sequence")) and
                     (not incoming.group_id or (
                         self.router.is_active(scope) and
                         self.router.generation(scope) == event.get_extra("qq_control_generation"))))
@@ -216,17 +270,33 @@ class Q1Guard(star.Star):
                 prompts = load_prompts()
             except PromptError as exc:
                 event.stop_event()
+                self._release_song_hold(event)
                 self.logger.error("%s", exc)
                 return
             scope = event.get_extra("qq_scope")
+            if event.get_extra("qq_agent_run") is None:
+                event.set_extra("qq_agent_run", self.agent_store.begin(scope,
+                    event.get_extra("qq_inbound_sequence"), incoming.message_id, **self.agent_limits))
             # Atomic admission with supervisor DRAINING; one lease per tool loop.
             if not event.get_extra("qq_gpu_lease"):
-                deadline = time.monotonic() + 1800
-                while not (lease := self.media.client.state.enter()):
-                    if time.monotonic() >= deadline or not self._event_active(event):
-                        event.stop_event()
-                        return
-                    await asyncio.sleep(0.25)
+                run = event.get_extra("qq_agent_run")
+                try:
+                    self.agent_store.work(run)
+                    while not (lease := self.media.client.state.enter()):
+                        await self.agent_store.wait(run, asyncio.sleep(0.25))
+                except Superseded:
+                    event.stop_event()
+                    self._release_song_hold(event)
+                    return
+                except (BudgetExhausted, TimeoutError):
+                    event.stop_event()
+                    self.agent_store.status(run, "budget_exhausted")
+                    # No Runner/model is admitted, so record the deterministic
+                    # close as an actual send in the separate provenance log.
+                    await event.send(MessageChain().message(prompts["agent_budget_reply"]))
+                    self.agent_store.record(run, "sent", {"text": prompts["agent_budget_reply"], "modality": "text"})
+                    self._release_song_hold(event)
+                    return
                 event.set_extra("qq_gpu_lease", lease)
             req.session_id = scope
             # Image recognition belongs to Q7's gated visual worker. Never
@@ -238,6 +308,8 @@ class Q1Guard(star.Star):
                 # Rebuild group input solely from this group's TTL window.
                 # No legacy conversation (or unrelated plugin context) enters it.
                 req.contexts = []
+            else:
+                req.contexts = chat_history(req.contexts or [])
             current = asdict(incoming)
             current.pop("is_group_admin")
             current["text"] = self.router.context.text_for(scope, incoming.message_id, incoming.text)
@@ -250,8 +322,14 @@ class Q1Guard(star.Star):
                                      "image_understanding_available": False,
                                      "recent_messages": json.loads(self.router.context.render(scope))
                                      if incoming.group_id else []}, ensure_ascii=False)
+            from astrbot.core.agent.tool import ToolSet
+            req.func_tool = req.func_tool or ToolSet()
+            for tool in self.native_tools:
+                req.func_tool.add_tool(tool)
+            handlers = {tool.name: tool.handler for tool in self.native_tools}
+            handlers["q2_echo"] = self.q2_echo
             req.func_tool = self.permissions.restrict_tools(
-                req.func_tool, lambda: self._event_active(event), handlers={"q2_echo": self.q2_echo})
+                req.func_tool, lambda: self._event_active(event), handlers=handlers)
             apply_tool_descriptions(req.func_tool, prompts)
             original_base = req.system_prompt or ""
             base = replace_framework_prompts(original_base, prompts, {
@@ -260,205 +338,183 @@ class Q1Guard(star.Star):
             })
             replace_datetime_reminders(req.extra_user_content_parts, prompts)
             event.set_extra("qq_persona_prompt", original_base)
-            req.system_prompt = "\n".join((base, prompts["qq_context"], prompts["reply_output"], prompts["media_decisions"]))
+            req.system_prompt = "\n".join((base, prompts["qq_context"], prompts["reply_output"], prompts["agent_policy"]))
+            task_input = json.loads(req.prompt)
+            tasks = getattr(self.media, 'song_tasks', None)
+            task_input['active_music_tasks'] = [{k: row[k] for k in ('id', 'mode', 'title', 'state')}
+                for row in (tasks.pending(scope, incoming.sender_uin)[-6:] if tasks else [])]
+            req.prompt = json.dumps(task_input, ensure_ascii=False)
+
+    @filter.on_agent_begin()
+    async def begin_native_agent(self, event: AstrMessageEvent, run_context) -> None:
+        run = event.get_extra("qq_agent_run")
+        if run is None or event.get_extra("qq_agent_lifecycle") is not None:
+            return
+        from astrbot.core.pipeline.process_stage.follow_up import _ACTIVE_AGENT_RUNNERS
+        from .agent_runtime import NativeAgentLifecycle
+        runner = _ACTIVE_AGENT_RUNNERS.get(event.unified_msg_origin)
+        if runner is None or runner.run_context is not run_context:
+            event.stop_event()
+            self._release_lease(event)
+            raise RuntimeError("Pinned AstrBot active Runner is unavailable")
+        event.set_extra("qq_agent_cleanup", lambda: self._release_lease(event))
+        NativeAgentLifecycle(runner, self.agent_store, run, event).install()
 
     @filter.on_agent_done()
     async def unpack_paced_reply(self, event: AstrMessageEvent, run_context, response) -> None:
+        if event.get_extra("qq_agent_run") is None:
+            return
+        if not self._event_active(event) or not event.get_extra("qq_agent_approved"):
+            response.result_chain = None
+            response.completion_text = ""
+            self._release_lease(event)
+            return
+        from .agent_runtime import parse_candidate
+        candidate = parse_candidate(response.completion_text or "")
+        if candidate is None:
+            response.result_chain = None
+            response.completion_text = ""
+            self._release_lease(event)
+            return
+        response.completion_text = candidate["reply"].strip()
+        event.set_extra("qq_thinking_level", candidate["thinking_level"])
+        event.set_extra("qq_primary_reply", candidate["reply"].strip())
+        event.set_extra("qq_voice", candidate["voice"])
+        event.set_extra("qq_run_context", run_context)
+        self._release_song_hold(event)
+
+    def _release_lease(self, event):
+        self._release_song_hold(event)
         self.media.client.state.leave(event.get_extra("qq_gpu_lease"))
         event.set_extra("qq_gpu_lease", None)
-        if (event.get_platform_name() != "aiocqhttp" or
-                event.get_extra("qq_reply_started_at") is None or
-                response is None or response.role != "assistant" or not response.completion_text):
-            return
-        original = response.completion_text
-        reply, level, valid = parse_reply(original)
-        decision = parse_media(original, voice_input=event.get_extra("qq_voice_input", False)) if valid else MediaDecision()
-        event.set_extra("qq_media_decision", decision)
-        response.completion_text = reply
-        event.set_extra("qq_thinking_level", level)
-        event.set_extra("qq_primary_reply", reply)
-        event.set_extra("qq_run_context", run_context)
-        # AstrBot appends the assistant message before calling on_agent_done.
-        # Keep conversation history free of the pacing JSON as well.
-        if reply != original:
-            for message in reversed(run_context.messages):
-                if message.role != "assistant" or not isinstance(message.content, list):
-                    continue
-                for part in message.content:
-                    if getattr(part, "type", None) == "text" and part.text == original:
-                        part.text = reply
-                        return
 
     @filter.on_decorating_result()
     async def delay_paced_reply(self, event: AstrMessageEvent) -> None:
-        if event.get_platform_name() != "aiocqhttp" or event.get_extra("qq_reply_delayed", False):
+        if event.get_platform_name() != "aiocqhttp" or event.get_extra("qq_agent_run") is None:
             return
-        started_at = event.get_extra("qq_reply_started_at")
-        level = event.get_extra("qq_thinking_level")
         result = event.get_result()
-        if started_at is None or level is None or result is None or not result.is_llm_result():
+        if result is None or not result.is_llm_result():
             return
-        if not self._event_active(event):
+        if not self._event_active(event) or not event.get_extra("qq_agent_approved"):
             result.chain = []
-            event.stop_event()
+            self._release_lease(event)
             return
-        reply = "".join(part.text for part in result.chain if isinstance(part, Plain))
+        if event.get_extra("qq_reply_delayed", False):
+            return
+        reply = event.get_extra("qq_primary_reply", "")
         if not reply:
+            result.chain = []
             return
-        decision = event.get_extra("qq_media_decision")
-        if decision and decision.voice:
-            chains = await self.media.voice_chains(reply, decision.emotion, group=bool(event.get_group_id()))
-            if chains:
-                result.chain = chains[0].chain
-                event.set_extra("qq_voice_chains", chains[1:])
-                event.set_extra("qq_reply_ready", True)
-                event.set_extra("qq_reply_delayed", True)
-                if not self._event_active(event):
+        run = event.get_extra("qq_agent_run")
+        chains = []
+        transcripts = []
+        if event.get_extra("qq_voice", False):
+            audio = run.speech.get(reply)
+            if audio is not None:
+                chains = [MessageChain(chain=[Record.fromFileSystem(str(audio))])]
+                transcripts = [spoken_text(reply)]
+                for content, voice in self.media.speech_segments(reply, group=bool(event.get_group_id())):
+                    if not voice:
+                        chains.append(MessageChain(chain=[Plain(content)]))
+                        transcripts.append(content)
+            else:
+                try:
+                    chains = await self.agent_store.wait(run,
+                        self.media.voice_chains(reply, "neutral", group=bool(event.get_group_id())))
+                    transcripts = self.media.speech_texts(reply, group=bool(event.get_group_id()))
+                except Superseded:
                     result.chain = []
-                    event.stop_event()
-                return
-        if all(isinstance(part, Plain) for part in result.chain):
+                    self._release_lease(event)
+                    return
+                except (BudgetExhausted, TimeoutError):
+                    chains = []  # Deliver the checked text without starting more synthesis.
+        if not chains:
             sentences = split_sentences(reply)
             limit = 3 if event.get_group_id() else 6
             if len(sentences) > limit:
                 sentences = sentences[:limit - 1] + ["".join(sentences[limit - 1:])]
-            if sentences:
-                result.chain = [Plain(sentences[0])]
-                event.set_extra("qq_remaining_sentences", sentences[1:])
-                reply = sentences[0]
-                event.set_extra("qq_reply_ready", True)
-                self.logger.info("QQ paced reply has %d sentence(s)", len(sentences))
+            chains = [MessageChain(chain=[Plain(sentence)]) for sentence in sentences]
+            transcripts = sentences
+        event.set_extra("qq_delivery_chains", chains)
+        for index, chain in enumerate(chains):
+            for part in chain.chain:
+                if isinstance(part, Record):
+                    self.agent_store.record(run, "speech_prepared", {"text": transcripts[index],
+                        "path": str(part.file), "source": "reply"})
+        event.set_extra("qq_delivery_transcripts", transcripts)
+        event.set_extra("qq_delivery_text", reply)
         event.set_extra("qq_reply_delayed", True)
-        wait = remaining_seconds(reply, level, started_at)
+        wait = 0 if any(isinstance(part, Record) for part in chains[0].chain) else remaining_seconds(
+            transcripts[0], event.get_extra("qq_thinking_level", 1),
+            event.get_extra("qq_reply_started_at", time.monotonic()))
         if wait > 0:
-            await asyncio.sleep(wait)
+            try:
+                await self.agent_store.wait(run, asyncio.sleep(wait))
+            except Superseded:
+                result.chain = []
+                self._release_lease(event)
+                return
+            except (BudgetExhausted, TimeoutError):
+                pass  # No further generation: the approved response is ready to send.
+        # Critical: the input may have changed during synthesis/checking/typing.
         if not self._event_active(event):
             result.chain = []
-            event.stop_event()
+            self._release_lease(event)
+            return
+        result.chain = chains[0].chain if chains else []
+        event.set_extra("qq_reply_ready", bool(chains))
 
     @filter.after_message_sent()
     async def finish_paced_reply(self, event: AstrMessageEvent) -> None:
-        if (event.get_platform_name() != "aiocqhttp" or
-                not event.get_extra("qq_reply_ready", False) or
-                event.get_extra("qq_reply_finished", False)):
+        if (event.get_platform_name() != "aiocqhttp" or not event.get_extra("qq_reply_ready", False)
+                or event.get_extra("qq_reply_finished", False)):
             return
         event.set_extra("qq_reply_finished", True)
-        started_at = event.get_extra("qq_reply_started_at")
-        level = event.get_extra("qq_thinking_level")
-        cumulative = event.get_result().get_plain_text()
-        for chain in event.get_extra("qq_voice_chains", []):
-            if not self._event_active(event):
-                return
-            try:
+        chains = event.get_extra("qq_delivery_chains", [])
+        lifecycle = event.get_extra("qq_agent_lifecycle")
+        run = event.get_extra("qq_agent_run")
+        def remember(chain, index):
+            is_voice = any(isinstance(part, Record) for part in chain.chain)
+            # Voice text is the spoken transcript; textual chunks are recorded individually.
+            text = event.get_extra("qq_delivery_transcripts", [""])[index] if is_voice else chain.get_plain_text()
+            if lifecycle:
+                lifecycle.sent(text, modality="voice" if is_voice else "text")
+            if event.get_group_id() and text:
+                incoming = event.get_extra("qq_incoming")
+                self.router.context.add(incoming.scope, ContextMessage(incoming.bot_uin, "bot", text,
+                    ["assistant:" + incoming.message_id], False, incoming.message_id, time.time(), "assistant"))
+        try:
+            if chains:
+                remember(chains[0], 0)  # after_message_sent confirms the first successful send.
+            typed = chains[0].get_plain_text() if chains else ""
+            for index, chain in enumerate(chains[1:], start=1):
+                if not self._event_active(event):
+                    return
+                typed += chain.get_plain_text()
+                if not any(isinstance(part, Record) for part in chain.chain):
+                    wait = remaining_seconds(typed, event.get_extra("qq_thinking_level", 1),
+                        event.get_extra("qq_reply_started_at", time.monotonic()))
+                    if wait > 0:
+                        try:
+                            await self.agent_store.wait(run, asyncio.sleep(wait))
+                        except (BudgetExhausted, TimeoutError):
+                            pass
+                if not self._event_active(event):
+                    return
                 await event.send(chain)
-            except Exception:
-                return
-        for sentence in event.get_extra("qq_remaining_sentences", []):
-            cumulative += sentence
-            wait = remaining_seconds(cumulative, level, started_at)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            if not self._event_active(event):
-                return
-            try:
-                await event.send(MessageChain().message(sentence))
-            except Exception as exc:
-                self.logger.warning("QQ sentence send failed: %s", type(exc).__name__)
-                return
-        incoming = event.get_extra("qq_incoming")
-        if incoming and incoming.group_id and self._event_active(event):
-            self.router.context.add(incoming.scope, ContextMessage(
-                incoming.bot_uin, "bot", event.get_extra("qq_primary_reply", ""),
-                ["assistant:" + incoming.message_id], False, incoming.message_id, time.time(), "assistant"))
-        decision = event.get_extra("qq_media_decision")
-        if decision and self._event_active(event):
-            try:
-                await self.media.sticker(event, decision.sticker)
-            except Exception:
-                pass
-            self.media.start_song(event, decision)
-            if decision.music:
-                return
-        await self._maybe_followup(event)
-
-    async def _maybe_followup(self, event: AstrMessageEvent) -> None:
-        # Groups never receive optional continuation: one admitted reply is enough.
-        if event.get_group_id() or not self._event_active(event):
+                remember(chain, index)
+            if self._event_active(event):
+                self.agent_store.status(run, "sent")
+                await self.media.commit_run(run.run_id)
+        except Superseded:
             return
-        session = event.unified_msg_origin
-        sequence = event.get_extra("qq_inbound_sequence")
-        if sequence != self.latest_inbound.get(session):
-            return
-        is_group = event.get_message_type().value == "GroupMessage"
-        cooldown = 180 if is_group else 60
-        if time.monotonic() - self.last_followup_at.get(session, float("-inf")) < cooldown:
-            return
-        run_context = event.get_extra("qq_run_context")
-        if run_context is None:
-            return
-        contexts = self._recent_dialogue(run_context.messages)
-        if not contexts:
-            return
-        try:
-            prompts = load_prompts()
-        except PromptError as exc:
-            self.logger.error("%s", exc)
-            return
-        contexts.append({"role": "user", "content": prompts["followup_user"]})
-        base = replace_framework_prompts(event.get_extra("qq_persona_prompt", ""), prompts, {
-            "astrbot_safety": LLM_SAFETY_MODE_SYSTEM_PROMPT,
-            "astrbot_tool_call": TOOL_CALL_PROMPT,
-        })
-        started_at = time.monotonic()
-        try:
-            async with self.media.client.admission():
-                response = await asyncio.wait_for(
-                    self.context.llm_generate(
-                    chat_provider_id="astrbot_chat_qwen3",
-                    system_prompt=base + "\n" + prompts["followup_system"],
-                    contexts=contexts,
-                    max_tokens=160,
-                    temperature=0.5,
-                    request_max_retries=1,
-                    ),
-                    timeout=25,
-                )
         except Exception as exc:
-            self.logger.warning("QQ follow-up decision failed: %s", type(exc).__name__)
-            return
-        followup, level, valid = parse_followup(response.completion_text or "", event.get_extra("qq_primary_reply", ""))
-        if not valid or not followup or sequence != self.latest_inbound.get(session) or not self._event_active(event):
-            return
-        wait = remaining_seconds(followup, level, started_at)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        if sequence != self.latest_inbound.get(session) or not self._event_active(event):
-            return
-        try:
-            await event.send(MessageChain().message(followup))
-        except Exception as exc:
-            self.logger.warning("QQ follow-up send failed: %s", type(exc).__name__)
-            return
-        run_context.messages.append(Message(role="assistant", content=[TextPart(text=followup)]))
-        self.last_followup_at[session] = time.monotonic()
-        self.logger.info("QQ optional follow-up sent")
-
-    @staticmethod
-    def _recent_dialogue(messages) -> list[dict[str, str]]:
-        dialogue = []
-        for message in messages:
-            if message.role not in ("user", "assistant"):
-                continue
-            if isinstance(message.content, str):
-                content = message.content
-            elif isinstance(message.content, list):
-                content = "".join(part.text for part in message.content if getattr(part, "type", None) == "text")
-            else:
-                continue
-            content = content.strip()
-            if content:
-                dialogue.append({"role": message.role, "content": content[:600]})
-        return dialogue[-8:]
+            self.agent_store.record(run, "delivery_failed", {"error": type(exc).__name__})
+            self.agent_store.status(run, "delivery_failed")
+        finally:
+            if self.agent_store.active.get(run.scope) is run:
+                self.agent_store.active.pop(run.scope)
+            self._release_lease(event)
 
     @filter.command("q1ping")
     async def q1ping(self, event: AstrMessageEvent):
@@ -474,6 +530,8 @@ class Q1Guard(star.Star):
             value(string): Short text to echo.
         """
         character_id = os.environ.get("ASTRBOT_CHAT_CHARACTER_ID", "elysia")
+        if run := event.get_extra("qq_agent_run"):
+            self.agent_store.consume(run, "tool_calls")
         return f"character_id={character_id}; echo={value[:80]}"
 
     async def terminate(self):

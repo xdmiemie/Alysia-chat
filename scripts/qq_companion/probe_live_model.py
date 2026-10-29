@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import socket
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from scripts.qq_companion.configure_model import probe
 from scripts.qq_companion.gpu_broker import GPUResourceBroker, ROOT, STATE
+from runtime.qwen3.config import load_qwen3_config
 
 
 def run_active_probe() -> str:
@@ -22,8 +24,8 @@ def run_active_probe() -> str:
         raise RuntimeError("Active GGUF or project llama-server is missing")
     log_path = STATE / "logs/qwen3_probe.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [str(executable), "--model", str(model), "--host", "127.0.0.1",
-               "--port", "8080", "--ctx-size", "8192", "--n-gpu-layers", "99", "--reasoning", "off"]
+    config = replace(load_qwen3_config(), enable_thinking=False)
+    command = [str(executable), "--model", str(model)] + config.server_args()
     if adapter:
         adapter_path = ROOT / adapter
         if adapter_path.suffix.lower() != ".gguf" or not adapter_path.is_file():

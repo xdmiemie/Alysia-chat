@@ -2,6 +2,7 @@ param(
     [string]$LlamaExecutable = "",
     [string]$Character = "",
     [string]$ModelVersion = "",
+    [string]$ConfigPath = "",
     [switch]$Interactive,
     [switch]$Background,
     [switch]$UseActive,
@@ -16,6 +17,13 @@ $StderrLog = Join-Path $ProjectRoot "storage\logs\qwen3-llama-server.err.log"
 
 . (Join-Path $ProjectRoot "scripts\runtime_python.ps1")
 $Python = Resolve-AstrbotChatRuntimePython
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Join-Path $ProjectRoot "configs\runtime\qwen3.yaml"
+}
+$RuntimeJson = & $Python (Join-Path $ProjectRoot "scripts\qwen3_runtime_config.py") --config $ConfigPath
+if ($LASTEXITCODE -ne 0) { throw "Could not load shared Qwen3 runtime configuration." }
+$RuntimeConfig = $RuntimeJson | ConvertFrom-Json
 
 $ResolveArgs = @((Join-Path $ProjectRoot "scripts\qwen3_models.py"), "resolve", "--json")
 $PromptForModel = (-not $UseActive) -and ($Interactive -or ((-not $Background) -and [string]::IsNullOrWhiteSpace($Character) -and [string]::IsNullOrWhiteSpace($ModelVersion)))
@@ -75,16 +83,7 @@ if (-not (Test-Path -LiteralPath $LlamaExecutable)) {
 
 $LlamaBinDir = Split-Path $LlamaExecutable -Parent
 $env:Path = "$LlamaBinDir;$env:Path"
-$ServerArgs = @(
-    "--model", $ModelPath,
-    "--host", "127.0.0.1",
-    "--port", "8080",
-    "--ctx-size", "8192",
-    "--n-gpu-layers", "99",
-    "--reasoning", "on",
-    "--reasoning-format", "deepseek",
-    "--reasoning-budget", "1024"
-)
+$ServerArgs = @("--model", $ModelPath) + @($RuntimeConfig.server_args)
 if ($LoraAdapter) {
     $ServerArgs += @("--lora", $LoraAdapter)
 }

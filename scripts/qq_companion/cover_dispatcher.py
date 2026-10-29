@@ -9,13 +9,14 @@ from services.media_api.song_source import NetEaseSource, SongSourceError
 
 class CoverDispatcher:
     def __init__(self, directory, *, broker, stop_models, restore_models, verify_gpu, run_worker,
-                 stopping=lambda: False, source=None, drain_timeout=180):
+                 stopping=lambda: False, source=None, drain_timeout=180, prepare_source=None):
         self.state, self.jobs = MediaState(directory), SongStore(directory)
         self.broker = broker
         self.stop_models, self.restore_models = stop_models, restore_models
         self.verify_gpu, self.run_worker, self.stopping = verify_gpu, run_worker, stopping
         self.source = source or NetEaseSource.from_environment()
         self.drain_timeout = drain_timeout
+        self.prepare_source = prepare_source
 
     def step(self):
         job = self.jobs.next_job()
@@ -42,6 +43,11 @@ class CoverDispatcher:
                 return
             if not 5 <= song["duration_seconds"] <= 600:
                 raise ValueError("song_duration_out_of_range")
+            if self.prepare_source is not None:
+                # CPU/network preparation keeps Qwen online for 403 reselection.
+                self.prepare_source(key)
+                if self.jobs.get(key)["status"] == "canceled":
+                    return
             if job["payload"]["mode"] == "original":
                 self.jobs.update(key, "running")
                 self.run_worker(key)  # CPU download/transcode only; never loads RVC.
@@ -70,6 +76,12 @@ class CoverDispatcher:
                     raise RuntimeError("missing_cover_output")
                 self.jobs.update(key, "completed")
         except Exception as exc:
+            current = self.jobs.get(key)
+            if current["status"] == "awaiting_reselection" or current["error"] == "source_candidates_exhausted":
+                return  # Preserve the worker's explicit 403 recovery outcome.
+            if isinstance(exc, SongSourceError) and exc.code == "source_http_403":
+                self.jobs.reject_download(key, job["song"]["song_id"])
+                return
             self.jobs.update(key, "failed", error=exc.code if isinstance(exc, SongSourceError) else str(exc) if str(exc) in {
                 "song_not_found", "song_duration_out_of_range", "chat_drain_timeout"} else type(exc).__name__)
         finally:

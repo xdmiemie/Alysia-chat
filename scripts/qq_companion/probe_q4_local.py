@@ -53,6 +53,9 @@ def main():
                 return {"file": "base64://" + base64.b64encode(audio).decode()}
 
         class Context:
+            def add_llm_tools(self, *tools):
+                self.tools = tools
+
             async def send_message(self, origin, chain):
                 assert origin == "snowluma:FriendMessage:101"
                 song_order.append("send")
@@ -87,11 +90,13 @@ def main():
 
         async def run():
             plugin = Q1Guard(Context(), {"merge_seconds": 0})
+            plugin.media.agent_store = None  # Fake transport; native dispatch is tested separately.
             initialize(directory / "stickers")
             job_counter = 0
+            committed = False
 
             async def request(path, body=None, **kwargs):
-                nonlocal job_counter
+                nonlocal job_counter, committed
                 requests.append(path)
                 if path == "/v1/audio/transcriptions":
                     assert b"RIFF" in body
@@ -103,6 +108,18 @@ def main():
                     assert events[-1][0] == "event", "Song started before acknowledgement"
                     job_counter += 1
                     return {"status": "queued"}
+                if path == "/v1/music/weapi":
+                    return {"ok": True, "status": "completed", "songs": [
+                        {"song_id": 1, "title": "测试歌", "artists": "歌手", "source_receipt": "a" * 32}]}
+                if path == "/v1/songs/selected":
+                    assert body["song_id"] == 1 and body["source_receipt"] == "a" * 32
+                    job_counter += 1
+                    return {"status": "awaiting_commit"}
+                if "/commit?" in path:
+                    assert events[-1][0] == "event", "Song started before acknowledgement"
+                    committed = True
+                if path.startswith("/v1/songs/") and not committed:
+                    return {"status": "awaiting_commit"}
                 if "/audio?" in path:
                     return audio
                 return {"status": "completed", "has_audio": True, "mode": "cover", "song": {"title": "测试歌"}}
@@ -117,15 +134,22 @@ def main():
                     await plugin.request_paced_reply(e, req)
                     assert json.loads(req.prompt)["input_modality"] == "voice"
                     assert "media_decisions" not in req.system_prompt  # Only body text reaches AI.
-                    raw = json.dumps({"reply": "我听到啦。", "thinking_level": 1, "voice": True,
-                                      "emotion": "happy", "music": None, "sticker": None}, ensure_ascii=False)
-                    history = SimpleNamespace(messages=[Message(role="assistant", content=[TextPart(text=raw)])])
+                    prepared = await plugin.agent_tools.execute(e, "emotion", {"text": "我听到啦。", "emotion": "happy"})
+                    assert prepared["status"] == "prepared"
+                    raw = json.dumps({"reply": "我听到啦。", "thinking_level": 1, "voice": True}, ensure_ascii=False)
+                    history = SimpleNamespace(messages=[])
+                    e.set_extra("qq_agent_approved", True)
+                    e.set_extra("qq_agent_lifecycle", SimpleNamespace(sent=lambda text, **kw:
+                        history.messages.append(Message(role="assistant", content=text))))
                     response = LLMResponse(role="assistant", completion_text=raw)
                     await plugin.unpack_paced_reply(e, history, response)
                     e.set_result(MessageEventResult().message(response.completion_text).set_result_content_type(ResultContentType.LLM_RESULT))
                     await plugin.delay_paced_reply(e)
                     assert isinstance(e.get_result().chain[0], Record)
-                    assert history.messages[-1].content[0].text == "我听到啦。"
+                    assert history.messages == [], "Prepared audio was saved as already sent"
+                    await e.send(e.get_result())
+                    await plugin.finish_paced_reply(e)
+                    assert history.messages[-1].content == "我听到啦。"
                     assert plugin.media.client.state.active() == 0
 
                 # Q4 never routes current images to the text model.
@@ -161,9 +185,14 @@ def main():
                 await plugin.filter_inbound(e)
                 req = ProviderRequest(system_prompt="PERSONA")
                 await plugin.request_paced_reply(e, req)
-                raw = json.dumps({"reply": "等我一会呀～", "thinking_level": 1, "voice": False,
-                    "music": {"mode": "cover", "query": "测试歌", "artist": ""}}, ensure_ascii=False)
-                history = SimpleNamespace(messages=[Message(role="assistant", content=[TextPart(text=raw)])])
+                await plugin.agent_tools.execute(e, "weapi", {"action": "search", "query": "测试歌"})
+                queued = await plugin.agent_tools.execute(e, "musiccover", {"song_id": 1})
+                assert queued["status"] == "queued" and not committed
+                raw = json.dumps({"reply": "等我一会呀～", "thinking_level": 1, "voice": False}, ensure_ascii=False)
+                history = SimpleNamespace(messages=[])
+                e.set_extra("qq_agent_approved", True)
+                e.set_extra("qq_agent_lifecycle", SimpleNamespace(sent=lambda text, **kw:
+                    history.messages.append(Message(role="assistant", content=text))))
                 response = LLMResponse(role="assistant", completion_text=raw)
                 await plugin.unpack_paced_reply(e, history, response)
                 e.set_extra("qq_reply_started_at", time.monotonic() - 100)
@@ -175,8 +204,9 @@ def main():
                 await asyncio.gather(*list(plugin.media.tasks))
                 assert events[before:] == [("event", ["plain"]), ("background", ["record"]), ("background", ["plain"])]
                 assert song_order == ["generate", "send", "send"]
-                assert job_counter == 1
-                plugin.media.start_song(e, e.get_extra("qq_media_decision"))
+                assert job_counter == 1 and committed
+                replay = await plugin.agent_tools.execute(e, "musiccover", {"song_id": 1})
+                assert replay["replayed"] and job_counter == 1
                 assert not plugin.media.tasks, "Duplicate message created a second song task"
 
                 # Completed audio must wait through restoration and recovery

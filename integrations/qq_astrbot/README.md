@@ -1,14 +1,14 @@
 # AstrBot integration
 
-Plugin 0.6.0 adds Q4 voice routing, weapi original playback, whole-song Feiyu covers and low-frequency stickers. See [Q4 operations and local-only acceptance](../../docs/qq_companion/q4.md). All intent decisions come from the same Agent reply; no keyword classifier or song-selection menu is used.
+Plugin 0.7.0 adds a single native tool-loop Agent, at most three semantic completion checks, conversation-version cancellation and durable action/send receipts. See [the current Agent contract and validation](../../docs/qq_companion/agent.md). Media decisions use native `emotion`, `weapi`, `musiccover`, `music` and `sticker` tools; final candidates contain only `reply`, `thinking_level` and `voice`.
 
 The QQ phase plan is in `astrbot-chat项目阶段计划.md`. AstrBot is the intended
 message and Agent owner; SnowLuma provides OneBot v11. `plugin/` contains the
 Q1 persistent inbound guard, Q2 `q2_echo` tool, Q3 scoped routing and permissions,
 and paced QQ text replies. Primary replies send at most three messages in a
 group or six in private chat; remaining sentences are combined into the last
-message. Private replies may add one optional natural follow-up, saved in
-AstrBot's conversation history. Groups do not add optional follow-ups. Only AstrBot's Runner owns
+message. Semantic completion replaces the separate optional private follow-up;
+continuation stays inside the same Runner, with no fabricated user event. Only AstrBot's Runner owns
 QQ history and calls the local Qwen3 provider. The plugin never invokes
 `AstrbotChatCore.process`.
 
@@ -21,7 +21,7 @@ SQLite. See [operations](../../docs/qq_companion/operations.md) for configuratio
 administrator commands, and local acceptance commands. No QQ connection is
 needed for `scripts/qq_companion/probe_q3_local.py`.
 
-All fixed prompts for the current QQ main-reply and private-follow-up path are
+All fixed prompts for the current QQ Agent, completion checks and tools are
 editable in [`configs/qq_companion/prompts.yaml`](../../configs/qq_companion/prompts.yaml),
 with comments describing every section. This includes the active AstrBot
 safety/tool/date blocks and the echo tool descriptions. `prompt_loader.py` reads

@@ -9,6 +9,7 @@ import re
 import sqlite3
 import time
 import unicodedata
+import uuid
 
 from .song_source import NetEaseSource, SongSourceError, classify_search_error
 
@@ -35,8 +36,15 @@ class SongStore:
                                     ("search_results", "'[]'"), ("selection", "'{}'")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT NOT NULL DEFAULT {default}")
+            for column in ("initial_song_id", "retry_revision"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
             db.execute("CREATE TABLE IF NOT EXISTS song_search_attempts (job_id TEXT, attempt INTEGER, "
                        "error TEXT NOT NULL, updated REAL NOT NULL, PRIMARY KEY(job_id,attempt))")
+            db.execute("CREATE TABLE IF NOT EXISTS song_candidates (receipt TEXT PRIMARY KEY, scope TEXT, "
+                       "song_id INTEGER, data TEXT, created REAL)")
+            db.execute("CREATE TABLE IF NOT EXISTS song_download_attempts (job_id TEXT, song_id INTEGER, "
+                       "status TEXT NOT NULL, error TEXT NOT NULL, updated REAL NOT NULL, PRIMARY KEY(job_id,song_id))")
 
     @contextmanager
     def connection(self):
@@ -48,7 +56,8 @@ class SongStore:
         finally:
             db.close()
 
-    def submit(self, request_id: str, scope: str, music: dict, *, user_request="", request_context=None) -> dict:
+    def submit(self, request_id: str, scope: str, music: dict, *, user_request="", request_context=None,
+               selected_song: dict | None = None, await_commit: bool = False, candidates: list[dict] | None = None) -> dict:
         if not re.fullmatch(r"[a-f0-9]{32}", request_id) or not re.fullmatch(
                 r"qq:[0-9]{1,20}:(?:dm|group):[0-9]{1,20}", scope):
             raise ValueError("Invalid song request identity")
@@ -65,6 +74,13 @@ class SongStore:
         if len(context_json.encode("utf-8")) > 24000:
             raise ValueError("Song request context too large")
         payload = json.dumps(music, sort_keys=True, ensure_ascii=False)
+        if selected_song is not None and (type(selected_song.get("song_id")) is not int or selected_song["song_id"] <= 0):
+            raise ValueError("Invalid selected song")
+        candidates = candidates if candidates is not None else ([selected_song] if selected_song else [])
+        if len(candidates) > 200 or len({item["song_id"] for item in candidates}) != len(candidates):
+            raise ValueError("Invalid candidate pool")
+        if selected_song and selected_song["song_id"] not in {item["song_id"] for item in candidates}:
+            raise ValueError("Selected song is not in candidate pool")
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             old = db.execute("SELECT * FROM jobs WHERE id=?", (request_id,)).fetchone()
@@ -72,12 +88,20 @@ class SongStore:
                 if (old["scope"] != scope or old["payload"] != payload or
                         old["user_request"] != user_request or old["request_context"] != context_json):
                     raise ValueError("Conflicting song request")
+                if selected_song is not None and (old["initial_song_id"] or json.loads(old["selection"]).get("song_id")) != selected_song["song_id"]:
+                    raise ValueError("Conflicting selected song")
             else:
                 active = db.execute("SELECT count(*) FROM jobs WHERE status NOT IN ('completed','failed','canceled','needs_clarification')").fetchone()[0]
                 if active >= 3:
                     raise ValueError("Song queue is full")
-                db.execute("INSERT INTO jobs (id,scope,payload,status,song,error,updated,user_request,request_context) "
-                           "VALUES (?,?,?,'queued','{}','',?,?,?)", (request_id, scope, payload, time.time(), user_request, context_json))
+                # A native music tool already chose a concrete candidate. Insert
+                # its selection atomically; the worker must never search/choose again.
+                db.execute("INSERT INTO jobs (id,scope,payload,status,song,error,updated,user_request,request_context,selection,search_results,initial_song_id) "
+                           "VALUES (?,?,?,?,?,'',?,?,?,?,?,?)", (request_id, scope, payload,
+                           ("awaiting_commit" if await_commit else "waiting_gpu") if selected_song else "queued",
+                           json.dumps(selected_song or {}, ensure_ascii=False), time.time(), user_request, context_json,
+                           json.dumps({"song_id": selected_song["song_id"]} if selected_song else {}),
+                           json.dumps(candidates, ensure_ascii=False), selected_song["song_id"] if selected_song else 0))
         return self.get(request_id, scope)
 
     def get(self, job_id: str, scope: str | None = None) -> dict:
@@ -85,6 +109,8 @@ class SongStore:
             row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             history = db.execute("SELECT attempt,error FROM song_search_attempts WHERE job_id=? ORDER BY attempt",
                                  (job_id,)).fetchall() if row else []
+            downloads = db.execute("SELECT song_id,status,error FROM song_download_attempts WHERE job_id=? ORDER BY updated,song_id",
+                                   (job_id,)).fetchall() if row else []
         if not row or (scope is not None and row["scope"] != scope):
             raise KeyError("Song job not found")
         value = dict(row)
@@ -93,10 +119,100 @@ class SongStore:
         for column in ("request_context", "search_results", "selection"):
             value[column] = json.loads(value[column])
         value["search_history"] = [dict(item) for item in history]
+        value["download_attempts"] = [dict(item) for item in downloads]
+        excluded = {item["song_id"] for item in downloads if item["status"] == "forbidden"}
+        value["remaining_candidates"] = [item for item in value["search_results"] if item["song_id"] not in excluded]
         return value
 
+    def candidate_pool(self, receipts: list[str], scope: str) -> list[dict]:
+        candidates = []
+        with self.connection() as db:
+            for receipt in dict.fromkeys(receipts):
+                row = db.execute("SELECT data FROM song_candidates WHERE receipt=? AND scope=? AND created>?",
+                                 (receipt, scope, time.time() - 3600)).fetchone()
+                if row is None:
+                    raise ValueError("Candidate receipt is missing or expired")
+                song = json.loads(row[0])
+                if not any(item["song_id"] == song["song_id"] for item in candidates):
+                    candidates.append(song)
+        return candidates
+
+    def start_download(self, job_id: str, song_id: int):
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status,song FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row or row["status"] not in {"waiting_gpu", "running"} or json.loads(row["song"]).get("song_id") != song_id:
+                raise ValueError("song_selection_changed")
+            attempt = db.execute("SELECT status FROM song_download_attempts WHERE job_id=? AND song_id=?", (job_id, song_id)).fetchone()
+            if attempt and attempt[0] == "forbidden":
+                raise SongSourceError("source_http_403")
+            db.execute("INSERT INTO song_download_attempts VALUES (?,?,'downloading','',?) "
+                       "ON CONFLICT(job_id,song_id) DO UPDATE SET status='downloading',updated=excluded.updated",
+                       (job_id, song_id, time.time()))
+
+    def downloaded(self, job_id: str, song_id: int):
+        with self.connection() as db:
+            db.execute("UPDATE song_download_attempts SET status='downloaded',error='',updated=? WHERE job_id=? AND song_id=?",
+                       (time.time(), job_id, song_id))
+
+    def reject_download(self, job_id: str, song_id: int):
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status,song,search_results FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row or row["status"] in TERMINAL or row["status"] == "awaiting_reselection":
+                return
+            if json.loads(row["song"]).get("song_id") != song_id:
+                raise ValueError("song_selection_changed")
+            db.execute("INSERT INTO song_download_attempts VALUES (?,?,'forbidden','source_http_403',?) "
+                       "ON CONFLICT(job_id,song_id) DO UPDATE SET status='forbidden',error='source_http_403',updated=excluded.updated",
+                       (job_id, song_id, time.time()))
+            failed = {item[0] for item in db.execute("SELECT song_id FROM song_download_attempts WHERE job_id=? AND status='forbidden'", (job_id,))}
+            remains = any(item["song_id"] not in failed for item in json.loads(row["search_results"]))
+            db.execute("UPDATE jobs SET status=?,error=?,retry_revision=retry_revision+1,updated=? WHERE id=?",
+                       ("awaiting_reselection" if remains else "failed",
+                        "source_http_403" if remains else "source_candidates_exhausted", time.time(), job_id))
+
+    def reselect(self, job_id: str, scope: str, song_id: int | None, revision: int, *, selection_error=False):
+        self.get(job_id, scope)
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM jobs WHERE id=? AND scope=?", (job_id, scope)).fetchone()
+            if row["retry_revision"] != revision:
+                raise ValueError("stale_reselection")
+            selection = {"song_id": song_id, "retry_revision": revision}
+            if row["status"] != "awaiting_reselection":
+                if row["status"] != "canceled" and json.loads(row["selection"]) == selection:
+                    return
+                raise ValueError("Song is no longer awaiting reselection")
+            failed = {item[0] for item in db.execute("SELECT song_id FROM song_download_attempts WHERE job_id=? AND status='forbidden'", (job_id,))}
+            song = next((item for item in json.loads(row["search_results"]) if item["song_id"] == song_id and song_id not in failed), None)
+            if song_id is not None and song is None:
+                raise ValueError("selected_candidate_was_eliminated_or_unknown")
+            error = "" if song else ("reselection_model_failed" if selection_error else "no_suitable_remaining_candidate")
+            db.execute("UPDATE jobs SET selection=?,song=?,status=?,error=?,updated=? WHERE id=?",
+                       (json.dumps(selection), json.dumps(song or json.loads(row["song"]), ensure_ascii=False),
+                        "waiting_gpu" if song else "failed", error, time.time(), job_id))
+
+    def remember_candidate(self, scope: str, song: dict) -> str:
+        if not re.fullmatch(r"qq:[0-9]{1,20}:(?:dm|group):[0-9]{1,20}", scope):
+            raise ValueError("Invalid candidate scope")
+        receipt = uuid.uuid4().hex
+        with self.connection() as db:
+            db.execute("DELETE FROM song_candidates WHERE created<?", (time.time() - 3600,))
+            db.execute("INSERT INTO song_candidates VALUES (?,?,?,?,?)",
+                       (receipt, scope, song["song_id"], json.dumps(song, ensure_ascii=False), time.time()))
+        return receipt
+
+    def candidate(self, receipt: str, scope: str, song_id: int) -> dict:
+        with self.connection() as db:
+            row = db.execute("SELECT data FROM song_candidates WHERE receipt=? AND scope=? AND song_id=? AND created>?",
+                             (receipt, scope, song_id, time.time() - 3600)).fetchone()
+        if row is None:
+            raise ValueError("Candidate receipt is missing or expired")
+        return json.loads(row[0])
+
     def update(self, job_id: str, status: str, *, song: dict | None = None, error=""):
-        if status not in TERMINAL | {"queued", "searching", "awaiting_selection", "waiting_gpu", "running"}:
+        if status not in TERMINAL | {"queued", "searching", "awaiting_selection", "awaiting_reselection", "awaiting_commit", "waiting_gpu", "running"}:
             raise ValueError("Invalid song job status")
         with self.connection() as db:
             row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -111,6 +227,12 @@ class SongStore:
     def cancel(self, job_id: str, scope: str):
         self.get(job_id, scope)
         self.update(job_id, "canceled")
+
+    def commit(self, job_id: str, scope: str):
+        self.get(job_id, scope)
+        with self.connection() as db:
+            db.execute("UPDATE jobs SET status='waiting_gpu',updated=? WHERE id=? AND scope=? AND status='awaiting_commit'",
+                       (time.time(), job_id, scope))
 
     def record_candidates(self, job_id: str, candidates: list[dict]):
         if len(candidates) > 20:
@@ -165,7 +287,8 @@ class SongStore:
 
     def recover(self):
         with self.connection() as db:
-            db.execute("UPDATE jobs SET status='queued',error='' WHERE status IN ('searching','running')")
+            db.execute("UPDATE jobs SET status=CASE WHEN selection!='{}' THEN 'waiting_gpu' ELSE 'queued' END,error='' "
+                       "WHERE status IN ('searching','running')")
 
     def output(self, job_id: str) -> Path:
         if not re.fullmatch(r"[a-f0-9]{32}", job_id):
@@ -180,6 +303,8 @@ class SongStore:
                 "search_attempts": job["search_attempts"], "search_error": job["search_error"],
                 "search_history": job["search_history"],
                 "search_results": job["search_results"], "selection": job["selection"],
+                "remaining_candidates": job["remaining_candidates"], "download_attempts": job["download_attempts"],
+                "retry_revision": job["retry_revision"],
                 "has_audio": job["status"] == "completed" and self.output(job_id).is_file()}
 
 
