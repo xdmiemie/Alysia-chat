@@ -1,5 +1,7 @@
 # Q0 dependency lock and license review
 
+Q4 reuses the installed model runtime: requests 2.34.2, pycryptodome 3.23.0, Pillow 10.4.0 and psutil 7.2.2 (pinned in `services/media_api/requirements.txt`); the isolated AstrBot environment already provides psutil 7.1.3. No runtime package upgrade was performed. Feiyu/Applio/audio-separator source, weight and compatibility pins remain those recorded in `qq_companion/stage14a.md`. The matsuko_cover UI was reviewed but is not a new runtime dependency.
+
 Recorded 2026-10-28 (Asia/Hong_Kong). Git SHA or release tag is the source lock; binaries below also have local SHA256. These are local verification values, not upstream published checksums unless explicitly noted. Model weights, audio references, account data and secrets stay outside Git.
 
 | Component | Pinned source / local version | License / boundary | Verification |

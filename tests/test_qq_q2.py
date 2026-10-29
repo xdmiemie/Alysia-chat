@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import wave
+from scripts.qq_companion.probe_q3_local import LocalLoop
 
 import pytest
 from fastapi import HTTPException
@@ -44,6 +45,8 @@ def test_one_runner_provider_and_persona_are_idempotent():
     twice = configure(configure(config, "live-model", "elysia"), "live-model", "elysia")
     assert len(twice["provider"]) == 2
     assert twice["provider"][-1]["model"] == "live-model"
+    assert twice["provider"][-1]["custom_extra_body"]["chat_template_kwargs"]["enable_thinking"] is True
+    assert twice["provider"][-1]["custom_extra_body"]["reasoning_budget_tokens"] > 0
     assert twice["agent_runner"]["config"]["model"]["provider_id"] == "astrbot_chat_qwen3"
     assert twice["agent_runner"]["config"]["persona"]["persona_id"] == "elysia"
 
@@ -76,8 +79,12 @@ def test_media_transcription_contract(monkeypatch):
         wav.setsampwidth(2)
         wav.setframerate(16000)
         wav.writeframes(b"\x00\x00" * 16000)
-    response = run_immediate(route(create_app(), "/v1/audio/transcriptions")(
-        FakeUpload(audio.getvalue(), "sample.wav")))
+    loop = LocalLoop()
+    try:
+        response = loop.run_until_complete(route(create_app(), "/v1/audio/transcriptions")(
+            FakeUpload(audio.getvalue(), "sample.wav")))
+    finally:
+        loop.close()
     assert response == {"text": "你好", "language": "zh", "duration_ms": 1000}
 
 

@@ -14,6 +14,7 @@ REQUIRED_PROMPTS = frozenset({
     "qq_context", "reply_output", "followup_system", "followup_user",
     "astrbot_safety", "astrbot_tool_call", "datetime_reminder",
     "echo_description", "echo_value_description",
+    "media_decisions", "music_result", "music_selection", "music_clarification",
 })
 
 

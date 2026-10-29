@@ -78,6 +78,23 @@ performed for Q3. The new version installs at the next normal managed startup.
 Stage Q3's implementation and local acceptance are complete. This record does
 not upgrade Q1's outstanding live-count gate or claim new live QQ evidence.
 
+### Q3 local revalidation (2026-10-28)
+
+After rereading the complete phase plan and reviewing the Q3 routing, context,
+permission enforcement and real AstrBot local probe, the current plugin 0.5.1
+passed the following checks again:
+
+- Q0–Q3, reply pacing and editable prompts: 50 tests passed.
+- Stage 5/6/10 and both training pipelines: 33 regression tests passed.
+- Pinned AstrBot integration probe: `Q3_LOCAL_PASS`; local fake transport only,
+  zero QQ connections and zero model calls. The invalid-prompt error is an
+  expected fault-injection check.
+
+No Q3 code gap requiring a change was found. No live service was started or
+restarted, and no QQ message was sent. The user's newly confirmed Q4 behavior
+is recorded in the phase plan as implementation requirements, not completed
+Q4 functionality.
+
 ## Editable prompt follow-up (0.5.1)
 
 On 2026-10-28, the current QQ main-reply and private-continuation instructions
@@ -94,3 +111,197 @@ affected inference. The probe's configuration-error log is expected for that
 fault-injection check. No QQ connection, outgoing QQ message or model call was
 used. Normal managed startup installs the new loader with plugin 0.5.1; later
 prompt-only edits need no restart.
+
+## Q4 acceptance record — local gate passed
+
+Date: 2026-10-28 (Asia/Hong_Kong). Plugin 0.6.0. The user confirmed Q4 scope,
+persona-controlled voice, model-only intent judgment, original playback unless
+AI singing is requested, whole-song covers, and low-frequency stickers. The
+user confirmed normal weapi availability as the source boundary. No QQ test
+message was sent and no QQ component was started for these checks.
+
+| Gate | Result | Evidence |
+|---|---|---|
+| Regression | Pass | 107 targeted Q0–Q4, pacing/prompt, Stage 5/6/10, training and SenseVoice tests; one upstream ASGI test-client deprecation warning |
+| Pinned AstrBot integration | Pass locally | `Q3_LOCAL_PASS` and `Q4_LOCAL_PASS`; real event/message classes, local transport/inference, 20 voice inputs, 20 voice outputs, 20 sticker sends; correct acknowledgement/job/result/AI-line order and recipient; dedup, long-reply/TTS fallback and image exclusion |
+| Real weapi | Pass | `Q4_SOURCE_PASS`: ten successful searches, five nonexistent-song checks, three complete downloads; trials and incomplete files rejected |
+| Real Feiyu whole-song conversion | Pass | `Q4_AUDIO_PASS`: 雨爱 260.480→260.44 s, 年轮 274.530→274.48 s, 小幸运 263.820→263.78 s; separation/RVC/mix/24 kHz transport WAV; exact selected model/index hashes verified |
+| Real Qwen intent | Pass | `Q4_MODEL_PASS`: 14/14 cases, including original/cover/negative/ambiguous requests and persona voice rules; prompt clarification excludes requested excerpts from the extracted work title |
+| Real ASR/TTS API | Pass | Production-local supervisor mode ran SenseVoice 20/20 and Bailu TTS 20/20, with token-authenticated facade and normalized WAV |
+| Real GPU unload and restore | Pass | `Q4_STACK_PASS`: actual production callbacks drained and stopped Qwen/ASR/TTS, verified 14564 MiB free, converted a whole song, restored all four services and passed real Qwen and TTS requests; no AstrBot/SnowLuma started |
+| Failure/cancel/recovery | Pass locally | Queued jobs survive restart; stopped groups cannot receive stale results; duplicate requests cannot start duplicate tasks; uncertain sends do not auto-repeat; drain timeout does not kill inference; worker/VRAM/stop failures restore; restoration failure keeps admission closed |
+
+Reports and generated audio are ignored local artifacts under
+`storage/temporary/q4-{source,audio,model,stack}-acceptance/`. Source/audio/model
+probes used a dedicated Broker owner. The final stack probe used disposable
+state and the actual production stop/worker/restore callbacks. Every test-owned
+process tree was stopped after verification.
+
+Before GPU checks, host-level inspection found seven coordinated companion
+service trees left from the 17:55–17:56 run after their supervisor exited.
+Verified orphan cleanup restored free VRAM from approximately 2.8 GiB to
+14.5 GiB; NTQQ was retained. The cleanup command now requires an orphan cohort
+including AstrBot and Media API and excludes standalone local chat and training.
+
+Q4 implementation and the user-requested local acceptance are complete.
+Actual QQ client reception/playback, Q1's outstanding live counts, and Q7 visual
+recognition are not claimed by this record. Operational details and rerun
+commands are in [q4.md](q4.md). Normal next startup installs plugin 0.6.0.
+
+### Bounded search retry follow-up (2026-10-28)
+
+Backend song selection now makes at most three attempts per persisted job,
+waiting one and two seconds after transient failures. Timeouts, interrupted
+connections/responses and HTTP/business codes 429/500/502/503/504 are retryable.
+No-match, unavailable/trial audio, authentication/permission, redirects, TLS
+and malformed-response failures are final. These attempts do not retry GPU
+synthesis or send a result twice.
+
+Attempt reservations, safe failure codes and per-attempt history survive a
+restart. Old song databases migrate without deleting jobs. Recovered synthesis
+reuses its selected song, while the download stage still rechecks availability.
+Terminal failures remain terminal when the same request ID is resubmitted.
+
+The local Q0–Q4/pacing/prompt/search-retry suite passed 94 tests. Checks include
+eventual success, exact retry bounds/backoff, HTTP and business error classes,
+cancel during backoff, restart budgets, schema migration and no GPU work on
+search failure. The pinned AstrBot Q4 integration probe again returned
+`Q4_LOCAL_PASS`. No QQ connection, outgoing QQ message, live weapi request,
+GPU model or service restart was used for this follow-up.
+
+### Song reply timing follow-up (2026-10-28)
+
+The pre-song prompt now guides intent and tone without offering a waiting-line
+example. Completed jobs wait for model readiness, including while the gate is
+`recovering`. The same model prepares the result reply before either message is
+sent; one GPU activity lease spans generation and the consecutive audio/text
+sends. At this point model-generation failures retained the fallback after
+admission; the 2026-10-29 result-reply repair below supersedes that behavior.
+
+The local regression suite passed 94 tests. The pinned AstrBot integration probe
+returned `Q4_LOCAL_PASS`, additionally checking restoration/recovery waiting,
+no media delivery during generation, a pending delivery surviving interruption,
+and retention of the activity lease through both sends when another cover starts
+draining. Transport and inference were local fakes; no QQ or model/service
+restart was used. These checks verify ordering, not new real-model wording.
+
+### Ctrl+C shutdown repair (2026-10-28)
+
+Host inspection after the reported Ctrl+C found the supervisor already gone,
+with its registry and stop flag still present. Qwen, SenseVoice, Media API,
+AstrBot and SnowLuma trees remained running; GPU memory used was 11237 MiB.
+The original terminal traceback was unavailable, so the precise interruption
+that ended this cleanup cannot be uniquely reconstructed. Code inspection found
+that repeated interrupts or an individual process error could abort cleanup,
+and a dead supervisor had no OS-enforced child lifetime guarantee.
+
+Cleanup now ignores repeated interrupts, attempts every service despite a
+disappearing/inaccessible child, retains unresolved registry entries and writes
+registry updates atomically. New services enter kill-on-close Windows Job
+Objects before their launchers resume. Descendants remain owned after launcher
+exit and terminate automatically if the supervisor dies. GPU unload and service
+restart use these same owners.
+
+Seven shutdown tests passed, including real local processes with PowerShell
+launchers, startup interruption, repeated console control events, launcher exit,
+forced supervisor termination, transient process errors and registry retention.
+An independent sentinel process survived every shutdown test. Console delivery
+uses CTRL_BREAK_EVENT; the SIGINT handler is also checked directly. The broader
+local Q0–Q4/search/pacing/prompt/shutdown regression passed 101 tests. No test
+started QQ services, made a QQ connection or loaded an actual model.
+
+The old registry's PID/creation-time-verified trees were stopped on the host.
+Final host verification: no matching project model/service process, zero
+listeners across the nine runtime ports, no supervisor registry, GPU memory
+used 1655 MiB/free 14323 MiB. The existing main NTQQ process remained running.
+
+### Song result reply format and provenance (2026-10-29)
+
+The user reported a fixed-looking message after a completed cover. The installed
+plugin matched the source. SnowLuma recorded the exact old success fallback at
+00:49:41, after the model restore checks completed. A local replay of that stored
+persona and job reproduced a natural plain-text answer with a sticker tag;
+`parse_followup` rejected it. The old code silently replaced invalid JSON with
+a canned success message. No original model response was recorded for that
+historical call, so the replay is evidence of the failure path rather than a
+recovery of the original output.
+
+The result task now explicitly distinguishes persona text from JSON transport,
+requires a nonempty result notification and repeats the task in the final user
+turn before the job data. Success templates were removed. Generation/validation
+gets at most three calls per delivery run, waiting 1 and 2 seconds between calls;
+each provider call has one request attempt and a 45-second caller deadline.
+Exhaustion leaves audio and delivery pending for startup recovery, without
+sending music alone, synthesizing it again or pretending a fixed line came from
+the model. Other terminal API failure notices remain deterministic error text.
+
+The local `song_reply_attempts` table stores each generated/rejected attempt,
+bounded raw response, parsed text and safe error type. This allows source and
+delivery state to be checked independently. A legacy-schema migration check
+confirms pending deliveries survive creation of the audit table.
+
+`Q4_RESULT_PASS`: five real local Qwen result replies through the pinned
+AstrBot `Context.llm_generate` and actual OpenAI-compatible Provider, covering
+two cover successes, original audio, link-only and failure notifications. All
+five produced valid nonempty JSON on their first call. Report and raw replies:
+`storage/temporary/q4-result-acceptance/report.json` (ignored local data).
+`Q4_LOCAL_PASS` additionally checks rejected plain text/sticker output, null,
+eventual valid generation, exact three-call exhaustion, audit contents, no canned
+success send and later pending recovery without duplicate media. Its expected
+warning/error logs are injected test failures.
+
+The regression suite passed 102 tests. No acceptance test sent QQ messages,
+connected a test QQ transport, restarted services or repeated cover synthesis.
+Source changes are installed on the next normal stack startup; the already
+running plugin was not reloaded during this investigation.
+
+### Thinking and semantic song selection (2026-10-29)
+
+Qwen launch defaults now enable thinking, separate reasoning from visible
+content and cap reasoning at 1024 tokens. The AstrBot provider configuration
+also sets `chat_template_kwargs.enable_thinking=true` and a positive reasoning
+budget. The current local JSON configuration was backed up and updated without
+restarting the running services. A normal next stop/start installs the new
+plugin/API and applies the launch defaults. Development requests explicitly
+enabled thinking on the existing local model rather than starting another one.
+
+Production search now saves up to twenty candidates before selecting anything.
+Each job retains the user request and bounded same-session context. The same
+AstrBot Provider receives title, artists, album and aliases/subtitles, then
+returns a candidate ID or null. The backend only checks candidate membership;
+it no longer automatically selects by exact title, duration or first playable
+result. Selection happens while the conversation model is loaded, before the
+GPU drain/unload/cover transition. Candidate and chosen-song state survive
+restart. Empty search or null selection becomes terminal `needs_clarification`,
+freeing the queue slot and requesting an AI-written open question for the
+accurate name through `music_clarification`. No example or fixed question is
+provided. Generation errors retain bounded retries and pending delivery.
+
+`Q4_SELECTION_PASS`: ten real thinking calls/cases through the pinned AstrBot
+Context/Provider path: seven version selections (synthetic title variants,
+actual artist/album/alias matches, unavailable requested original and a missing
+version), two cover intent/title extractions and one clarification. All final
+cases returned valid output and nonempty reasoning; only reasoning lengths,
+not reasoning text, are stored in selection audit records. The originally
+suspected missing 司凤 match was a test-expectation error: three real candidates
+carry 司凤版 in their aliases. Final fixtures account for that metadata.
+Report: `storage/temporary/q4-selection-acceptance/report.json`.
+
+`THINKING_STARTUP_PASS`: real normal chat, structured tool call and tool-result
+follow-up passed with thinking enabled and larger output budgets. The startup
+and restoration probes now require final content, avoiding acceptance of only
+a reasoning message. The local regression suite passed 117 tests. Updated
+`Q3_LOCAL_PASS`/`Q4_LOCAL_PASS` cover routing/privacy plus full local
+search → AI selection → worker → restored model reply ordering, no-match/null
+clarification, candidate scope checks, late cancellation, legacy migration and
+no replacement of unavailable requested versions with playable remixes. Source
+and worker in these integration probes are local stand-ins; no QQ message was
+sent, no QQ test transport was connected, and no real cover was repeated.
+
+The old source acceptance report saved search outcomes and chosen download
+records, not complete candidate lists. As requested, weapi was queried again
+for 雨爱、奇迹再现、年轮、叹云兮, twenty results each, without downloading audio.
+All eighty candidates, including aliases/subtitles, artist, album, duration,
+availability and links, are saved in ignored local files:
+`storage/temporary/song-search-results/{results.json,results.md}`.
+The search time recorded in the export is 2026-10-29 01:05 (Asia/Hong_Kong).

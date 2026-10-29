@@ -41,6 +41,8 @@ def create_app(recognizer: SenseVoiceRecognizer | None = None):
             return current.transcribe(audio_path).to_dict()
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            audio_path.unlink(missing_ok=True)
 
     return app
 

@@ -93,3 +93,9 @@ class MemoryContext:
     def filter_memories(scope: str, items: list[dict]) -> list[dict]:
         """Q5 retrieval boundary: reject unscoped and foreign memories first."""
         return [item for item in items if item.get("owner_key") == scope and not item.get("deleted_at")]
+
+    def replace_text(self, scope: str, message_id: str, text: str):
+        for message in reversed(self._windows.get(scope, [])):
+            if message_id in message.message_ids:
+                message.text = text[:self.token_budget]
+                return

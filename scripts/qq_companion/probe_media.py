@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import os
 from pathlib import Path
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -30,7 +31,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.count < 1 or args.count > 20:
         parser.error("count must be 1..20")
-    token = (ROOT / "storage/qq_companion/media_token").read_text(encoding="ascii").strip()
+    token = os.environ.get("QQ_COMPANION_MEDIA_TOKEN") or (ROOT / "storage/qq_companion/media_token").read_text(encoding="ascii").strip()
     status, health_bytes = request("/health", token)
     health = json.loads(health_bytes)
     if status != 200 or not health["asr"] or not health["tts"]:

@@ -52,13 +52,13 @@ def probe() -> str:
         raise RuntimeError(f"Expected one llama-server model, found {len(ids)}")
     model_id = ids[0]
     chat = call("/chat/completions", {"model": model_id, "messages": [{"role": "user", "content": "Reply with OK."}],
-                                      "temperature": 0, "max_tokens": 32})
-    if not chat.get("choices") or not chat["choices"][0].get("message"):
+                                      "temperature": 0, "max_tokens": 1536})
+    if not chat.get("choices") or not chat["choices"][0].get("message", {}).get("content"):
         raise RuntimeError("llama-server chat completion failed")
     tool = {"type": "function", "function": {"name": "q2_echo", "description": "Echo a short value", "parameters": {
         "type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]}}}
     result = call("/chat/completions", {"model": model_id, "messages": [{"role": "user", "content": "Call q2_echo with value test."}],
-                                         "tools": [tool], "tool_choice": "required", "temperature": 0, "max_tokens": 256})
+                                         "tools": [tool], "tool_choice": "required", "temperature": 0, "max_tokens": 2048})
     calls = result.get("choices", [{}])[0].get("message", {}).get("tool_calls", [])
     if not calls or calls[0].get("function", {}).get("name") != "q2_echo":
         detail = json.dumps(result.get("choices", [{}])[0].get("message", {}), ensure_ascii=False)[:1200]
@@ -73,8 +73,8 @@ def probe() -> str:
         {"role": "user", "content": "Call q2_echo with value test."},
         result["choices"][0]["message"],
         {"role": "tool", "tool_call_id": calls[0]["id"], "content": "test"},
-    ], "temperature": 0, "max_tokens": 64})
-    if not followup.get("choices") or not followup["choices"][0].get("message"):
+    ], "temperature": 0, "max_tokens": 1536})
+    if not followup.get("choices") or not followup["choices"][0].get("message", {}).get("content"):
         raise RuntimeError("llama-server tool follow-up failed")
     return model_id
 
@@ -83,7 +83,9 @@ def configure(astrbot: dict, model_id: str, character_id: str) -> dict:
     providers = [p for p in astrbot.get("provider", []) if p.get("id") != PROVIDER_ID]
     providers.append({"id": PROVIDER_ID, "provider": "openai", "type": "openai_chat_completion",
                       "provider_type": "chat_completion", "enable": True, "key": ["local"],
-                      "api_base": BASE, "model": model_id, "timeout": 150, "proxy": "", "custom_headers": {}})
+                      "api_base": BASE, "model": model_id, "timeout": 150, "proxy": "", "custom_headers": {},
+                      "custom_extra_body": {"chat_template_kwargs": {"enable_thinking": True},
+                                            "reasoning_budget_tokens": 1024}})
     astrbot["provider"] = providers
     runner = astrbot.setdefault("agent_runner", {}).setdefault("config", {})
     runner.setdefault("model", {})["provider_id"] = PROVIDER_ID

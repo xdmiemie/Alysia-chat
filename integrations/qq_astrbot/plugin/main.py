@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
@@ -18,6 +18,8 @@ from astrbot.core.message.components import At, Image, Plain, Record, Reply
 from astrbot.core.message.message_event_result import MessageChain
 
 from .guard import InboundGuard
+from .media_router import MediaRouter
+from .media_decision import MediaDecision, parse_media
 from .memory_context import ContextMessage, MemoryContext
 from .message_router import Incoming, MessageRouter
 from .permissions import PermissionPolicy
@@ -60,6 +62,11 @@ class Q1Guard(star.Star):
         self.latest_inbound: dict[str, int] = {}
         self.last_followup_at: dict[str, float] = {}
         self.group_sizes: dict[tuple[str, str], tuple[float, int | None]] = {}
+        self.media = MediaRouter(context, state_dir, character_id=os.environ.get("ASTRBOT_CHAT_CHARACTER_ID", "elysia"))
+        self.media.active_group = lambda scope, generation: (
+            self.router.is_active(scope) and self.router.generation(scope) == generation)
+        self.media.record_group_result = lambda scope, key, text: self.router.context.add(scope, ContextMessage(
+            scope.split(":")[1], "bot", text, ["song:" + key], False, None, time.time(), "assistant"))
 
     async def _group_size(self, event: AstrMessageEvent) -> int | None:
         group = getattr(event.message_obj, "group", None)
@@ -93,6 +100,8 @@ class Q1Guard(star.Star):
     async def filter_inbound(self, event: AstrMessageEvent):
         if event.get_platform_name() != "aiocqhttp":
             return
+        self.media.resume()
+        event.set_extra("qq_transport_origin", event.unified_msg_origin)
         event.set_extra("qq_reply_started_at", time.monotonic())
         message = event.message_obj
         chain = event.get_messages()
@@ -174,6 +183,18 @@ class Q1Guard(star.Star):
         if not self._event_active(event):
             event.stop_event()
             return
+        record = next((p for p in chain if isinstance(p, Record)), None)
+        if record is not None:
+            try:
+                transcript = await self.media.input_voice(event, record)
+            except Exception:
+                event.stop_event()
+                await event.send(MessageChain().message("这段语音我暂时没听清，可以再说一次吗？"))
+                return
+            incoming = replace(incoming, text=transcript)
+            event.set_extra("qq_incoming", incoming)
+            event.set_extra("qq_voice_input", True)
+            self.router.context.replace_text(scope, incoming.message_id, transcript)
         event.message_str = self.router.context.text_for(scope, incoming.message_id, incoming.text)
 
     def _event_active(self, event: AstrMessageEvent) -> bool:
@@ -198,7 +219,21 @@ class Q1Guard(star.Star):
                 self.logger.error("%s", exc)
                 return
             scope = event.get_extra("qq_scope")
+            # Atomic admission with supervisor DRAINING; one lease per tool loop.
+            if not event.get_extra("qq_gpu_lease"):
+                deadline = time.monotonic() + 1800
+                while not (lease := self.media.client.state.enter()):
+                    if time.monotonic() >= deadline or not self._event_active(event):
+                        event.stop_event()
+                        return
+                    await asyncio.sleep(0.25)
+                event.set_extra("qq_gpu_lease", lease)
             req.session_id = scope
+            # Image recognition belongs to Q7's gated visual worker. Never
+            # forward images directly to the text model during Q4.
+            req.image_urls = []
+            req.extra_user_content_parts = [part for part in req.extra_user_content_parts
+                                           if getattr(part, "type", None) != "image_url"]
             if incoming.group_id:
                 # Rebuild group input solely from this group's TTL window.
                 # No legacy conversation (or unrelated plugin context) enters it.
@@ -206,7 +241,13 @@ class Q1Guard(star.Star):
             current = asdict(incoming)
             current.pop("is_group_admin")
             current["text"] = self.router.context.text_for(scope, incoming.message_id, incoming.text)
+            music_context = json.loads(self.router.context.render(scope))[-8:]
+            while music_context and len(json.dumps(music_context, ensure_ascii=False).encode("utf-8")) > 6000:
+                music_context.pop(0)
+            event.set_extra("qq_music_context", music_context)
             req.prompt = json.dumps({"session_id": scope, "current_message": current,
+                                     "input_modality": "voice" if event.get_extra("qq_voice_input") else "text",
+                                     "image_understanding_available": False,
                                      "recent_messages": json.loads(self.router.context.render(scope))
                                      if incoming.group_id else []}, ensure_ascii=False)
             req.func_tool = self.permissions.restrict_tools(
@@ -219,16 +260,20 @@ class Q1Guard(star.Star):
             })
             replace_datetime_reminders(req.extra_user_content_parts, prompts)
             event.set_extra("qq_persona_prompt", original_base)
-            req.system_prompt = "\n".join((base, prompts["qq_context"], prompts["reply_output"]))
+            req.system_prompt = "\n".join((base, prompts["qq_context"], prompts["reply_output"], prompts["media_decisions"]))
 
     @filter.on_agent_done()
     async def unpack_paced_reply(self, event: AstrMessageEvent, run_context, response) -> None:
+        self.media.client.state.leave(event.get_extra("qq_gpu_lease"))
+        event.set_extra("qq_gpu_lease", None)
         if (event.get_platform_name() != "aiocqhttp" or
                 event.get_extra("qq_reply_started_at") is None or
                 response is None or response.role != "assistant" or not response.completion_text):
             return
         original = response.completion_text
-        reply, level, _ = parse_reply(original)
+        reply, level, valid = parse_reply(original)
+        decision = parse_media(original, voice_input=event.get_extra("qq_voice_input", False)) if valid else MediaDecision()
+        event.set_extra("qq_media_decision", decision)
         response.completion_text = reply
         event.set_extra("qq_thinking_level", level)
         event.set_extra("qq_primary_reply", reply)
@@ -260,6 +305,18 @@ class Q1Guard(star.Star):
         reply = "".join(part.text for part in result.chain if isinstance(part, Plain))
         if not reply:
             return
+        decision = event.get_extra("qq_media_decision")
+        if decision and decision.voice:
+            chains = await self.media.voice_chains(reply, decision.emotion, group=bool(event.get_group_id()))
+            if chains:
+                result.chain = chains[0].chain
+                event.set_extra("qq_voice_chains", chains[1:])
+                event.set_extra("qq_reply_ready", True)
+                event.set_extra("qq_reply_delayed", True)
+                if not self._event_active(event):
+                    result.chain = []
+                    event.stop_event()
+                return
         if all(isinstance(part, Plain) for part in result.chain):
             sentences = split_sentences(reply)
             limit = 3 if event.get_group_id() else 6
@@ -289,6 +346,13 @@ class Q1Guard(star.Star):
         started_at = event.get_extra("qq_reply_started_at")
         level = event.get_extra("qq_thinking_level")
         cumulative = event.get_result().get_plain_text()
+        for chain in event.get_extra("qq_voice_chains", []):
+            if not self._event_active(event):
+                return
+            try:
+                await event.send(chain)
+            except Exception:
+                return
         for sentence in event.get_extra("qq_remaining_sentences", []):
             cumulative += sentence
             wait = remaining_seconds(cumulative, level, started_at)
@@ -306,6 +370,15 @@ class Q1Guard(star.Star):
             self.router.context.add(incoming.scope, ContextMessage(
                 incoming.bot_uin, "bot", event.get_extra("qq_primary_reply", ""),
                 ["assistant:" + incoming.message_id], False, incoming.message_id, time.time(), "assistant"))
+        decision = event.get_extra("qq_media_decision")
+        if decision and self._event_active(event):
+            try:
+                await self.media.sticker(event, decision.sticker)
+            except Exception:
+                pass
+            self.media.start_song(event, decision)
+            if decision.music:
+                return
         await self._maybe_followup(event)
 
     async def _maybe_followup(self, event: AstrMessageEvent) -> None:
@@ -338,17 +411,18 @@ class Q1Guard(star.Star):
         })
         started_at = time.monotonic()
         try:
-            response = await asyncio.wait_for(
-                self.context.llm_generate(
+            async with self.media.client.admission():
+                response = await asyncio.wait_for(
+                    self.context.llm_generate(
                     chat_provider_id="astrbot_chat_qwen3",
                     system_prompt=base + "\n" + prompts["followup_system"],
                     contexts=contexts,
                     max_tokens=160,
                     temperature=0.5,
                     request_max_retries=1,
-                ),
-                timeout=25,
-            )
+                    ),
+                    timeout=25,
+                )
         except Exception as exc:
             self.logger.warning("QQ follow-up decision failed: %s", type(exc).__name__)
             return
@@ -403,6 +477,7 @@ class Q1Guard(star.Star):
         return f"character_id={character_id}; echo={value[:80]}"
 
     async def terminate(self):
+        await self.media.close()
         self.guard.close()
         self.router.close()
         self.permissions.close()

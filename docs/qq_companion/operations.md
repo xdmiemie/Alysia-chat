@@ -1,4 +1,6 @@
-# Q0–Q3 operations (Windows 11)
+# Q0–Q4 operations (Windows 11)
+
+Q4 voice, music, whole-song cover, GPU switching and local acceptance are documented in [q4.md](q4.md). Normal startup now includes TTS; `-WithoutTTS` explicitly disables it. All Q4 development tests use local transport instead of QQ.
 
 ## Install and configure
 
@@ -9,7 +11,13 @@
 
 ## Start and stop
 
-`scripts/qq_companion/start_all.ps1 -NoModels` pairs the local OneBot token, installs the guard, then starts the Q1 OneBot protocol and `/q1ping` test. Omit `-NoModels` to reserve the GPU with the Q2 Broker, start Qwen3 and SenseVoice, probe Qwen3 chat/tool calling, discover its live model ID, sync the current role prompt into AstrBot, and bind AstrBot's sole Runner to that provider. Add `-WithTTS` to also start the existing GPT-SoVITS upstream and wrapper. The authenticated media facade then listens on `127.0.0.1:8765`. It proxies ASR at 5001 and TTS at 5002 without loading another model. TTS is ready for Q4 QQ voice routing; a failed TTS upstream does not block text chat. The script does not run the old local Agent or force NTQQ login. SnowLuma attaches to the already logged-in client.
+Qwen now starts with thinking enabled and a 1024-token reasoning budget. The
+provider also requests `enable_thinking=true`; reasoning is separated from
+visible replies. Existing running processes need a normal stop/start to load
+the new launch arguments, plugin and Media API. Configuration writes are backed
+up; development probes use request-level thinking and never send QQ messages.
+
+`scripts/qq_companion/start_all.ps1 -NoModels` pairs the local OneBot token, installs the guard, then starts the Q1 OneBot protocol and `/q1ping` test. Normal startup reserves the GPU with the Broker, starts Qwen3, SenseVoice, GPT-SoVITS and its wrapper, probes Qwen3 chat/tool calling, discovers its model ID, syncs the role prompt, and binds AstrBot's sole Runner to that provider. `-WithoutTTS` explicitly disables TTS; `-WithTTS` remains compatible. The authenticated facade at `127.0.0.1:8765` proxies ASR at 5001 and TTS at 5002 without loading another model. Q4 routes voice messages through this facade; TTS failure falls back to text. The script does not run the old local Agent or force NTQQ login. SnowLuma attaches to the already logged-in client.
 
 The ignored `storage/qq_companion/media_token` is generated once. Use its value only in a local `Authorization: Bearer …` header; keep it out of chat, logs and tracked configuration. `GET /health`, `GET /v1/characters`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech`, and `GET /v1/jobs/{id}` require that token. Transcription accepts at most 12 MiB and 60 seconds of WAV or Ogg Opus; speech accepts the active `character_id`, a configured emotion, and WAV output. Model activation and training are operator-only CLI actions; the QQ Agent cannot invoke them through this API.
 
@@ -19,7 +27,7 @@ After the last sentence in private chat, one extra call to the same local Qwen3 
 
 ## Editable QQ prompts
 
-Plugin 0.5.1 reads the single UTF-8 file
+Plugin 0.6.0 reads the single UTF-8 file
 [`configs/qq_companion/prompts.yaml`](../../configs/qq_companion/prompts.yaml)
 on each main-reply or private-follow-up request. Each section has Chinese
 comments explaining purpose, trigger and editing constraints. YAML comments are
@@ -57,7 +65,9 @@ After a stopped-stack change to the active Qwen3 manifest or role prompt, the ne
 
 For a registered model change, keep the QQ stack stopped and run `runtime_env/python.exe -m scripts.qq_companion.model_activation activate qwen3 elysia <registered-model-id>` (or `gpt_sovits` for speech). The manager snapshots the active and registry manifests in ignored `storage/qq_companion/model_backups`, activates the registered model, runs a fixed Qwen chat/tool or GPT-SoVITS WAV smoke check, and restores the old manifests on failure. On success it prints a job ID; `runtime_env/python.exe -m scripts.qq_companion.model_activation rollback <job-id>` restores that snapshot only while the activated model is still current. Restart the QQ stack afterward to resync AstrBot's model ID and persona.
 
-Keep the starting terminal open. Ctrl+C calls the managed shutdown. From a second terminal, `scripts/qq_companion/stop_all.ps1` also stops its registered child trees. Both leave NTQQ running. Check ignored logs in `storage/qq_companion/logs` if a process exits or a port is occupied. A stale registry does not authorize stopping a reused PID.
+Keep the starting terminal open. Ctrl+C requests shutdown; repeated interrupts are ignored during cleanup. Each managed service starts suspended, enters a Windows Job Object with `KILL_ON_JOB_CLOSE`, then resumes. Descendants remain owned even if a PowerShell launcher exits; Windows also closes these service trees if the supervisor is forcibly terminated. This uses the [Windows job ownership mechanism](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+From a second terminal, `scripts/qq_companion/stop_all.ps1` stops registered child trees. A disappearing or inaccessible child does not skip the remaining services. Any service that still cannot exit remains in the registry for a later stop attempt, and registry updates use atomic replacement. Both stop paths leave the independently running NTQQ client alone. Check ignored logs in `storage/qq_companion/logs` if a process exits or a port is occupied. A stale registry does not authorize stopping a reused PID.
 
 ## Q1 live acceptance
 

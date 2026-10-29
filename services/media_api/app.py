@@ -6,6 +6,7 @@ the QQ supervisor, so failure of speech synthesis leaves text chat available.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -21,6 +22,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from runtime.gpt_sovits.types import SpeechRequest
+from integrations.qq_astrbot.plugin.media_state import MediaState
+from .songs import SongStore
 
 ROOT = Path(__file__).resolve().parents[2]
 MAX_UPLOAD = 12 * 1024 * 1024
@@ -39,6 +42,22 @@ class SpeechPayload(BaseModel):
     format: str = "wav"
 
 
+class SongPayload(BaseModel):
+    request_id: str = Field(min_length=32, max_length=32)
+    scope: str = Field(max_length=80)
+    music: dict
+    user_request: str = Field(default="", max_length=2000)
+    request_context: list = Field(default_factory=list, max_length=20)
+
+
+class SongSelectionPayload(BaseModel):
+    song_id: int | None = Field(strict=True)
+
+
+def state_dir() -> Path:
+    return Path(os.environ.get("ASTRBOT_CHAT_STATE_DIR", str(ROOT / "storage/qq_companion")))
+
+
 def _token(authorization: str | None = Header(default=None)) -> None:
     import hmac
 
@@ -53,6 +72,10 @@ def _token(authorization: str | None = Header(default=None)) -> None:
 def _upstream(path: str, *, body: bytes | None = None, content_type: str | None = None) -> bytes:
     headers = {"Content-Type": content_type} if content_type else {}
     request = Request(path, data=body, headers=headers, method="POST" if body is not None else "GET")
+    state = MediaState(state_dir())
+    lease = state.enter()
+    if lease is None:
+        raise HTTPException(503, "GPU is reserved for an exclusive job")
     try:
         with MEDIA_LOCK, LOCAL_OPENER.open(request, timeout=130) as response:
             return response.read()
@@ -60,6 +83,8 @@ def _upstream(path: str, *, body: bytes | None = None, content_type: str | None 
         raise HTTPException(502, f"Upstream returned HTTP {exc.code}") from exc
     except (URLError, TimeoutError) as exc:
         raise HTTPException(503, "Media upstream is unavailable") from exc
+    finally:
+        state.leave(lease)
 
 
 def _available(url: str) -> bool:
@@ -84,16 +109,24 @@ def _wav_duration(data: bytes) -> int:
 
 def _as_wav(data: bytes, filename: str) -> bytes:
     if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
-        return data
-    if not (data.startswith(b"OggS") and Path(filename).suffix.lower() in (".opus", ".ogg")):
-        raise ValueError("Only WAV or Ogg Opus audio is supported")
+        import io
+        try:
+            with wave.open(io.BytesIO(data), "rb") as wav:
+                if wav.getnchannels() == 1 and wav.getframerate() == 16000 and wav.getsampwidth() == 2:
+                    return data
+        except (wave.Error, EOFError) as exc:
+            raise ValueError("Invalid WAV audio") from exc
+    # OneBot's trusted get_record result may contain a codec/container different
+    # from its filename. FFmpeg probes bounded bytes, never a chat-supplied path.
+    if not data.startswith((b"RIFF", b"OggS", b"ID3", b"\xff\xfb", b"#!AMR", b"\x02#!SILK", b"#!SILK")):
+        raise ValueError("Unsupported voice encoding; get_record must return a decodable format")
     with tempfile.TemporaryDirectory(prefix="qq_media_") as directory:
         source = Path(directory) / "input.opus"
         target = Path(directory) / "output.wav"
         source.write_bytes(data)
         try:
             result = subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source),
+                [str(ROOT / "tools/ffmpeg/bin/ffmpeg.exe"), "-nostdin", "-v", "error", "-y", "-i", str(source),
                  "-t", "61", "-ac", "1", "-ar", "16000", str(target)],
                 capture_output=True, timeout=20, check=False,
             )
@@ -114,11 +147,11 @@ def _multipart_wav(data: bytes) -> tuple[bytes, str]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="astrbot-chat media API", version="0.2.0")
+    app = FastAPI(title="astrbot-chat media API", version="0.6.0")
 
     @app.get("/health", dependencies=[Depends(_token)])
     def health():
-        return {"service": "media_api", "version": "0.2.0", "asr": _available(ASR_URL), "tts": _available(TTS_URL)}
+        return {"service": "media_api", "version": "0.6.0", "asr": _available(ASR_URL), "tts": _available(TTS_URL)}
 
     @app.get("/v1/characters", dependencies=[Depends(_token)])
     def characters():
@@ -150,10 +183,10 @@ def create_app() -> FastAPI:
             duration = _wav_duration(wav)
         except ValueError as exc:
             raise HTTPException(415, str(exc)) from exc
-        if duration > MAX_DURATION_MS:
+        if not 0 < duration <= MAX_DURATION_MS:
             raise HTTPException(413, "Audio exceeds 60 seconds")
         body, content_type = _multipart_wav(wav)
-        result = json.loads(_upstream(f"{ASR_URL}/v1/audio/transcriptions", body=body, content_type=content_type))
+        result = json.loads(await asyncio.to_thread(_upstream, f"{ASR_URL}/v1/audio/transcriptions", body=body, content_type=content_type))
         return {"text": result["text"], "language": result["language"], "duration_ms": result["duration_ms"]}
 
     @app.post("/v1/audio/speech", dependencies=[Depends(_token)])
@@ -170,7 +203,66 @@ def create_app() -> FastAPI:
         if request.emotion not in emotions:
             raise HTTPException(400, "Unsupported emotion")
         audio = _upstream(f"{TTS_URL}/v1/audio/speech", body=json.dumps(payload.model_dump()).encode(), content_type="application/json")
+        # Send a real mono WAV, matching the locally verified QQ format.
+        with tempfile.TemporaryDirectory(prefix="qq_tts_") as directory:
+            source, target = Path(directory) / "source.wav", Path(directory) / "qq.wav"
+            source.write_bytes(audio)
+            try:
+                subprocess.run([str(ROOT / "tools/ffmpeg/bin/ffmpeg.exe"), "-nostdin", "-v", "error", "-y",
+                    "-i", str(source), "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", str(target)],
+                    capture_output=True, check=True, timeout=30)
+                audio = target.read_bytes()
+                if _wav_duration(audio) > MAX_DURATION_MS:
+                    raise ValueError("TTS output exceeds segment duration limit")
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                raise HTTPException(502, "TTS audio could not be prepared") from exc
         return Response(content=audio, media_type="audio/wav")
+
+    @app.post("/v1/songs", dependencies=[Depends(_token)])
+    def submit_song(payload: SongPayload):
+        try:
+            return SongStore(state_dir()).public(
+                SongStore(state_dir()).submit(payload.request_id, payload.scope, payload.music,
+                    user_request=payload.user_request, request_context=payload.request_context)["id"], payload.scope)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/v1/songs/{job_id}", dependencies=[Depends(_token)])
+    def song_status(job_id: str, scope: str):
+        try:
+            return SongStore(state_dir()).public(job_id, scope)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "Song job not found") from exc
+
+    @app.post("/v1/songs/{job_id}/cancel", dependencies=[Depends(_token)])
+    def cancel_song(job_id: str, scope: str):
+        try:
+            SongStore(state_dir()).cancel(job_id, scope)
+            return {"status": "canceled"}
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "Song job not found") from exc
+
+    @app.post("/v1/songs/{job_id}/select", dependencies=[Depends(_token)])
+    def select_song(job_id: str, scope: str, payload: SongSelectionPayload):
+        store = SongStore(state_dir())
+        try:
+            store.choose(job_id, scope, payload.song_id)
+            return store.public(job_id, scope)
+        except KeyError as exc:
+            raise HTTPException(404, "Song job not found") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/v1/songs/{job_id}/audio", dependencies=[Depends(_token)])
+    def song_audio(job_id: str, scope: str):
+        store = SongStore(state_dir())
+        try:
+            job = store.get(job_id, scope)
+            if job["status"] != "completed" or not store.output(job_id).is_file():
+                raise KeyError()
+            return Response(content=store.output(job_id).read_bytes(), media_type="audio/wav")
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "Song audio unavailable") from exc
 
     return app
 

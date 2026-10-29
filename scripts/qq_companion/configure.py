@@ -16,7 +16,8 @@ SNOWLUMA = ROOT / "external" / "SnowLuma" / "v2.1.1"
 BACKUPS = ROOT / "storage" / "qq_companion" / "config_backups"
 WS_URL = "ws://127.0.0.1:6199/ws"
 PLUGIN_FILES = ("main.py", "guard.py", "reply_pacing.py", "message_router.py",
-                "memory_context.py", "permissions.py", "prompt_loader.py", "_conf_schema.json", "metadata.yaml")
+                "memory_context.py", "permissions.py", "prompt_loader.py", "api_client.py",
+                "media_state.py", "media_decision.py", "media_router.py", "_conf_schema.json", "metadata.yaml")
 
 
 def read_json(path: Path) -> dict:

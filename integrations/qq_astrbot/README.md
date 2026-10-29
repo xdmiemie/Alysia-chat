@@ -1,5 +1,7 @@
 # AstrBot integration
 
+Plugin 0.6.0 adds Q4 voice routing, weapi original playback, whole-song Feiyu covers and low-frequency stickers. See [Q4 operations and local-only acceptance](../../docs/qq_companion/q4.md). All intent decisions come from the same Agent reply; no keyword classifier or song-selection menu is used.
+
 The QQ phase plan is in `astrbot-chat项目阶段计划.md`. AstrBot is the intended
 message and Agent owner; SnowLuma provides OneBot v11. `plugin/` contains the
 Q1 persistent inbound guard, Q2 `q2_echo` tool, Q3 scoped routing and permissions,

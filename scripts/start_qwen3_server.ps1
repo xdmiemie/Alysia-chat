@@ -4,7 +4,8 @@ param(
     [string]$ModelVersion = "",
     [switch]$Interactive,
     [switch]$Background,
-    [switch]$UseActive
+    [switch]$UseActive,
+    [switch]$EnableSlots
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,11 +81,14 @@ $ServerArgs = @(
     "--port", "8080",
     "--ctx-size", "8192",
     "--n-gpu-layers", "99",
-    "--reasoning", "off"
+    "--reasoning", "on",
+    "--reasoning-format", "deepseek",
+    "--reasoning-budget", "1024"
 )
 if ($LoraAdapter) {
     $ServerArgs += @("--lora", $LoraAdapter)
 }
+if ($EnableSlots) { $ServerArgs += '--slots' }
 
 if ($Background) {
     New-Item -ItemType Directory -Force -Path (Split-Path $PidFile) | Out-Null
