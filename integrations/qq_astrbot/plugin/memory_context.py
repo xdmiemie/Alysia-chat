@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 import json
 import re
@@ -39,12 +40,36 @@ class MemoryContext:
         self.token_budget, self.merge_seconds = token_budget, merge_seconds
         self.max_sessions = max_sessions
         self._windows: OrderedDict[str, list[ContextMessage]] = OrderedDict()
+        self._protocol: OrderedDict[str, OrderedDict] = OrderedDict()
 
     def _prune(self, now: float) -> None:
         for scope in list(self._windows):
             self._windows[scope] = [m for m in self._windows[scope] if now - m.received_at < self.ttl]
             if not self._windows[scope]:
                 del self._windows[scope]
+        for scope in list(self._protocol):
+            turns = self._protocol[scope]
+            for key in list(turns):
+                if now - turns[key][0] >= self.ttl:
+                    del turns[key]
+            if not turns:
+                del self._protocol[scope]
+
+    def remember_protocol(self, scope: str, key: str, messages):
+        now = time.time()
+        self._prune(now)
+        turns = self._protocol.setdefault(scope, OrderedDict())
+        created = turns[key][0] if key in turns else now
+        turns[key] = (created, [m.model_dump() if hasattr(m, 'model_dump') else deepcopy(m) for m in messages])
+        while len(turns) > self.max_messages:
+            turns.popitem(last=False)
+        self._protocol.move_to_end(scope)
+        while len(self._protocol) > self.max_sessions:
+            self._protocol.popitem(last=False)
+
+    def model_history(self, scope: str, *, now: float | None = None):
+        self._prune(time.time() if now is None else now)
+        return deepcopy([message for _, messages in self._protocol.get(scope, {}).values() for message in messages])
 
     def add(self, scope: str, message: ContextMessage) -> ContextMessage:
         self._prune(message.received_at)

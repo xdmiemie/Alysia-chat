@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 import time
+import wave
 from urllib.parse import urlencode, urlparse
 from urllib.request import ProxyHandler, build_opener
 from types import SimpleNamespace
@@ -19,8 +21,7 @@ from astrbot.core import logger
 from .api_client import MediaClient
 from .media_decision import parse_song_reply
 from .prompt_loader import load_prompts
-from .reply_pacing import split_sentences
-from .reply_content import chat_history, has_control_markup, speech_parts
+from .reply_content import chat_history, delivered_content, has_control_markup, speech_parts
 from .song_tasks import SongTasks, SongCanceled, SongHeld, SongFinished, SongDeliveryUncertain, SongDeliveryBot
 from .request_provider import request_chat
 from .context_budget import tool_result_view
@@ -122,21 +123,36 @@ class MediaRouter:
     def speech_segments(text: str, *, group: bool):
         if has_control_markup(text):
             raise ValueError("speech_contains_control_markup")
-        chunks = []
-        for content, voice in speech_parts(text):
-            for sentence in split_sentences(content) if voice else [content]:
-                while sentence:
-                    chunks.append((sentence[:120], voice))
-                    sentence = sentence[120:]
-        limit = 3 if group else 6
-        if len(chunks) > limit:
-            tail = chunks[limit - 1:]
-            chunks = chunks[:limit - 1] + [(''.join(content for content, _ in tail), all(voice for _, voice in tail))]
-        return chunks
+        parts = speech_parts(text)
+        spoken = ' '.join(content for content, voice in parts if voice)
+        decoration = ' '.join(content for content, voice in parts if not voice)
+        return ([(spoken, True)] if spoken else []) + ([(decoration, False)] if decoration else [])
 
     @staticmethod
     def speech_texts(text: str, *, group: bool):
         return [content for content, _ in MediaRouter.speech_segments(text, group=group)]
+
+    async def _voice_audio(self, text: str, emotion: str):
+        # Keep each synthesis within the existing segment limits, but join PCM
+        # frames so sentence boundaries do not become separate QQ recordings.
+        audio = [await self.client.speech(text[start:start + 120], emotion, self.character_id)
+                 for start in range(0, len(text), 120)]
+        if len(audio) == 1:
+            return audio[0]
+        output = io.BytesIO()
+        with wave.open(output, "wb") as target:
+            expected = None
+            for data in audio:
+                with wave.open(io.BytesIO(data), "rb") as source:
+                    params = (source.getnchannels(), source.getsampwidth(), source.getframerate(),
+                              source.getcomptype(), source.getcompname())
+                    if expected is None:
+                        expected = params
+                        target.setparams((*params[:3], 0, *params[3:]))
+                    elif params != expected:
+                        raise ValueError("incompatible_speech_audio")
+                    target.writeframes(source.readframes(source.getnframes()))
+        return output.getvalue()
 
     async def voice_chains(self, text: str, emotion: str, *, group: bool):
         if len(text) > (180 if group else 1500):
@@ -147,11 +163,13 @@ class MediaRouter:
                 chains.append(MessageChain(chain=[Plain(chunk)]))
                 continue
             try:
-                data = await self.client.speech(chunk, emotion, self.character_id)
+                data = await self._voice_audio(chunk, emotion)
                 audio = self.client.save_audio(data)
                 chains.append(MessageChain(chain=[Record.fromFileSystem(str(audio))]))
             except Exception:
-                chains.append(MessageChain(chain=[Plain(chunk)]))
+                # The caller retains the complete reply and applies normal
+                # text sentence splitting; never send a partial recording.
+                return []
         return chains
 
     async def sticker(self, event, tag):
@@ -456,13 +474,18 @@ class MediaRouter:
             logger.error(f"Song delivery pending: job={key}, error={type(exc).__name__}")
 
     async def remember_result(self, key, payload, job, line):
-        # Audio delivery facts live in the task/part audit. Chat contains only
-        # the actual words sent, never a fabricated assistant receipt prefix.
+        # Keep the model's JSON envelope around the confirmed notification.
+        # Audio delivery facts remain in the task/part audit.
         receipt = line.strip()
         if not receipt:
             return
+        with self.client.state.connection() as db:
+            generated = db.execute("SELECT raw,reply FROM song_reply_attempts WHERE job_id=? AND status='generated' "
+                                   "ORDER BY id DESC LIMIT 1", (key,)).fetchone()
+        content = delivered_content(generated[0] if generated else '', receipt,
+            complete=bool(generated and generated[1] == receipt), thinking_level=1, voice=False)
         if payload["group"]:
-            self.record_group_result(payload["scope"], key, receipt)
+            self.record_group_result(payload["scope"], key, content)
         manager = getattr(self.context, "conversation_manager", None)
         if manager is None:
             return
@@ -475,7 +498,7 @@ class MediaRouter:
                 conversation = await manager.get_conversation(origin, cid)
                 if conversation:
                     history = chat_history(json.loads(conversation.history))
-                    history.append({"role": "assistant", "content": receipt})
+                    history.append({"role": "assistant", "content": content})
                     await manager.update_conversation(origin, cid, history=history)
 
     async def reselect_source(self, key, payload, job):

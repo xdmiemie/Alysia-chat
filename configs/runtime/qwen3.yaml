@@ -11,9 +11,7 @@ enable_thinking: true
 # Per-request phases; no extra model call to choose the switch.
 thinking_agent: true
 thinking_selection: true
-thinking_check: false
-thinking_repair: false
-thinking_close: false
+thinking_followup: false
 thinking_music_result: false
 thinking_compression: false
 reasoning_format: deepseek

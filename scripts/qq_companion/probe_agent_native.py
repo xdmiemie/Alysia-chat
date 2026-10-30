@@ -21,7 +21,7 @@ OUTPUT = ROOT / "storage/temporary/native-agent-acceptance"
 BASE = "http://127.0.0.1:18080"
 
 
-async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recent_failures=False, latest_failure=False, recovery_only=False):
+async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recent_failures=False, latest_failure=False, recovery_only=False, quick=False, invalid_reply=False):
     from astrbot.core.agent.hooks import BaseAgentRunHooks
     from astrbot.core.agent.run_context import ContextWrapper
     from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
@@ -29,7 +29,7 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
     from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
     from astrbot.core.provider.entities import LLMResponse, ProviderRequest
     from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
-    from integrations.qq_astrbot.plugin.agent_runtime import NativeAgentLifecycle, parse_candidate
+    from integrations.qq_astrbot.plugin.agent_runtime import NativeAgentLifecycle, parse_final_reply
     from integrations.qq_astrbot.plugin.agent_state import AgentStore
     from integrations.qq_astrbot.plugin.agent_tools import AgentTools
     from integrations.qq_astrbot.plugin.prompt_loader import load_prompts
@@ -66,13 +66,15 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
         specs += [("先别唱了，取消刚才的翻唱", "叹云兮", "鞠婧祎", [], False, True, 'cancel'),
                   ("刚才那首不要了，改唱周杰伦的晴天", "晴天", "周杰伦", [], False, True, 'replace'),
                   ("我给这大肥鱼登了我的网易VIP账号，现在那些歌他也能唱了", "叹云兮", "鞠婧祎", [], False, True, 'keep')]
+        if quick:
+            specs = specs[:2]
         if controls_only:
             specs = [spec for spec in specs if len(spec) > 6]
         if recent_failures or latest_failure:
             with sqlite3.connect(f"file:{(ROOT / 'storage/qq_companion/agent.sqlite3').as_posix()}?mode=ro", uri=True) as db:
                 failed = db.execute("SELECT a.payload FROM audit a JOIN runs r ON r.id=a.run_id " + (
                     "WHERE a.kind='request' ORDER BY r.started DESC LIMIT 1" if latest_failure else
-                    "WHERE a.kind='request' AND r.requests=16 AND r.checks=0 ORDER BY r.started DESC LIMIT 2")).fetchall()
+                    "WHERE a.kind='request' AND r.requests=16 AND r.tool_calls=0 ORDER BY r.started DESC LIMIT 2")).fetchall()
             with sqlite3.connect(f"file:{(ROOT / 'external/AstrBot/data/data_v4.db').as_posix()}?mode=ro", uri=True) as db:
                 row = db.execute("SELECT content FROM conversations ORDER BY updated_at DESC LIMIT 1").fetchone()
             history = json.loads(row[0]) if row else []
@@ -113,14 +115,14 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
             injected = False
             async def chat(**kwargs):
                 nonlocal injected
+                if invalid_reply and index == 1 and not injected and kwargs.get("func_tool"):
+                    injected = True
+                    return LLMResponse("assistant", completion_text=json.dumps({"name": "weapi",
+                        "arguments": {"action": "search", "query": title, "page": 1}}, ensure_ascii=False))
                 if inject_unregistered and not injected and kwargs.get("func_tool"):
                     injected = True
                     return LLMResponse("tool", tools_call_name=["musiccover"],
                         tools_call_args=[{"candidate": 1, "action": "start"}], tools_call_ids=["premature"])
-                if inject_false_claim and not injected and kwargs.get("func_tool"):
-                    injected = True
-                    return LLMResponse("assistant", completion_text=json.dumps({"reply": "已经唱好并发给你了",
-                        "thinking_level": 2, "voice": False}, ensure_ascii=False))
                 return await request_chat(provider, **kwargs)
             class ProbedProvider:
                 def __getattr__(self, name): return getattr(provider, name)
@@ -176,7 +178,7 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
                 async def on_agent_begin(self, context):
                     NativeAgentLifecycle(runner, store, run, event).install()
                 async def on_agent_done(self, context, response):
-                    candidate = parse_candidate(response.completion_text or "")
+                    candidate = parse_final_reply(response.completion_text or "")
                     if candidate: response.completion_text = candidate["reply"]
             system = "\n".join((prompts["astrbot_safety"], persona, prompts["qq_context"],
                                   prompts["reply_output"], prompts["agent_policy"]))
@@ -192,7 +194,33 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
                 if response.type == "llm_result":
                     value = response.data["chain"].get_plain_text()
                     if value: visible.append(value)
-            passed = bool(len(visible) == 1 and event.get_extra("qq_agent_approved") and run.checks > 0)
+            main_requests = run.requests
+            if invalid_reply and index == 1:
+                assert run.reply_retries == 1
+            additions = []
+            if quick and index == 0:
+                # Exercise the actual post-Agent path with real inference and
+                # a local fake sender. No OneBot client is constructed.
+                from integrations.qq_astrbot.plugin.main import Q1Guard
+                from integrations.qq_astrbot.plugin.message_router import Incoming
+                followup_owner = object.__new__(Q1Guard)
+                followup_owner.agent_store = store
+                event.get_group_id = lambda: ""
+                event.is_stopped = lambda: False
+                event.set_extra("qq_scope", scope)
+                event.set_extra("qq_inbound_sequence", version)
+                event.set_extra("qq_incoming", Incoming("999", str(101 + index), "probe", text, ""))
+                event.set_extra("qq_primary_reply", visible[0])
+                event.get_extra("qq_agent_lifecycle").sent(visible[0])
+                async def local_send(chain):
+                    additions.append(chain.get_plain_text())
+                event.send = local_send
+                await followup_owner._maybe_followup(event)
+                assert 1 <= run.followups <= 3 and not called
+                with store.connection() as db:
+                    assert not db.execute("SELECT 1 FROM audit WHERE run_id=? AND kind IN "
+                        "('followup_failed','followup_rejected')", (run.run_id,)).fetchone()
+            passed = bool(len(visible) == 1 and event.get_extra("qq_agent_completed"))
             if control == 'keep':
                 passed = passed and not any(call['tool'] in {'music', 'musiccover'} for call in called)
             elif control:
@@ -200,15 +228,12 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
             elif index >= 1 or recent_failures or latest_failure:
                 passed = passed and any(call["tool"] == "weapi" for call in called)
                 passed = passed and (not available or any(call["tool"] == "musiccover" for call in called))
-            if inject_false_claim:
-                passed = passed and run.checks >= 2 and "已经唱好并发给你了" not in visible
             passed = passed and prompts['agent_budget_reply'] not in visible
             if recent_failures or latest_failure:
                 music_calls = [call for call in called if call['tool'] in {'music', 'musiccover'}]
                 passed = passed and len(music_calls) == 1 and music_calls[0]['tool'] == 'musiccover'
                 passed = passed and music_calls[0]['arguments'].get('action', 'start') == 'start'
-                # Two tool rounds, up to three candidate/check pairs and one
-                # initial format repair/terminal close fit within ten requests.
+                # Tool rounds and a direct final response share the request budget.
                 passed = passed and run.requests <= (12 if inject_unregistered else 10)
                 passed = passed and not any(claim in text for text in visible for claim in (
                     '链接也发给你', '已经发给', '已发送', '唱好了', '唱好啦', '已经唱好', '点开链接听'))
@@ -216,11 +241,13 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
                 selected = run.candidates[run.song_id(music_calls[0]['arguments']['candidate'])] if music_calls else {}
                 # Preserve contextual version choice; never hard-code rank 1.
                 passed = passed and title in selected.get('title', '') and selected.get('available') is True
-            rows.append({"input": text, "tools": called, "checks": run.checks, "requests": run.requests,
+            rows.append({"input": text, "tools": called, "main_requests": main_requests,
+                         "reply_retries": run.reply_retries, "followups": run.followups,
+                         "followup_messages": additions, "requests": run.requests,
                          "visible": visible, "seconds": round(time.monotonic() - started, 3), "passed": passed})
             (OUTPUT / "report.json").write_text(json.dumps({"cases": rows, "qq_connections": 0,
                 "media": "mocked", "inference": "real Qwen and native AstrBot Runner"}, ensure_ascii=False, indent=2), encoding="utf-8")
-            print(f"NATIVE_AGENT case {index + 1}: {'PASS' if passed else 'FAIL'}, checks={run.checks}, tools={[c['tool'] for c in called]}", flush=True)
+            print(f"NATIVE_AGENT case {index + 1}: {'PASS' if passed else 'FAIL'}, requests={run.requests}, tools={[c['tool'] for c in called]}", flush=True)
         if not all(row["passed"] for row in rows):
             raise RuntimeError("Native model acceptance failed; inspect the report and audit database")
     finally:
@@ -230,11 +257,13 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--existing", action="store_true", help="Use the managed model on 8080 under an admission lease")
-    parser.add_argument("--replay", action="store_true", help="Include current conversation and an unsupported completion claim")
+    parser.add_argument("--replay", action="store_true", help="Include current conversation and available/unavailable song fixtures")
     parser.add_argument("--controls-only", action="store_true", help="Only test cancel, replace and unrelated chatter")
     parser.add_argument("--recent-failures", action="store_true", help="Replay the two 16-request failures with their real preceding history")
     parser.add_argument("--latest-failure", action="store_true", help="Replay latest real request and force an unregistered-candidate recovery; frozen real ten-song results")
     parser.add_argument("--recovery-only", action="store_true", help="Only force the preflight-recovery variant of --latest-failure")
+    parser.add_argument("--quick", action="store_true", help="Only check direct chat and the native song tool roundtrip")
+    parser.add_argument("--invalid-reply", action="store_true", help="Inject one plain-body tool JSON and verify the single regeneration")
     args = parser.parse_args()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["ASTRBOT_ROOT"] = str(OUTPUT)
@@ -250,7 +279,7 @@ def main():
                 model_id = json.load(response)["data"][0]["id"]
             asyncio.run(cases(model_id, base="http://127.0.0.1:8080", replay=args.replay,
                 controls_only=args.controls_only, recent_failures=args.recent_failures, latest_failure=args.latest_failure,
-                recovery_only=args.recovery_only))
+                recovery_only=args.recovery_only, quick=args.quick, invalid_reply=args.invalid_reply))
             print("NATIVE_AGENT_MODEL_PASS; existing model preserved; QQ connections: 0", flush=True)
         finally:
             state.leave(lease)
@@ -284,7 +313,8 @@ def main():
             with opener.open(BASE + "/v1/models", timeout=3) as response:
                 model_id = json.load(response)["data"][0]["id"]
             asyncio.run(cases(model_id, replay=args.replay, controls_only=args.controls_only,
-                recent_failures=args.recent_failures, latest_failure=args.latest_failure, recovery_only=args.recovery_only))
+                recent_failures=args.recent_failures, latest_failure=args.latest_failure, recovery_only=args.recovery_only,
+                quick=args.quick, invalid_reply=args.invalid_reply))
             print("NATIVE_AGENT_MODEL_PASS; QQ connections: 0", flush=True)
     finally:
         if process:

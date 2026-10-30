@@ -21,9 +21,7 @@ class Qwen3Config:
     enable_thinking: bool = True
     thinking_agent: bool = True
     thinking_selection: bool = True
-    thinking_check: bool = False
-    thinking_repair: bool = False
-    thinking_close: bool = False
+    thinking_followup: bool = False
     thinking_music_result: bool = False
     thinking_compression: bool = False
     reasoning_format: str = "deepseek"
@@ -63,12 +61,12 @@ class Qwen3Config:
     @property
     def thinking_phases(self) -> dict[str, bool]:
         return {phase: self.enable_thinking and getattr(self, "thinking_" + phase)
-                for phase in ("agent", "selection", "check", "repair", "close", "music_result", "compression")}
+                for phase in ("agent", "selection", "followup", "music_result", "compression")}
 
     @property
     def phase_temperatures(self) -> dict[str, float]:
         return {phase: self.temperature if phase in {"agent", "selection"} else (
-            self.result_temperature if phase in {"close", "music_result"} else self.utility_temperature)
+            self.result_temperature if phase in {"followup", "music_result"} else self.utility_temperature)
             for phase in self.thinking_phases}
 
     @property
@@ -89,7 +87,7 @@ def load_qwen3_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Qwen3Config:
         cache_type_v=str(raw.get("cache_type_v", Qwen3Config.cache_type_v)),
         enable_thinking=bool(raw.get("enable_thinking", Qwen3Config.enable_thinking)),
         **{"thinking_" + phase: bool(raw.get("thinking_" + phase, getattr(Qwen3Config, "thinking_" + phase)))
-           for phase in ("agent", "selection", "check", "repair", "close", "music_result", "compression")},
+           for phase in ("agent", "selection", "followup", "music_result", "compression")},
         reasoning_format=str(raw.get("reasoning_format", Qwen3Config.reasoning_format)),
         reasoning_budget_tokens=int(raw.get("reasoning_budget_tokens", Qwen3Config.reasoning_budget_tokens)),
         context_margin_tokens=int(raw.get("context_margin_tokens", Qwen3Config.context_margin_tokens)),

@@ -67,7 +67,7 @@ def test_startup_releases_abandoned_holds_but_keeps_task_and_part_receipts(loop,
     assert len(resumed) == 1
 
 
-def test_background_history_records_only_actual_words_and_cleans_legacy_receipts(loop, tmp_path):
+def test_background_history_preserves_model_content_and_cleans_legacy_receipts(loop, tmp_path):
     from integrations.qq_astrbot.plugin.media_router import MediaRouter
     history = [{'role': 'assistant', 'content': '[已发送《旧歌曲》整首翻唱] 旧回话'}]
     groups, saved = [], []
@@ -79,9 +79,14 @@ def test_background_history_records_only_actual_words_and_cleans_legacy_receipts
     media.record_group_result = lambda scope, key, text: groups.append(text)
     async def check():
         payload = task_payload(media.song_tasks)
+        raw = '{"follow_up":"唱好啦","thinking_level":4}'
+        media.client.state.record_song_reply('job', 1, status='generated', raw=raw, reply='唱好啦')
         await media.remember_result('job', payload, {'has_audio': True, 'song': {'title': '雨爱'}}, '唱好啦')
-        assert groups == ['唱好啦']
-        assert saved == [[{'role': 'assistant', 'content': '旧回话'}, {'role': 'assistant', 'content': '唱好啦'}]]
+        assert groups == [raw]
+        assert saved == [[{'role': 'assistant', 'content': '旧回话'}, {'role': 'assistant', 'content': raw}]]
+        linked = '唱好啦 https://music.163.com/song?id=1'
+        await media.remember_result('job', payload, {'has_audio': False}, linked)
+        assert json.loads(saved[-1][-1]['content']) == {'follow_up': linked, 'thinking_level': 4}
     loop.run_until_complete(check())
 
 

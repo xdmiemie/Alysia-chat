@@ -2,9 +2,15 @@
 
 Q4 voice, music, whole-song cover, GPU switching and local acceptance are documented in [q4.md](q4.md). Normal startup now includes TTS; `-WithoutTTS` explicitly disables it. All Q4 development tests use local transport instead of QQ.
 
-Plugin 0.7.0's current Agent, native tools, interruption guards and acceptance
-are documented in [agent.md](agent.md). Older six-field and optional-follow-up
-acceptance records describe historical behavior.
+Cover switching unloads and restores only Qwen. SenseVoice, GPT-SoVITS and the
+TTS wrapper keep their existing processes and loaded models. New GPU requests
+still wait until cover synthesis and Qwen restoration finish. Restart the
+supervisor once after updating its switching code; restarting AstrBot alone
+does not reload the supervisor.
+
+Plugin 0.9.8's current Agent, native tools, interruption guards and acceptance
+are documented in [agent.md](agent.md). The old optional private follow-up prompts
+are restored after primary delivery, with at most three tool-free decisions.
 
 ## Install and configure
 
@@ -17,7 +23,7 @@ acceptance records describe historical behavior.
 
 Qwen starts with thinking enabled and a 1024-token reasoning budget. Per-request
 phase switches in `configs/runtime/qwen3.yaml` keep main planning and song selection
-enabled; completion checks, repair, close, result notifications and summary disable
+enabled; post-Agent follow-up, result notifications and summary disable
 thinking with a zero reasoning budget. Sampling settings reach both llama.cpp and
 the AstrBot request adapter. Legacy Elysia examples are explicitly disabled for
 the current QQ persona. Existing running processes need a normal stop/start to load
@@ -35,40 +41,67 @@ startup reports the connection failure and cleans up its services; inspect
 
 The ignored `storage/qq_companion/media_token` is generated once. Use its value only in a local `Authorization: Bearer …` header; keep it out of chat, logs and tracked configuration. `GET /health`, `GET /v1/characters`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech`, and `GET /v1/jobs/{id}` require that token. Transcription accepts at most 12 MiB and 60 seconds of WAV or Ogg Opus; speech accepts the active `character_id`, a configured emotion, and WAV output. Model activation and training are operator-only CLI actions; the QQ Agent cannot invoke them through this API.
 
-QQ replies use one native AstrBot tool loop. Tool calls run through the native
-executor; only complete tool-free candidates enter semantic completion checks.
-Candidates contain exactly `reply`, integer `thinking_level` (1–5), and boolean
-`voice`. The checker can continue twice; a third continuation requests one
-tool-free close. Tools, fallback and compression do not reset this count.
+QQ replies use one native AstrBot tool loop. Native tool calls execute and continue;
+a response without tool calls ends the Agent directly. Main responses carry
+`reply`, integer `thinking_level` (1-5), and boolean `voice` delivery metadata.
+The first system message contains persona/framework and QQ context rules; the
+second contains the unchanged reply_output and agent_policy sections. Dynamic
+execution state remains separate. The second system participates in tool rounds
+and follow-ups, but is removed before saving dialogue to avoid accumulation.
+Content accompanying a native tool call is ignored regardless of its shape; its
+reply/voice fields never trigger parsing, regeneration or delivery. Tool-enabled
+requests discard response_format from both per-request and provider settings.
+Ordinary text is accepted locally. Unusable output gets one regeneration with
+the same context and native tools; another invalid result uses the local fallback.
+The durable reply_retries counter is capped at one across tool rounds and provider
+fallback. There is no semantic judge, draft approval, or model-generated terminal close.
 Default limits are 16 model requests, 16 tool calls and 180 seconds per run.
 
-There is no separate private follow-up Agent. Natural conversational additions
-are considered by the same completion checker before sending. New user inputs
-invalidate old drafts, including approved drafts still waiting to send. Only
-confirmed sends become assistant dialogue; drafts and checks have separate audit
-records. Responses wait for their thinking tier (0.5, 1.5, 2.75, 4.25 or 6 seconds)
+After all primary private-message segments are sent, the original optional
+follow-up prompts independently decide whether to add one sentence. Each input
+allows at most three decisions; null, duplicate/invalid output, unexpected tool
+calls, errors, or new user input stop the loop. Every decision disables tools and
+thinking. Confirmed additions enter chat history before the next decision.
+Follow-ups inherit all main-Agent system messages and a freshly rebuilt execution
+state. The followup_phase prompt scopes the original follow-up format and tool
+ban without dropping persona, QQ privacy or execution-truth rules.
+Groups do not start private follow-ups. Model requests share the run budget,
+and the durable followups counter prevents resetting the three-call cap.
+History preserves original assistant content JSON, native tool_calls and matching
+tool_call_id results. A fully delivered primary reply is saved once with its
+complete original content; partial delivery retains metadata and only delivered
+reply text. Follow-ups and background song notifications retain their own JSON.
+Post-Agent requests keep the latest eight complete user turns and tool pairs,
+without truncating individual JSON bodies. Group protocol history remains scoped
+to the group's bounded TTL window. Historical calls are data, never re-executed.
+Actual delivery receipts remain in audit; temporary state/instructions are omitted.
+Responses wait for their thinking tier (0.5, 1.5, 2.75, 4.25 or 6 seconds)
 plus typing time (0.4 seconds per CJK character, 0.12 per other character), less
 elapsed time since input. Each textual segment uses cumulative typing time;
-prepared voice is sent without a simulated typing delay. Sentence splitting caps delivery at three group or six
-private messages. Prompt text lives in `configs/qq_companion/prompts.yaml`.
+prepared voice is sent without a simulated typing delay. Text sentence splitting
+caps delivery at three group or six private messages. voice=true sends one recording
+for the complete spoken reply; bounded internal synthesis chunks are joined as WAV
+audio, with decorative faces/emoji sent as text. Synthesis failure falls back to the
+complete reply's text sentence splitting. Prompt text lives in `configs/qq_companion/prompts.yaml`.
 Startup installs every plugin module listed in `configure.py`.
 
 ## Editable QQ prompts
 
-Plugin 0.7.0 reads the single UTF-8 file
+Plugin 0.9.8 reads the single UTF-8 file
 [`configs/qq_companion/prompts.yaml`](../../configs/qq_companion/prompts.yaml)
-on each main-reply or internal-check request. Each section has Chinese
+on each main-reply or post-Agent follow-up request. Each section has Chinese
 comments explaining purpose, trigger and editing constraints. YAML comments are
 not sent to the model. Persona text remains in the character's `system_prompt.txt`.
 
 | Key | Model-facing content |
 |---|---|
 | `qq_context` | Structured QQ input, numeric speaker identity, privacy and reply style |
-| `reply_output` | Strict three-field candidate JSON |
-| `agent_policy` | Generic tool use, receipts, continuation and draft handling |
-| `agent_completion_check` | Task completion and natural conversational completeness |
-| `agent_continue`, `agent_repair`, `agent_check_failed` | Internal continuation and bounded repair |
-| `agent_restricted_close`, `agent_budget_reply` | Tool-free close and deterministic fallback |
+| `reply_output` | Final reply and delivery metadata |
+| `agent_policy` | Native tool use, receipts and direct completion |
+| `agent_reply_regenerate` | One regeneration for an unusable final response |
+| `followup_system`, `followup_user` | Original optional private post-reply decision |
+| `followup_phase` | Follow-up format and tool ban after inheriting the complete main system |
+| `agent_budget_reply` | Local terminal fallback; no extra inference |
 | `tool_*` | Native tool descriptions and argument descriptions |
 | `music_result`, `music_clarification` | Background song result notification |
 | `astrbot_safety` | Replacement for the safety block when AstrBot enables it |
@@ -79,7 +112,7 @@ not sent to the model. Persona text remains in the character's `system_prompt.tx
 
 Keep YAML indentation and key names. Edit the text under `|`; preserve the JSON
 fields described in the comments because the reply parser uses them. Main replies
-and internal checks load a fresh bundle, so saved edits take effect on the next
+and post-Agent decisions load a fresh bundle, so saved edits take effect on the next
 request after the new plugin has first been loaded. An already in-flight request
 keeps the text it read. A broken or incomplete file stops the affected main
 inference request and logs the file/key problem;
@@ -100,6 +133,15 @@ For a registered model change, keep the QQ stack stopped and run `runtime_env/py
 Keep the starting terminal open. Ctrl+C requests shutdown; repeated interrupts are ignored during cleanup. Each managed service starts suspended, enters a Windows Job Object with `KILL_ON_JOB_CLOSE`, then resumes. Descendants remain owned even if a PowerShell launcher exits; Windows also closes these service trees if the supervisor is forcibly terminated. This uses the [Windows job ownership mechanism](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 
 From a second terminal, `scripts/qq_companion/stop_all.ps1` stops registered child trees. A disappearing or inaccessible child does not skip the remaining services. Any service that still cannot exit remains in the registry for a later stop attempt, and registry updates use atomic replacement. Both stop paths leave the independently running NTQQ client alone. Check ignored logs in `storage/qq_companion/logs` if a process exits or a port is occupied. A stale registry does not authorize stopping a reused PID.
+
+Complete model input/output bodies are in `storage/qq_companion/logs/model_debug/`.
+Each indented JSON file contains an array of request/response exchanges, with
+line breaks for reading. Each file holds up to 50 exchanges and only the newest
+five files are retained; displayed line counts do not affect rotation. Existing
+JSONL archives are migrated without changing their records. `request` contains the
+actual model input; `response` retains the API's complete JSON, including `choices`.
+See [the field definitions](agent.md#完整模型调试日志). Reload AstrBot after installing
+updated plugin code to enable logging; earlier raw responses cannot be recovered.
 
 ## Q1 live acceptance
 

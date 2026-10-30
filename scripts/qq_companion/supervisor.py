@@ -265,105 +265,10 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
         wait_port(name, port, process, timeout)
         return process
 
-    def stop_models(stopped):
-        # An HTTP cancellation can leave inference running after its caller has
-        # released admission. Confirm the actual server slots have drained too.
-        if any(entry["name"] == "qwen3" for entry in children):
-            from urllib.request import ProxyHandler, build_opener
-            opener = build_opener(ProxyHandler({}))
-            deadline = time.monotonic() + 180
-            while True:
-                with opener.open("http://127.0.0.1:8080/slots", timeout=5) as response:
-                    slots = json.loads(response.read())
-                if not isinstance(slots, list):
-                    raise RuntimeError("Cannot verify Qwen slots")
-                if all(slot.get("is_processing") is False for slot in slots):
-                    break
-                if time.monotonic() > deadline or STOP_FLAG.exists():
-                    raise RuntimeError("Qwen slots failed to drain")
-                time.sleep(0.25)
-        gpu_names = {"qwen3", "sensevoice", "gpt_sovits", "tts_wrapper"}
-        for entry in list(reversed(children)):
-            if entry["name"] in gpu_names:
-                stopped.insert(0, entry["name"])
-                stop_entry(entry)
-                if psutil.pid_exists(entry["pid"]):
-                    try:
-                        if abs(psutil.Process(entry["pid"]).create_time() - entry["created_at"]) < 2:
-                            raise RuntimeError("Managed GPU process did not exit")
-                    except psutil.NoSuchProcess:
-                        pass
-                children.remove(entry)
-        write_registry()
-
-    def verify_gpu():
-        if any(entry["name"] in {"qwen3", "sensevoice", "gpt_sovits", "tts_wrapper"} for entry in children):
-            raise RuntimeError("Managed GPU model remains loaded")
-        for port in (8080, 5001, 9880, 5002):
-            if port_open(port):
-                raise RuntimeError("GPU service port remains open")
-        # Refuse unknown project model processes rather than terminating them.
-        for process in psutil.process_iter(["pid", "exe", "cmdline"]):
-            try:
-                command = " ".join(process.info["cmdline"] or []).lower()
-                executable = (process.info["exe"] or "").lower()
-                belongs = str(ROOT).lower() in command or executable.startswith(str(ROOT).lower() + os.sep)
-                model = any(name in command for name in ("llama-server", "runtime.gpt_sovits.api", "runtime.sensevoice.api",
-                    "api_v2.py", "feiyu_rvc_worker.py", "run_rvc.py", "audio-separator"))
-                if belongs and model:
-                    raise RuntimeError("An unregistered project GPU model is still running")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-        result = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits", "--id=0"],
-                                capture_output=True, text=True, timeout=15, check=True)
-        free = int(result.stdout.strip())
-        if free < 12288:
-            raise RuntimeError("Insufficient free VRAM for exclusive cover")
-        with (STATE / "gpu_transitions.jsonl").open("a", encoding="utf-8") as log:
-            log.write(json.dumps({"mode": "cover", "free_mib": free, "time": time.time()}) + "\n")
-
-    def restore_models(names):
-        if STOP_FLAG.exists():
-            raise RuntimeError("Shutdown requested")
-        for name in names:
-            argv, cwd, env, port, timeout = restart_specs[name]
-            start_service(name, argv, cwd, port, timeout, env)
-        # HTTP health, followed by one actual text request, proves the restored
-        # model can infer instead of just having opened its listening socket.
-        from urllib.request import ProxyHandler, Request, build_opener
-        opener = build_opener(ProxyHandler({}))
-        if "qwen3" in names:
-            deadline = time.monotonic() + 180
-            while True:
-                try:
-                    with opener.open("http://127.0.0.1:8080/health", timeout=3) as response:
-                        if response.status == 200:
-                            break
-                except Exception:
-                    if time.monotonic() > deadline:
-                        raise RuntimeError("Qwen restore health failed")
-                    time.sleep(1)
-            request = Request("http://127.0.0.1:8080/v1/chat/completions", data=json.dumps({
-                "messages": [{"role": "user", "content": "Reply OK."}], "max_tokens": 1536,
-                "temperature": 0, "stream": False}).encode(), headers={"Content-Type": "application/json"})
-            with opener.open(request, timeout=90) as response:
-                if not json.loads(response.read()).get("choices", [{}])[0].get("message", {}).get("content"):
-                    raise RuntimeError("Qwen restore inference failed")
-        for name, port in (("sensevoice", 5001), ("tts_wrapper", 5002)):
-            if name in names:
-                with opener.open(f"http://127.0.0.1:{port}/health", timeout=10) as response:
-                    if response.status != 200:
-                        raise RuntimeError("Audio service restore health failed")
-        if "tts_wrapper" in names:
-            active = json.loads((ROOT / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
-            request = Request("http://127.0.0.1:5002/v1/audio/speech", data=json.dumps({
-                "text": "嗯。", "character_id": active["character_id"], "emotion": "neutral", "format": "wav"}).encode(),
-                headers={"Content-Type": "application/json"})
-            with opener.open(request, timeout=150) as response:
-                if not response.read(12).startswith(b"RIFF"):
-                    raise RuntimeError("TTS restore inference failed")
-        with (STATE / "gpu_transitions.jsonl").open("a", encoding="utf-8") as log:
-            log.write(json.dumps({"mode": "restored", "services": names, "time": time.time()}) + "\n")
+    from scripts.qq_companion.qwen_cover_switch import QwenCoverSwitch
+    model_switch = QwenCoverSwitch(children=children, stop_entry=stop_entry,
+        start_service=start_service, restart_specs=restart_specs, write_registry=write_registry,
+        root=ROOT, directory=STATE, stopping=STOP_FLAG.exists, port_open=port_open)
 
     def run_song_worker(key):
         from services.media_api.songs import SongStore
@@ -415,8 +320,8 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
             from scripts.qq_companion.init_stickers import initialize
             initialize(STATE / "stickers")
             cleanup(STATE)
-            dispatcher = CoverDispatcher(STATE, broker=broker, stop_models=stop_models,
-                restore_models=restore_models, verify_gpu=verify_gpu, run_worker=run_song_worker,
+            dispatcher = CoverDispatcher(STATE, broker=broker, stop_models=model_switch.stop,
+                restore_models=model_switch.restore, verify_gpu=model_switch.verify, run_worker=run_song_worker,
                 stopping=STOP_FLAG.exists)
             from scripts.qq_companion.song_source_prepare import prepare_source
             dispatcher.prepare_source = lambda key: prepare_source(dispatcher.jobs, key)

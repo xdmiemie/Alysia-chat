@@ -56,6 +56,31 @@ def spoken_text(text: str) -> str:
     return ' '.join(content for content, voice in speech_parts(text) if voice)
 
 
+def delivered_content(raw: str, text: str, *, complete: bool, thinking_level: int = 3, voice: bool = False) -> str:
+    """Keep the original completed response; partial delivery keeps its metadata."""
+    if complete and raw:
+        return raw
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        value = None
+    key = ('reply' if isinstance(value.get('reply'), str) else
+           'follow_up' if isinstance(value.get('follow_up'), str) else None) if isinstance(value, dict) else None
+    if key is None:
+        value = {'reply': text, 'thinking_level': thinking_level, 'voice': voice}
+    else:
+        value[key] = text
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _clean_assistant_text(text: str) -> str:
+    try:
+        structured = isinstance(json.loads(text), dict)
+    except (ValueError, TypeError):
+        structured = False
+    return text if structured else CONTROL_MARKUP.sub('', text).strip()
+
+
 def chat_history(contexts):
     """Preserve dialogue/tool structure while excluding legacy private thought blocks."""
     clean = []
@@ -75,10 +100,10 @@ def chat_history(contexts):
                     decoded = None
                 if isinstance(decoded, list) and decoded and all(isinstance(p, dict) and "type" in p for p in decoded):
                     content = decoded
-                else:
-                    content = CONTROL_MARKUP.sub("", content).strip()
+                elif not value.get('tool_calls'):
+                    content = _clean_assistant_text(content)
             if isinstance(content, list):
-                content = [dict(part, text=CONTROL_MARKUP.sub("", part.get("text", "")).strip())
+                content = [dict(part, text=part.get('text', '') if value.get('tool_calls') else _clean_assistant_text(part.get("text", "")))
                            if isinstance(part, dict) and part.get("type") == "text" else part for part in content]
                 content = [part for part in content if not isinstance(part, dict) or part.get("type") != "text" or part.get("text")]
             value["content"] = content
@@ -91,18 +116,27 @@ def chat_history(contexts):
 
 
 def dialogue_view(messages):
-    """Only prior real dialogue, never persona/system messages or rejected drafts."""
+    """Recent real dialogue for optional post-Agent replies, without system data."""
     rows = []
     for message in chat_history(messages):
-        if message.get("role") not in {"user", "assistant"}:
+        if message.get("role") not in {"user", "assistant"} or message.get('tool_calls'):
             continue
         content = message.get("content", "")
         text = content if isinstance(content, str) else "\n".join(
             part.get("text", "") for part in (content if isinstance(content, list) else [])
             if isinstance(part, dict) and part.get("type") == "text")
+        if message['role'] == 'assistant':
+            try:
+                value = json.loads(text)
+            except (ValueError, TypeError):
+                value = None
+            if isinstance(value, dict):
+                text = value.get('reply', value.get('follow_up', ''))
+                if not isinstance(text, str):
+                    continue
         if message["role"] == "user":
             # QQ's assembled user message also contains IDs and date reminders.
-            # The checker needs what the person said, not those transport fields.
+            # Follow-up decisions need what the person said, not transport fields.
             parts = [content] if isinstance(content, str) else [
                 p.get("text", "") for p in (content if isinstance(content, list) else []) if isinstance(p, dict)]
             for part in parts:
@@ -117,6 +151,13 @@ def dialogue_view(messages):
         if text:
             rows.append({"role": message["role"], "content": text[:1200]})
     return rows[-8:]
+
+
+def protocol_view(messages, *, max_turns: int = 8):
+    """Recent complete user turns, preserving native content and tool pairs."""
+    rows = [m for m in chat_history(messages) if m.get('role') in {'user', 'assistant', 'tool'}]
+    users = [index for index, message in enumerate(rows) if message['role'] == 'user']
+    return rows[users[-max_turns]:] if len(users) > max_turns else rows
 
 
 def request_view(prompt):

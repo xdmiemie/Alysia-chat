@@ -12,7 +12,7 @@ if sys.version_info < (3, 12):
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "external/AstrBot"))
 
 from astrbot.core.agent.message import Message
-from integrations.qq_astrbot.plugin.context_budget import RequestBudget, ContextCapacityError, tool_result_view, action_receipts
+from integrations.qq_astrbot.plugin.context_budget import RequestBudget, ContextCapacityError, tool_result_view
 from scripts.qq_companion.probe_q3_local import LocalLoop
 
 
@@ -35,8 +35,6 @@ def test_song_table_preserves_all_versions_and_resolve_urls_without_receipts():
     assert recovered[-1]["candidate"] == 20 and recovered[-1]["audio_url"] == songs[-1]["audio_url"]
     assert "source_receipt" not in repr(view)
     assert original["songs"][0]["source_receipt"] == "private-program-receipt"
-    receipt = action_receipts([{"tool": "weapi", "result": original}])[0]["result"]
-    assert receipt["candidate_count"] == 20 and receipt["status"] == "completed"
 
 
 def test_budget_drops_whole_old_round_and_keeps_current_tool_pair(loop):
@@ -48,13 +46,15 @@ def test_budget_drops_whole_old_round_and_keeps_current_tool_pair(loop):
             return 9000 if any(m.content == "old" for m in messages) else 6000
         budget.count = count
         tools = object()
-        messages = [Message(role="system", content="persona"), Message(role="user", content="old"),
+        messages = [Message(role="system", content="persona"), Message(role="system", content="reply and agent rules"),
+            Message(role="user", content="old"),
             Message(role="assistant", content="already sent"), Message(role="user", content="current"),
             Message(role="assistant", content="", tool_calls=[{"id": "call", "type": "function", "function": {"name": "weapi", "arguments": "{}"}}]),
             Message(role="tool", content="result", tool_call_id="call")]
         fitted, count, dropped = await budget.fit(messages, tools)
         assert dropped == 1 and count == 6000
-        assert [m.role for m in fitted] == ["system", "user", "assistant", "tool"]
+        assert [m.role for m in fitted] == ["system", "system", "user", "assistant", "tool"]
+        assert [m.content for m in fitted[:2]] == ["persona", "reply and agent rules"]
         assert fitted[-1].tool_call_id == fitted[-2].tool_calls[0].id
         assert all(item is tools for item in observed)
     loop.run_until_complete(check())
@@ -106,6 +106,6 @@ def test_candidate_references_survive_pages_and_hide_internal_metadata():
 
 def test_budget_uses_same_phase_thinking_as_provider_request():
     provider = SimpleNamespace(provider_config={"custom_extra_body": {
-        "chat_template_kwargs": {"enable_thinking": True}}, "thinking_phases": {"check": False}})
+        "chat_template_kwargs": {"enable_thinking": True}}, "thinking_phases": {"followup": False}})
     assert RequestBudget(provider, "agent").enable_thinking is True
-    assert RequestBudget(provider, "check").enable_thinking is False
+    assert RequestBudget(provider, "followup").enable_thinking is False

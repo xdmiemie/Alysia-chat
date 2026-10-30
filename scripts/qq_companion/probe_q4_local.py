@@ -160,15 +160,14 @@ def main():
                 assert req.image_urls == [] and not json.loads(req.prompt)["image_understanding_available"]
                 plugin.media.client.state.leave(e.get_extra("qq_gpu_lease"))
 
-                # TTS failure retains every text segment; long group answers do
-                # not turn into a long recording or more than three messages.
+                # TTS failure returns control to the caller's full-text fallback;
+                # long group answers do not turn into a long recording.
                 async def fail(*args):
                     raise RuntimeError("injected TTS failure")
                 original = plugin.media.client.speech
                 plugin.media.client.speech = fail
                 chains = await plugin.media.voice_chains("一。二。三。四。", "sad", group=True)
-                assert len(chains) == 3 and all(isinstance(c.chain[0], Plain) for c in chains)
-                assert "".join(c.chain[0].text for c in chains) == "一。二。三。四。"
+                assert chains == []
                 assert await plugin.media.voice_chains("长" * 181, "neutral", group=True) == []
                 plugin.media.client.speech = original
 

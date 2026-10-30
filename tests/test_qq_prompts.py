@@ -45,6 +45,15 @@ def test_framework_replacement_retains_persona_and_respects_inactive_features():
     assert replace_framework_prompts("PERSONA", prompts, sources) == "PERSONA"
 
 
+def test_bundle_has_no_removed_judge_repair_or_unused_media_template():
+    from integrations.qq_astrbot.plugin.prompt_loader import REQUIRED_PROMPTS
+    values = yaml.safe_load(prompt_path().read_text(encoding="utf-8-sig"))
+    assert set(values) == REQUIRED_PROMPTS
+    assert {"followup_system", "followup_user"} <= set(values)
+    assert not {"media_decisions", "agent_completion_check", "agent_unverified_claim",
+                "agent_continue", "agent_repair", "agent_check_failed", "agent_restricted_close"} & set(values)
+
+
 def test_datetime_template_and_tool_schema_use_bundle_without_mutating_shared_schema():
     prompts = load_prompts()
     prompts["datetime_reminder"] = "日期 $current_time；星期 $weekday；文本 $100 {JSON}"

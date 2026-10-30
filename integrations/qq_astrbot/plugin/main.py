@@ -12,6 +12,7 @@ import time
 
 from astrbot.api import llm_tool, star
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.core.agent.message import Message
 from astrbot.core.astr_main_agent_resources import LLM_SAFETY_MODE_SYSTEM_PROMPT, TOOL_CALL_PROMPT
 from astrbot.core.message.components import At, Image, Plain, Record, Reply
 from astrbot.core.message.message_event_result import MessageChain
@@ -31,10 +32,19 @@ from .prompt_loader import (
     replace_framework_prompts,
 )
 from .reply_pacing import (
+    parse_followup,
     remaining_seconds,
     split_sentences,
 )
-from .reply_content import chat_history, spoken_text
+from .reply_content import chat_history, protocol_view, has_control_markup, spoken_text
+from .request_provider import request_chat
+from .context_budget import RequestBudget
+
+
+FOLLOWUP_FORMAT = {"type": "json_schema", "json_schema": {"name": "optional_followup", "strict": True,
+    "schema": {"type": "object", "properties": {"follow_up": {"type": ["string", "null"], "maxLength": 80},
+        "thinking_level": {"type": "integer", "enum": [1, 2, 3, 4, 5]}},
+        "required": ["follow_up", "thinking_level"], "additionalProperties": False}}}
 
 
 class Q1Guard(star.Star):
@@ -76,8 +86,11 @@ class Q1Guard(star.Star):
         self.media.run_active = lambda run_id: any(r.run_id == run_id and not r.cancel.is_set()
                                                    for r in self.agent_store.active.values())
         self.media.record_delivery = self.agent_store.record_id
-        self.media.record_group_result = lambda scope, key, text: self.router.context.add(scope, ContextMessage(
-            scope.split(":")[1], "bot", text, ["song:" + key], False, None, time.time(), "assistant"))
+        def record_group_result(scope, key, text):
+            self.router.context.add(scope, ContextMessage(
+                scope.split(":")[1], "bot", text, ["song:" + key], False, None, time.time(), "assistant"))
+            self.router.context.remember_protocol(scope, 'song:' + key, [{'role': 'assistant', 'content': text}])
+        self.media.record_group_result = record_group_result
 
     async def _group_size(self, event: AstrMessageEvent) -> int | None:
         group = getattr(event.message_obj, "group", None)
@@ -307,7 +320,7 @@ class Q1Guard(star.Star):
             if incoming.group_id:
                 # Rebuild group input solely from this group's TTL window.
                 # No legacy conversation (or unrelated plugin context) enters it.
-                req.contexts = []
+                req.contexts = chat_history(self.router.context.model_history(scope))
             else:
                 req.contexts = chat_history(req.contexts or [])
             current = asdict(incoming)
@@ -320,7 +333,8 @@ class Q1Guard(star.Star):
             req.prompt = json.dumps({"session_id": scope, "current_message": current,
                                      "input_modality": "voice" if event.get_extra("qq_voice_input") else "text",
                                      "image_understanding_available": False,
-                                     "recent_messages": json.loads(self.router.context.render(scope))
+                                     "recent_messages": [row for row in json.loads(self.router.context.render(scope))
+                                                         if row.get('role') != 'assistant']
                                      if incoming.group_id else []}, ensure_ascii=False)
             from astrbot.core.agent.tool import ToolSet
             req.func_tool = req.func_tool or ToolSet()
@@ -337,8 +351,13 @@ class Q1Guard(star.Star):
                 "astrbot_tool_call": TOOL_CALL_PROMPT,
             })
             replace_datetime_reminders(req.extra_user_content_parts, prompts)
+            # Background song notifications use their own task format. Private
+            # follow-ups inherit the complete system from NativeAgentLifecycle.
             event.set_extra("qq_persona_prompt", original_base)
-            req.system_prompt = "\n".join((base, prompts["qq_context"], prompts["reply_output"], prompts["agent_policy"]))
+            req.system_prompt = "\n".join((base, prompts["qq_context"]))
+            # The lifecycle inserts these rules as a second system message,
+            # retaining them for this run without saving them as chat history.
+            event.set_extra("qq_agent_rules_prompt", "\n".join((prompts["reply_output"], prompts["agent_policy"])))
             task_input = json.loads(req.prompt)
             tasks = getattr(self.media, 'song_tasks', None)
             task_input['active_music_tasks'] = [{k: row[k] for k in ('id', 'mode', 'title', 'state')}
@@ -358,28 +377,32 @@ class Q1Guard(star.Star):
             self._release_lease(event)
             raise RuntimeError("Pinned AstrBot active Runner is unavailable")
         event.set_extra("qq_agent_cleanup", lambda: self._release_lease(event))
+        incoming = event.get_extra('qq_incoming')
+        if incoming and incoming.group_id:
+            event.set_extra('qq_protocol_history', lambda messages: self.router.context.remember_protocol(
+                incoming.scope, incoming.message_id, messages))
         NativeAgentLifecycle(runner, self.agent_store, run, event).install()
 
     @filter.on_agent_done()
     async def unpack_paced_reply(self, event: AstrMessageEvent, run_context, response) -> None:
         if event.get_extra("qq_agent_run") is None:
             return
-        if not self._event_active(event) or not event.get_extra("qq_agent_approved"):
+        if not self._event_active(event) or not event.get_extra("qq_agent_completed"):
             response.result_chain = None
             response.completion_text = ""
             self._release_lease(event)
             return
-        from .agent_runtime import parse_candidate
-        candidate = parse_candidate(response.completion_text or "")
-        if candidate is None:
+        from .agent_runtime import parse_final_reply
+        reply = parse_final_reply(response.completion_text or "")
+        if reply is None:
             response.result_chain = None
             response.completion_text = ""
             self._release_lease(event)
             return
-        response.completion_text = candidate["reply"].strip()
-        event.set_extra("qq_thinking_level", candidate["thinking_level"])
-        event.set_extra("qq_primary_reply", candidate["reply"].strip())
-        event.set_extra("qq_voice", candidate["voice"])
+        response.completion_text = reply["reply"].strip()
+        event.set_extra("qq_thinking_level", reply["thinking_level"])
+        event.set_extra("qq_primary_reply", reply["reply"].strip())
+        event.set_extra("qq_voice", reply["voice"])
         event.set_extra("qq_run_context", run_context)
         self._release_song_hold(event)
 
@@ -395,7 +418,7 @@ class Q1Guard(star.Star):
         result = event.get_result()
         if result is None or not result.is_llm_result():
             return
-        if not self._event_active(event) or not event.get_extra("qq_agent_approved"):
+        if not self._event_active(event) or not event.get_extra("qq_agent_completed"):
             result.chain = []
             self._release_lease(event)
             return
@@ -427,7 +450,7 @@ class Q1Guard(star.Star):
                     self._release_lease(event)
                     return
                 except (BudgetExhausted, TimeoutError):
-                    chains = []  # Deliver the checked text without starting more synthesis.
+                    chains = []  # Deliver the final text without starting more synthesis.
         if not chains:
             sentences = split_sentences(reply)
             limit = 3 if event.get_group_id() else 6
@@ -455,8 +478,8 @@ class Q1Guard(star.Star):
                 self._release_lease(event)
                 return
             except (BudgetExhausted, TimeoutError):
-                pass  # No further generation: the approved response is ready to send.
-        # Critical: the input may have changed during synthesis/checking/typing.
+                pass  # No further generation: the response is ready to send.
+        # Critical: the input may have changed during synthesis or typing.
         if not self._event_active(event):
             result.chain = []
             self._release_lease(event)
@@ -477,12 +500,19 @@ class Q1Guard(star.Star):
             is_voice = any(isinstance(part, Record) for part in chain.chain)
             # Voice text is the spoken transcript; textual chunks are recorded individually.
             text = event.get_extra("qq_delivery_transcripts", [""])[index] if is_voice else chain.get_plain_text()
+            content = None
             if lifecycle:
-                lifecycle.sent(text, modality="voice" if is_voice else "text")
+                content = lifecycle.sent(text, modality="voice" if is_voice else "text",
+                    primary=True, complete=index == len(chains) - 1)
             if event.get_group_id() and text:
                 incoming = event.get_extra("qq_incoming")
-                self.router.context.add(incoming.scope, ContextMessage(incoming.bot_uin, "bot", text,
-                    ["assistant:" + incoming.message_id], False, incoming.message_id, time.time(), "assistant"))
+                key = 'assistant:' + incoming.message_id
+                if event.get_extra('qq_group_reply_saved'):
+                    self.router.context.replace_text(incoming.scope, key, content or text)
+                else:
+                    self.router.context.add(incoming.scope, ContextMessage(incoming.bot_uin, "bot", content or text,
+                        [key], False, incoming.message_id, time.time(), "assistant"))
+                    event.set_extra('qq_group_reply_saved', True)
         try:
             if chains:
                 remember(chains[0], 0)  # after_message_sent confirms the first successful send.
@@ -505,6 +535,8 @@ class Q1Guard(star.Star):
                 remember(chain, index)
             if self._event_active(event):
                 self.agent_store.status(run, "sent")
+                await self._maybe_followup(event)
+            if self._event_active(event):
                 await self.media.commit_run(run.run_id)
         except Superseded:
             return
@@ -515,6 +547,59 @@ class Q1Guard(star.Star):
             if self.agent_store.active.get(run.scope) is run:
                 self.agent_store.active.pop(run.scope)
             self._release_lease(event)
+
+    async def _maybe_followup(self, event):
+        """After the Agent and primary delivery, optionally send up to three text additions."""
+        run = event.get_extra("qq_agent_run")
+        lifecycle = event.get_extra("qq_agent_lifecycle")
+        if (event.get_group_id() or not run or run.closing or not lifecycle
+                or not self._event_active(event) or event.get_extra("qq_followup_finished")):
+            return
+        event.set_extra("qq_followup_finished", True)
+        provider = lifecycle.runner.provider
+        previous = event.get_extra("qq_primary_reply", "")
+        try:
+            while run.followups < 3:
+                prompts = load_prompts()
+                dialogue = protocol_view(lifecycle.initial_messages + lifecycle.tool_history() + lifecycle.sent_messages)
+                if not dialogue:
+                    return
+                messages = lifecycle.followup_system_messages(prompts) + [Message.model_validate(m) for m in dialogue]
+                messages.append(Message(role="user", content=prompts["followup_user"]))
+                budget = RequestBudget(provider, "followup")
+                budget.output_tokens = 160
+                fitted, tokens, dropped = await self.agent_store.wait(run, budget.fit(messages), timeout=10)
+                self.agent_store.consume(run, "followups")
+                self.agent_store.consume(run, "requests")
+                started = time.monotonic()
+                self.agent_store.record(run, "followup_request", {"number": run.followups,
+                    "dialogue": dialogue, "input_tokens": tokens, "dropped_turns": dropped})
+                response = await self.agent_store.wait(run, request_chat(provider, phase="followup",
+                    session_id=run.scope, contexts=fitted, func_tool=None,
+                    response_format=FOLLOWUP_FORMAT, max_tokens=160, temperature=0.5,
+                    request_max_retries=1), timeout=25)
+                raw = response.completion_text or ""
+                self.agent_store.record(run, "followup_generated", {"number": run.followups, "text": raw})
+                # A provider ignoring func_tool=None still cannot execute any tool.
+                if response.tools_call_name:
+                    self.agent_store.record(run, "followup_rejected", {"reason": "unexpected_tool_call"})
+                    return
+                text, level, valid = parse_followup(raw, previous)
+                if not valid or not text or has_control_markup(text):
+                    return
+                wait = remaining_seconds(text, level, started)
+                if wait > 0:
+                    await self.agent_store.wait(run, asyncio.sleep(wait))
+                if not self._event_active(event):
+                    return
+                await event.send(MessageChain().message(text))
+                lifecycle.sent(text, model_content=raw)
+                previous += "\n" + text
+        except (Superseded, BudgetExhausted, TimeoutError):
+            return
+        except Exception as exc:
+            self.agent_store.record(run, "followup_failed", {"error": type(exc).__name__})
+            self.logger.warning("QQ optional follow-up stopped: %s", type(exc).__name__)
 
     @filter.command("q1ping")
     async def q1ping(self, event: AstrMessageEvent):

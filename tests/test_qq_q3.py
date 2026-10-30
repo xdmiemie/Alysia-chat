@@ -80,6 +80,27 @@ def test_context_lru_and_owner_filtered_future_memory():
     assert memory.filter_memories("qq:999:group:201", rows) == [rows[1]]
 
 
+def test_protocol_window_keeps_whole_turns_and_expires_without_crossing_groups(monkeypatch):
+    clock = [100]
+    monkeypatch.setattr('integrations.qq_astrbot.plugin.memory_context.time.time', lambda: clock[0])
+    memory = MemoryContext(max_messages=2, ttl=5)
+    turn = [{'role': 'user', 'content': 'sing'}, {'role': 'assistant', 'content': None, 'tool_calls': [
+        {'id': 'call', 'type': 'function', 'function': {'name': 'weapi', 'arguments': '{}'}}]},
+        {'role': 'tool', 'content': '{"ok":true}', 'tool_call_id': 'call'},
+        {'role': 'assistant', 'content': '{"reply":"ready","thinking_level":2,"voice":false}'}]
+    memory.remember_protocol('group1', 'one', turn)
+    memory.remember_protocol('group2', 'two', [{'role': 'user', 'content': 'other group'}])
+    restored = memory.model_history('group1')
+    assert restored == turn
+    restored[-1]['content'] = 'changed'
+    assert memory.model_history('group1') == turn
+    clock[0] = 104
+    memory.remember_protocol('group1', 'one', turn)  # An update does not extend the turn's TTL.
+    clock[0] = 105
+    assert memory.model_history('group1') == []
+    assert memory.model_history('group2') == []
+
+
 @pytest.mark.parametrize("kwargs,expected", [
     ({"at_bot": True, "reply_to": "r", "reply_sender": "999"}, "at"),
     ({"reply_to": "r", "reply_sender": "999"}, "reply"),

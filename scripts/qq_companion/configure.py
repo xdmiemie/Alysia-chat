@@ -18,7 +18,7 @@ WS_URL = "ws://127.0.0.1:6199/ws"
 PLUGIN_FILES = ("main.py", "guard.py", "reply_pacing.py", "message_router.py",
                 "memory_context.py", "permissions.py", "prompt_loader.py", "api_client.py",
                 "media_state.py", "media_decision.py", "media_router.py", "agent_state.py",
-                "agent_runtime.py", "agent_tools.py", "reply_content.py", "request_provider.py", "context_budget.py", "song_tasks.py", "_conf_schema.json", "metadata.yaml")
+                "agent_runtime.py", "agent_tools.py", "reply_content.py", "request_provider.py", "model_debug.py", "context_budget.py", "song_tasks.py", "_conf_schema.json", "metadata.yaml")
 
 
 def read_json(path: Path) -> dict:

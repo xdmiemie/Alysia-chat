@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import re
-from collections import Counter
 from types import MethodType
 
 from astrbot.core.agent.message import Message
@@ -12,40 +10,31 @@ from astrbot.core.provider.entities import LLMResponse
 
 from .agent_state import AgentRun, AgentStore, BudgetExhausted, Superseded
 from .prompt_loader import load_prompts
-from .reply_content import chat_history, dialogue_view, has_control_markup, request_view
+from .reply_content import chat_history, delivered_content, request_view
 from .request_provider import RequestProvider, request_chat
-from .context_budget import RequestBudget, ContextCapacityError, WholeRoundCompressor, action_receipts
+from .context_budget import RequestBudget, ContextCapacityError, WholeRoundCompressor
 
-CHECK_FORMAT = {"type": "json_schema", "json_schema": {"name": "completion_check", "strict": True, "schema": {
-    "type": "object", "properties": {
-    "claims_music_started": {"type": "boolean"},
-    "claims_music_completed": {"type": "boolean"}, "claims_link_sent": {"type": "boolean"},
-    "claims_audio_sent": {"type": "boolean"},
-    "decision": {"type": "string", "enum": ["finish", "continue"]},
-    "instruction": {"type": "string", "maxLength": 800}}, "required": [
-        "claims_music_started", "claims_music_completed", "claims_link_sent", "claims_audio_sent", "decision", "instruction"], "additionalProperties": False}}}
-CLOSE_FORMAT = {"type": "json_schema", "json_schema": {"name": "restricted_close", "strict": True, "schema": {
-    "type": "object", "properties": {"reply": {"type": "string", "minLength": 1, "maxLength": 1500},
-    "thinking_level": {"type": "integer", "const": 1}, "voice": {"type": "boolean", "const": False}},
-    "required": ["reply", "thinking_level", "voice"], "additionalProperties": False}}}
-REPLY_FORMAT = {"type": "json_schema", "json_schema": {"name": "qq_reply", "strict": True, "schema": {
-    "type": "object", "properties": {"reply": {"type": "string", "minLength": 1, "maxLength": 1500},
-    "thinking_level": {"type": "integer", "enum": [1, 2, 3, 4, 5]}, "voice": {"type": "boolean"}},
-    "required": ["reply", "thinking_level", "voice"], "additionalProperties": False}}}
-
-
-def parse_candidate(text: str) -> dict | None:
+def parse_final_reply(text: str) -> dict | None:
+    """Decode delivery metadata locally; ordinary text never needs model repair."""
+    raw = text.strip()
+    if raw.startswith("```") and raw.endswith("```"):
+        raw = "\n".join(raw.splitlines()[1:-1]).strip()
     try:
-        value = json.loads(text)
+        value = json.loads(raw)
     except (ValueError, TypeError):
+        if not raw or raw.startswith(("{", "[")):
+            return None
+        value = {"reply": raw}
+    if not isinstance(value, dict) or not isinstance(value.get("reply"), str):
         return None
-    if (not isinstance(value, dict) or set(value) != {"reply", "thinking_level", "voice"}
-            or not isinstance(value["reply"], str) or not value["reply"].strip()
-            or len(value["reply"]) > 1500 or type(value["thinking_level"]) is not int
-            or not 1 <= value["thinking_level"] <= 5 or type(value["voice"]) is not bool
-            or has_control_markup(value["reply"])):
+    cleaned = chat_history([{"role": "assistant", "content": value["reply"]}])
+    reply = cleaned[0]["content"].strip()[:1500] if cleaned else ""
+    if not reply:
         return None
-    return value
+    level = value.get("thinking_level", 3)
+    if type(level) is not int or not 1 <= level <= 5:
+        level = 3
+    return {"reply": reply, "thinking_level": level, "voice": value.get("voice") is True}
 
 
 class SummaryProvider:
@@ -82,7 +71,7 @@ class SummaryProvider:
 
 
 class NativeAgentLifecycle:
-    """Keep AstrBot's protocol, executor, tool messages, fallback and compression.
+    """Keep native tool completion, budgets, executor and real delivery history.
 
     The pinned Runner has no public completion-veto API. Bind four instance
     methods from on_agent_begin; never patch the shared class/provider or vendor
@@ -91,16 +80,22 @@ class NativeAgentLifecycle:
     def __init__(self, runner, store: AgentStore, run: AgentRun, event):
         self.runner, self.store, self.run, self.event = runner, store, run, event
         self.initial_messages = [Message.model_validate(m) for m in chat_history(runner.run_context.messages)]
+        self.rules_message = None
+        if rules := event.get_extra("qq_agent_rules_prompt"):
+            self.rules_message = Message(role="system", content=rules)
+            index = 1 if self.initial_messages and self.initial_messages[0].role == "system" else 0
+            self.initial_messages.insert(index, self.rules_message)
         runner.run_context.messages = list(self.initial_messages)
         self.sent_messages: list[Message] = []
-        self.last_candidate: dict | None = None
+        self.primary_message = None
+        self.primary_parts = []
+        self.final_content = ""
+        self.tool_outputs = []
+        existing = runner.req.tool_calls_result
+        self.initial_tool_results = len(existing if isinstance(existing, list) else [existing] if existing else [])
         self.finished = False
-        self.continuations = []
-        self.invalid_candidates = 0
-        self.invalid_outputs = Counter()
-        self.format_repair = False
-        self.tool_repair = None
         self.state_message = None
+        self.regeneration_message = None
         self.original_iter = runner._iter_llm_responses
         self.original_complete = runner._complete_with_assistant_response
         self.original_abort = runner._finalize_aborted_step
@@ -130,7 +125,7 @@ class NativeAgentLifecycle:
 
         async def complete(_runner, response):
             try:
-                await adapter.candidate(response)
+                await adapter.complete(response)
             except Superseded:
                 adapter.clear_output(response)
                 _runner.request_stop()
@@ -177,14 +172,50 @@ class NativeAgentLifecycle:
         self.runner._await_or_stop = MethodType(bounded_await, self.runner)
 
     def restore_history(self):
-        # Only actual incoming messages and confirmed sends become dialogue.
-        self.runner.run_context.messages = self.initial_messages + self.sent_messages
+        # Retain native calls/results and the complete protocol content of sends.
+        # AstrBot omits only the first system message when saving history.
+        # Keep the separate rules in initial_messages for follow-up requests,
+        # but do not persist or accumulate them in subsequent conversations.
+        self.runner.run_context.messages = [message for message in self.initial_messages
+                                           if message is not self.rules_message] + self.tool_history() + self.sent_messages
+        callback = self.event.get_extra('qq_protocol_history')
+        if callback:
+            current = next((m for m in reversed(self.initial_messages) if m.role == 'user'), None)
+            callback(([current] if current else []) + self.tool_history() + self.sent_messages)
 
-    def sent(self, text: str, *, modality: str = "text"):
-        self.sent_messages.append(Message(role="assistant", content=text))
+    def tool_history(self):
+        results = self.runner.req.tool_calls_result or []
+        results = results if isinstance(results, list) else [results]
+        messages = []
+        for index, result in enumerate(results[self.initial_tool_results:]):
+            if index < len(self.tool_outputs):
+                ids, content = self.tool_outputs[index]
+                if tuple(call.get('id') if isinstance(call, dict) else call.id
+                         for call in result.tool_calls_info.tool_calls or []) == ids:
+                    result.tool_calls_info.content = content or None
+            messages.extend(Message.model_validate(m) for m in chat_history(result.to_openai_messages()))
+        return messages
+
+    def sent(self, text: str, *, modality: str = "text", model_content: str | None = None,
+             primary: bool = False, complete: bool = False):
+        if primary:
+            self.primary_parts.append(text)
+            content = delivered_content(self.final_content, ''.join(self.primary_parts), complete=complete,
+                thinking_level=self.event.get_extra('qq_thinking_level', 3),
+                voice=self.event.get_extra('qq_voice', False))
+            if self.primary_message is None:
+                self.primary_message = Message(role='assistant', content=content)
+                self.sent_messages.append(self.primary_message)
+            else:
+                self.primary_message.content = content
+        else:
+            content = model_content if model_content is not None else delivered_content('', text, complete=False,
+                thinking_level=self.event.get_extra('qq_thinking_level', 3), voice=modality == 'voice')
+            self.sent_messages.append(Message(role="assistant", content=content))
         if self.finished:
             self.restore_history()
         self.store.record(self.run, "sent", {"text": text, "modality": modality})
+        return content
 
     @staticmethod
     def clear_output(response):
@@ -212,26 +243,40 @@ class NativeAgentLifecycle:
             "registered_song_candidates": sorted(self.run.candidate_refs),
             "last_preflight_rejection": last_rejection}
 
+    def execution_state_message(self, prompts):
+        return Message(role="system", content=prompts["agent_execution_state"] + "\n" +
+            json.dumps(self.execution_state(), ensure_ascii=False, separators=(",", ":")))
+
+    def followup_system_messages(self, prompts):
+        # Preserve the complete main system messages, including multipart
+        # content, rather than the event's pre-assembly persona snapshot.
+        messages = [message.model_copy(deep=True) for message in self.initial_messages
+                    if message.role == "system"]
+        messages.extend((self.execution_state_message(prompts),
+                         Message(role="system", content=prompts["followup_phase"]),
+                         Message(role="system", content=prompts["followup_system"])))
+        return messages
+
     def update_execution_state(self):
         messages = self.runner.run_context.messages
         messages[:] = [m for m in messages if m is not self.state_message and m != self.state_message]
-        self.state_message = Message(role="system", content=load_prompts()["agent_execution_state"] + "\n" +
-            json.dumps(self.execution_state(), ensure_ascii=False, separators=(",", ":")))
+        self.state_message = self.execution_state_message(load_prompts())
         messages.append(self.state_message)
 
     async def responses(self, **kwargs):
         try:
             self.store.work(self.run)
-            # Reserve the final request for a bounded, tool-free close.
-            if self.run.requests >= self.run.max_requests - 1 or self.run.tool_calls >= self.run.max_tools:
+            self.tool_history()  # Restore ignored delivery content on the native tool messages.
+            native_limit = self.runner._step_budget_max
+            if (self.run.requests >= self.run.max_requests or self.run.tool_calls >= self.run.max_tools
+                    or (native_limit is not None and self.runner._step_budget_used >= native_limit)):
                 self.run.closing = True
-            if self.run.closing:
-                yield await self.restricted_close()
+                yield self.fallback()
                 return
             self.update_execution_state()
-            budget = RequestBudget(self.runner.provider, "repair" if self.format_repair else "agent")
+            budget = RequestBudget(self.runner.provider, "agent")
             messages, tokens, dropped = await self.store.wait(self.run,
-                budget.fit(self.runner.run_context.messages, None if self.format_repair else self.runner.req.func_tool), timeout=10)
+                budget.fit(self.runner.run_context.messages, self.runner.req.func_tool), timeout=10)
             self.runner.run_context.messages = messages
             if tokens is not None:
                 self.store.record(self.run, "context_budget", {"input_tokens": tokens,
@@ -241,33 +286,21 @@ class NativeAgentLifecycle:
                 self.store.ensure_current(self.run)
                 if response.is_chunk:
                     continue
-                raw = response.completion_text or ""
-                self.store.record(self.run, "generated", {"text": raw, "tools": response.tools_call_name})
+                self.store.record(self.run, "generated", {"text": response.completion_text or "",
+                                                         "tools": response.tools_call_name})
+                if self.regeneration_message is not None:
+                    self.runner.run_context.messages = [m for m in self.runner.run_context.messages
+                        if m is not self.regeneration_message and m != self.regeneration_message]
+                    self.regeneration_message = None
                 response.reasoning_content = None
-                if response.role == "err":
-                    self.run.closing = True
-                    yield self.fallback()
-                    return
                 finish = None
                 if response.raw_completion and getattr(response.raw_completion, "choices", None):
                     finish = response.raw_completion.choices[0].finish_reason
-                if finish in {"length", "content_filter"}:
-                    # Never execute a truncated call or semantically approve a partial draft.
-                    response.tools_call_name = []
-                    response.tools_call_args = []
-                    response.tools_call_ids = []
-                    self.clear_output(response)
-                elif response.tools_call_name:
-                    if self.format_repair:
-                        # Formatting is a content-only internal regeneration;
-                        # a provider ignoring that restriction cannot run tools.
-                        response.tools_call_name = []
-                        response.tools_call_args = []
-                        response.tools_call_ids = []
-                        self.clear_output(response)
-                        yield response
-                        continue
-                    self.tool_repair = None
+                if response.role == "err" or finish in {"length", "content_filter"}:
+                    self.run.closing = True
+                    yield self.fallback()
+                    return
+                if response.tools_call_name:
                     import jsonschema
                     for index, name in enumerate(response.tools_call_name):
                         tool = self.runner.req.func_tool.get_tool(name) if self.runner.req.func_tool else None
@@ -275,13 +308,15 @@ class NativeAgentLifecycle:
                             try:
                                 jsonschema.validate(response.tools_call_args[index], tool.parameters)
                             except (jsonschema.ValidationError, IndexError):
-                                # Preserve a real call/result round-trip, but no malformed
-                                # original argument can become executable after filtering.
                                 while len(response.tools_call_args) <= index:
                                     response.tools_call_args.append({})
                                 response.tools_call_args[index] = {}
                                 self.store.record(self.run, "invalid_tool_arguments", {"tool": name})
-                    # Tool-step prose is an internal draft, never a QQ reply.
+                    self.tool_outputs.append((tuple(response.tools_call_ids or []), response.completion_text or ''))
+                    # Preserve tool-stage content in protocol history, but never
+                    # parse, deliver or regenerate it as a user-facing reply.
+                    if response.completion_text:
+                        self.store.record(self.run, "tool_content_ignored", {"tools": response.tools_call_name})
                     self.clear_output(response)
                 yield response
         except Superseded:
@@ -292,226 +327,57 @@ class NativeAgentLifecycle:
         except Exception as exc:
             fallbacks = self.runner.fallback_providers
             if fallbacks and self.runner.provider is not fallbacks[-1] and not isinstance(exc, ContextCapacityError):
-                raise  # Let AstrBot try the next provider with the same run budgets.
-            # Provider errors are not dialogue. A bounded terminal response is
-            # still version-checked and audited by the normal completion path.
+                raise
             self.store.record(self.run, "model_failed", {"error": type(exc).__name__})
             self.run.closing = True
             yield self.fallback()
 
     async def main_responses(self, **kwargs):
-        # Preserve native request construction, tool executor and fallback
-        # identities. Only this Runner sees the temporary request-options view.
         provider = self.runner.provider
-        options = {}
-        if self.tool_repair and not self.format_repair:
-            # Regenerate a native call for the registered tool selected by the
-            # model. Plain-text arguments never become executable.
-            options["tool_choice"] = {"type": "function", "function": {"name": self.tool_repair}}
-        self.runner.provider = RequestProvider(provider, phase="repair" if self.format_repair else "agent",
-            content_only=self.format_repair, response_format=REPLY_FORMAT, **options)
+        self.runner.provider = RequestProvider(provider, phase="agent")
         try:
             async for response in self.original_iter(**kwargs):
                 yield response
         finally:
             self.runner.provider = provider
 
-    def completion_input(self, candidate=None):
-        with self.store.connection() as db:
-            actions = [dict(row) for row in db.execute(
-                "SELECT tool,arguments,status,result FROM actions WHERE run_id=?", (self.run.run_id,))]
-            sent = [json.loads(row[0]) for row in db.execute(
-                "SELECT payload FROM audit WHERE run_id=? AND kind='sent' ORDER BY id", (self.run.run_id,))]
-            rejections = [json.loads(row[0]) for row in db.execute(
-                "SELECT payload FROM audit WHERE run_id=? AND kind='tool_rejected' ORDER BY id DESC LIMIT 5", (self.run.run_id,))]
-        for action in actions:
-            for key in ("arguments", "result"):
-                action[key] = json.loads(action[key]) if action[key] else None
-        value = {"check_number": self.run.checks,
-            "current_request": request_view(self.runner.req.prompt),
-            "dialogue": dialogue_view(self.initial_messages + self.sent_messages), "sent_this_run": sent,
-            "delivery_facts": {"any_message_sent": bool(sent),
-                "link_sent": any(re.search(r"https?://", message.get("text", "")) for message in sent),
-                "audio_sent": any(message.get("modality") in {"voice", "audio"} for message in sent)},
-            "background_tasks": [{"tool": action["tool"], "job_id": action["result"]["job_id"],
-                "song": action_receipts([action], self.run)[0]["result"].get("song"),
-                "state": "accepted_waiting_for_foreground_release"}
-                for action in actions if action["tool"] in {"music", "musiccover"}
-                and isinstance(action.get("result"), dict) and action["result"].get("ok") is True
-                and action["result"].get("status") == "queued" and action["result"].get("job_id")],
-            "reply_delivery": {"state": "after_approval", "automatic_tts": True},
-            "available_tools": [{"name": t.name, "description": t.description} for t in
-                (self.runner.req.func_tool.tools if self.runner.req.func_tool else [])],
-            "actions": action_receipts(actions, self.run)}
-        for rejection in rejections:
-            rejection["resolved"] = (rejection.get("result", {}).get("error") == "candidate_not_registered"
-                and rejection.get("arguments", {}).get("candidate") in self.run.candidate_refs)
-        # Resolved failures remain in the audit/native tool history, but they
-        # are not current blockers. Repeating them misleads non-reasoning checks.
-        value["preflight_rejections"] = [row for row in reversed(rejections) if not row["resolved"]]
-        # Keep the current evidence and candidate after historical dialogue.
-        # A non-reasoning judge must not confuse an earlier failure with this
-        # run's accepted task or treat a pending reply as a failed delivery.
-        value["current_task_facts"] = {"accepted_music": bool(value["background_tasks"]),
-            "music_completed": any(action["tool"] in {"music", "musiccover"}
-                and isinstance(action.get("result"), dict) and action["result"].get("completed") is True for action in actions),
-            "accepted_songs": [task["song"] for task in value["background_tasks"]],
-            "waiting_for_this_reply": bool(value["background_tasks"]),
-            "candidate_not_sent_yet": True, **self.execution_state(),
-            "known_songs": [{"candidate": ref, **{key: self.run.candidates[song_id].get(key)
-                for key in ("title", "artists", "aliases", "available")}}
-                for ref, song_id in list(self.run.candidate_refs.items())[-10:]]}
-        value["draft_reply"] = candidate
-        return value
-
-    async def restricted_close(self):
-        self.run.closing = True
-        self.runner.req.func_tool = None
-        prompts = load_prompts()
-        persona = self.event.get_extra("qq_persona_prompt", "")
-        system = "\n".join(part for part in (persona, prompts["agent_restricted_close"]) if part)
-        budget = RequestBudget(self.runner.provider, "close")
-        try:
-            self.store.consume(self.run, "requests")
-            close_input = self.completion_input()
-            # Rejected drafts and old repair instructions are not evidence.
-            close_input.pop("draft_reply")
-            close_input.pop("available_tools")
-            # Persona supplies style; old conversation failures are not facts
-            # about this run. Closing only needs the current request/receipts.
-            close_input.pop("dialogue")
-            close_input["invalid_candidates"] = self.invalid_candidates
-            messages, _, _ = await self.store.wait(self.run, budget.fit([
-                Message(role="system", content=system),
-                Message(role="user", content=json.dumps(close_input, ensure_ascii=False))]), timeout=10)
-            response = await self.store.wait(self.run, request_chat(self.runner.provider, phase="close",
-                contexts=self.runner._sanitize_contexts_for_provider(messages[1:]),
-                system_prompt=system, func_tool=None,
-                response_format=CLOSE_FORMAT, max_tokens=budget.output_tokens, request_max_retries=1), timeout=30)
-            self.store.record(self.run, "restricted_close", {"text": response.completion_text or ""})
-            value = parse_candidate(response.completion_text or "")
-            if (not response.tools_call_name and value and value["thinking_level"] == 1
-                    and value["voice"] is False):
-                return response
-        except Superseded:
-            raise
-        except Exception as exc:
-            self.store.record(self.run, "close_failed", {"error": type(exc).__name__})
-        return self.fallback()
-
-    async def candidate(self, response):
+    async def complete(self, response):
+        # The native Runner reaches this method only when there are no tool calls.
+        # Parse locally. One invalid-output regeneration is shared by the whole run.
         self.store.ensure_current(self.run)
-        raw = response.completion_text or ""
-        value = parse_candidate(raw)
-        if self.run.closing:
-            if value is None or value["thinking_level"] != 1 or value["voice"] is not False:
-                response.result_chain = None
-                response.completion_text = self.fallback().completion_text
-            await self.finish(response)
-            return
+        original_content = response.completion_text or ""
+        value = parse_final_reply(original_content)
         if value is None:
-            self.invalid_candidates += 1
-            self.tool_repair = None
-            try:
-                decoded = json.loads(raw)
-                fingerprint = json.dumps(decoded, ensure_ascii=False, sort_keys=True)
-                error = "control_markup" if isinstance(decoded, dict) and has_control_markup(str(decoded.get("reply", ""))) else (
-                    "tool_in_content" if isinstance(decoded, dict) and "name" in decoded and "arguments" in decoded else "invalid_fields")
-                tools = self.runner.req.func_tool
-                if (error == "tool_in_content" and isinstance(decoded.get("name"), str)
-                        and isinstance(decoded.get("arguments"), dict) and tools and tools.get_tool(decoded["name"])):
-                    self.tool_repair = decoded["name"]
-            except (ValueError, TypeError):
-                fingerprint, error = raw.strip(), "invalid_json"
-            self.invalid_outputs[fingerprint] += 1
-            self.store.record(self.run, "invalid_candidate", {"text": raw, "error": error,
-                "number": self.invalid_candidates, "repeated": self.invalid_outputs[fingerprint]})
-            if self.invalid_candidates >= 3 or self.invalid_outputs[fingerprint] >= 2:
-                self.store.record(self.run, "repair_exhausted", {"number": self.invalid_candidates})
-                await self.close_candidate(response)
-            else:
-                self.format_repair = error != "tool_in_content"
-                if self.tool_repair:
-                    self.store.record(self.run, "tool_protocol_repair", {"tool": self.tool_repair})
-                self.continue_run(response, load_prompts()["agent_repair"].replace("$error", error), retain_candidate=False)
-            return
-        self.format_repair = False
-        self.tool_repair = None
-        self.last_candidate = value
-        try:
-            # Reserve before I/O: malformed responses and timeouts cost a check.
-            self.store.consume(self.run, "checks")
-            self.store.consume(self.run, "requests")
-            prompts = load_prompts()
-            check_input = self.completion_input(value)
-            while True:
+            self.store.record(self.run, "invalid_reply", {"text": response.completion_text or ""})
+            native_limit = self.runner._step_budget_max
+            can_retry = (not self.run.closing and self.run.reply_retries < 1
+                and self.run.requests < self.run.max_requests and self.run.tool_calls < self.run.max_tools
+                and (native_limit is None or self.runner._step_budget_used + 1 < native_limit))
+            if can_retry:
                 try:
-                    await self.store.wait(self.run, RequestBudget(self.runner.provider, "check").fit([
-                        Message(role="system", content=prompts["agent_completion_check"]),
-                        Message(role="user", content=json.dumps(check_input, ensure_ascii=False, separators=(",", ":")))]), timeout=10)
-                    break
-                except ContextCapacityError:
-                    if not check_input["dialogue"]:
-                        raise
-                    check_input["dialogue"].pop(0)
-            self.store.record(self.run, "check_input", check_input)
-            result = await self.store.wait(self.run, request_chat(self.runner.provider, phase="check",
-                system_prompt=prompts["agent_completion_check"],
-                prompt=json.dumps(check_input, ensure_ascii=False, separators=(",", ":")), func_tool=None,
-                response_format=CHECK_FORMAT, max_tokens=RequestBudget(self.runner.provider, "check").output_tokens, request_max_retries=1), timeout=25)
-            verdict = json.loads(result.completion_text or "")
-            claims = {"claims_music_started": check_input["current_task_facts"]["accepted_music"],
-                "claims_music_completed": check_input["current_task_facts"]["music_completed"],
-                "claims_link_sent": check_input["delivery_facts"]["link_sent"],
-                "claims_audio_sent": check_input["delivery_facts"]["audio_sent"]}
-            if (result.tools_call_name or not isinstance(verdict, dict) or set(verdict) != {"decision", "instruction", *claims}
-                    or verdict["decision"] not in {"finish", "continue"}
-                    or any(type(verdict[key]) is not bool for key in claims)
-                    or not isinstance(verdict["instruction"], str) or len(verdict["instruction"]) > 800):
-                raise ValueError("invalid_completion_verdict")
-            if any(verdict[key] and not evidence for key, evidence in claims.items()):
-                # Extraction and verdict are one semantic request. Acceptance
-                # cannot override an extracted claim lacking actual evidence.
-                verdict.update(decision="continue", instruction=prompts["agent_unverified_claim"])
-            self.store.record(self.run, "semantic_check", {"number": self.run.checks, **verdict})
-        except Superseded:
-            raise
-        except Exception as exc:
-            self.store.record(self.run, "check_failed", {"number": self.run.checks, "error": type(exc).__name__})
-            verdict = {"decision": "continue", "instruction": load_prompts()["agent_check_failed"]}
-        self.store.ensure_current(self.run)
-        if verdict["decision"] == "finish":
-            await self.finish(response)
-        elif self.run.checks >= 3:
-            await self.close_candidate(response)
+                    self.store.consume(self.run, "reply_retries")
+                except BudgetExhausted:
+                    self.run.closing = True
+                else:
+                    self.regeneration_message = Message(role="system", content=load_prompts()["agent_reply_regenerate"]
+                        + "\n" + json.dumps({"invalid_output": (response.completion_text or "")[:1500]}, ensure_ascii=False))
+                    self.runner.run_context.messages.append(self.regeneration_message)
+                    self.store.record(self.run, "reply_regeneration", {"number": self.run.reply_retries})
+                    self.clear_output(response)
+                    return
+            response.completion_text = self.fallback().completion_text
+            original_content = response.completion_text
         else:
-            self.continue_run(response, verdict["instruction"])
+            response.completion_text = json.dumps(value, ensure_ascii=False)
+        await self.finish(response, content=original_content)
 
-    async def close_candidate(self, response):
-        closed = await self.restricted_close()
-        response.result_chain = closed.result_chain
-        response.completion_text = closed.completion_text
-        response.reasoning_content = None
-        await self.finish(response)
-
-    def continue_run(self, response, instruction, *, retain_candidate=False):
-        # Old rejected drafts are audited separately. Retain the latest repair
-        # instruction while keeping all native call/result pairs in this run.
-        self.runner.run_context.messages = [m for m in self.runner.run_context.messages
-            if not any(m is previous for previous in self.continuations)]
-        self.continuations = []
-        if response.completion_text and retain_candidate:
-            self.continuations.append(Message(role="assistant", content=response.completion_text))
-        self.continuations.append(Message(role="system", content=
-            load_prompts()["agent_continue"].replace("$instruction", instruction)))
-        self.runner.run_context.messages.extend(self.continuations)
-        self.clear_output(response)
-
-    async def finish(self, response):
+    async def finish(self, response, *, content=None):
         self.store.ensure_current(self.run)
-        self.event.set_extra("qq_agent_approved", True)
-        self.store.record(self.run, "approved", {"text": response.completion_text})
+        self.final_content = response.completion_text if content is None else content
+        self.event.set_extra('qq_primary_model_content', self.final_content)
+        self.event.set_extra("qq_agent_completed", True)
+        self.store.record(self.run, "completed", {"text": response.completion_text})
         await self.original_complete(response)
         self.finished = True
         self.restore_history()
-        self.store.status(self.run, "approved")
+        self.store.status(self.run, "completed")

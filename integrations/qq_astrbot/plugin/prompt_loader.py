@@ -14,12 +14,12 @@ REQUIRED_PROMPTS = frozenset({
     "qq_context", "reply_output",
     "astrbot_safety", "astrbot_tool_call", "datetime_reminder",
     "echo_description", "echo_value_description",
-    "media_decisions", "music_result", "music_selection", "music_clarification",
-    "agent_policy", "agent_completion_check", "agent_continue", "agent_repair", "agent_check_failed",
-    "agent_restricted_close", "agent_budget_reply", "tool_emotion", "tool_musiccover", "tool_music",
+    "music_result", "music_selection", "music_clarification",
+    "agent_policy", "agent_reply_regenerate", "followup_system", "followup_user", "followup_phase",
+    "agent_budget_reply", "tool_emotion", "tool_musiccover", "tool_music",
     "tool_sticker", "tool_weapi", "tool_speech_text", "tool_emotion_value", "tool_song_id",
     "tool_sticker_tag", "tool_weapi_action", "tool_music_query", "tool_music_page", "tool_song_action",
-    "tool_candidate", "agent_summary", "agent_execution_state", "agent_unverified_claim", "music_reselection",
+    "tool_candidate", "agent_summary", "agent_execution_state", "music_reselection",
 })
 
 

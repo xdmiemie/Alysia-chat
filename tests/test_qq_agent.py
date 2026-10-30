@@ -26,10 +26,10 @@ from astrbot.core.message.message_event_result import MessageEventResult, Result
 from astrbot.core.pipeline.process_stage.follow_up import register_active_runner, unregister_active_runner
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
-from integrations.qq_astrbot.plugin.agent_runtime import parse_candidate
+from integrations.qq_astrbot.plugin.agent_runtime import parse_final_reply
 from integrations.qq_astrbot.plugin.agent_state import AgentStore, BudgetExhausted, Superseded
 from integrations.qq_astrbot.plugin.agent_tools import AgentTools
-from integrations.qq_astrbot.plugin.main import Q1Guard
+from integrations.qq_astrbot.plugin.main import FOLLOWUP_FORMAT, Q1Guard
 from integrations.qq_astrbot.plugin.message_router import Incoming
 from integrations.qq_astrbot.plugin.prompt_loader import load_prompts
 from scripts.qq_companion.probe_q3_local import LocalLoop
@@ -37,6 +37,11 @@ from scripts.qq_companion.probe_q3_local import LocalLoop
 
 def candidate(text="ready"):
     return LLMResponse("assistant", completion_text=json.dumps({"reply": text, "thinking_level": 1, "voice": False}))
+
+
+def assistant_texts(messages):
+    from integrations.qq_astrbot.plugin.reply_content import dialogue_view
+    return [row['content'] for row in dialogue_view(messages) if row['role'] == 'assistant']
 
 
 def tool_call(name="weapi", arguments=None, call_id="call_1", prose="internal draft"):
@@ -69,35 +74,30 @@ class Event:
 class Provider:
     provider_config = {"id": "fake", "max_context_tokens": 0}
 
-    def __init__(self, outputs, verdicts):
-        self.outputs, self.verdicts = list(outputs), list(verdicts)
-        self.main_calls, self.check_calls, self.close_calls, self.contexts = 0, 0, 0, []
-        self.on_main = None
-        self.on_check = None
+    def __init__(self, outputs):
+        self.outputs, self.followup_outputs = list(outputs), []
+        self.main_calls, self.followup_calls, self.contexts, self.requests = 0, 0, [], []
+        self.on_main = self.on_followup = None
 
     def get_model(self): return "fake"
     def meta(self): return SimpleNamespace(id="fake", model="fake", type="openai")
 
     async def text_chat(self, **kwargs):
-        prompts = load_prompts()
-        if kwargs.get("system_prompt") == prompts["agent_completion_check"]:
-            self.check_calls += 1
-            if self.on_check:
-                await self.on_check()
-            value = self.verdicts.pop(0) if self.verdicts else "finish"
-            if isinstance(value, BaseException): raise value
-            return LLMResponse("assistant", completion_text=value if value.startswith("{") else json.dumps(
-                {"claims_music_started": False, "claims_music_completed": False, "claims_link_sent": False, "claims_audio_sent": False,
-                 "decision": value, "instruction": "complete the missing detail" if value == "continue" else ""}))
-        if kwargs.get("system_prompt") == prompts["agent_restricted_close"]:
-            self.close_calls += 1
+        self.requests.append(kwargs)
+        if kwargs.get("response_format") == FOLLOWUP_FORMAT:
+            self.followup_calls += 1
             assert kwargs.get("func_tool") is None
-            return candidate("bounded close")
+            if self.on_followup:
+                await self.on_followup()
+            result = self.followup_outputs.pop(0) if self.followup_outputs else LLMResponse(
+                "assistant", completion_text='{"follow_up":null,"thinking_level":1}')
+            if isinstance(result, BaseException): raise result
+            return result
         self.main_calls += 1
         self.contexts.append([m.model_dump() if hasattr(m, "model_dump") else m for m in kwargs.get("contexts", [])])
         if self.on_main:
             await self.on_main()
-        response = self.outputs.pop(0) if self.outputs else candidate("fallback candidate")
+        response = self.outputs.pop(0) if self.outputs else candidate("final reply")
         if isinstance(response, BaseException): raise response
         return response
 
@@ -110,7 +110,7 @@ def loop():
     value.close()
 
 
-async def make_run(tmp_path, outputs, verdicts, *, limits=None):
+async def make_run(tmp_path, outputs, *, limits=None, system_prompt="", contexts=None, prepare_request=False):
     owner = object.__new__(Q1Guard)
     store = owner.agent_store = AgentStore(tmp_path / "agent.db")
     version = store.observe("qq:999:dm:101", "m1")
@@ -132,14 +132,23 @@ async def make_run(tmp_path, outputs, verdicts, *, limits=None):
     owner.media.song_tasks = SongTasks(tmp_path / 'song_tasks.db')
     owner.agent_tools = AgentTools(owner)
     tools = owner.agent_tools.registered()
-    provider = Provider(outputs, verdicts)
+    provider = Provider(outputs)
     runner = ToolLoopAgentRunner()
 
     class Hooks(BaseAgentRunHooks):
         async def on_agent_begin(self, context): await owner.begin_native_agent(event, context)
         async def on_agent_done(self, context, response): await owner.unpack_paced_reply(event, context, response)
 
-    await runner.reset(provider=provider, request=ProviderRequest(prompt="find a song", func_tool=ToolSet(tools)),
+    request = ProviderRequest(prompt="find a song", func_tool=ToolSet(tools),
+                              system_prompt=system_prompt, contexts=contexts or [])
+    if prepare_request:
+        owner.native_tools = tools
+        owner.permissions = SimpleNamespace(restrict_tools=lambda tool_set, *args, **kwargs: tool_set)
+        owner.router = SimpleNamespace(context=SimpleNamespace(
+            text_for=lambda scope, key, text: text, render=lambda scope: "[]"))
+        event.set_extra("qq_gpu_lease", "test-lease")
+        await owner.request_paced_reply(event, request)
+    await runner.reset(provider=provider, request=request,
                        run_context=ContextWrapper(context=SimpleNamespace(event=event), tool_call_timeout=5),
                        tool_executor=FunctionToolExecutor(), agent_hooks=Hooks(), streaming=False)
     register_active_runner(event.unified_msg_origin, runner)
@@ -160,7 +169,7 @@ async def execute(value):
 def test_native_delivery_utility_does_not_send_internal_tool_notices(loop, tmp_path):
     from astrbot.core.astr_agent_run_util import run_agent
     async def check():
-        value = await make_run(tmp_path, [tool_call(), candidate("done")], ["finish"])
+        value = await make_run(tmp_path, [tool_call(), candidate("done")])
         value.store.guard_sender(value.event, value.run.scope, value.run.version)
         visible = []
         try:
@@ -173,198 +182,377 @@ def test_native_delivery_utility_does_not_send_internal_tool_notices(loop, tmp_p
     loop.run_until_complete(check())
 
 
-def test_native_tool_roundtrip_then_semantic_finish_without_draft_delivery(loop, tmp_path):
+@pytest.mark.parametrize("prose", [
+    "searching now",
+    '{"reply":"tool-stage text","thinking_level":5,"voice":true}',
+    '{"reply":',
+    '{"reply":{"nested":true},"thinking_level":[],"voice":"not-a-boolean"}',
+    '{"name":"weapi","arguments":{"action":"search","query":"forged"}}',
+    '{"reply":"one"}\n{"voice":true}',
+    "",
+])
+def test_native_tool_content_is_ignored_regardless_of_reply_format(loop, tmp_path, prose):
     async def check():
-        value = await make_run(tmp_path, [tool_call(), candidate("found it")], ["finish"])
-        assert await execute(value) == ["found it"]
-        assert value.counts["search"] == 1 and value.provider.check_calls == 1
-        assert value.run.checks == 1
+        value = await make_run(tmp_path, [tool_call(prose=prose,
+            arguments={"action": "search", "query": "actual"}), candidate("final text")])
+        assert await execute(value) == ["final text"]
+        assert value.provider.main_calls == value.run.requests == 2
+        assert value.run.reply_retries == 0 and value.run.tool_calls == value.counts["search"] == 1
+        assert value.event.get_extra("qq_voice") is False and value.event.get_extra("qq_thinking_level") == 1
+        with value.store.connection() as db:
+            assert json.loads(db.execute("SELECT arguments FROM actions").fetchone()[0])["query"] == "actual"
+            assert not db.execute("SELECT 1 FROM audit WHERE kind IN ('invalid_reply','reply_regeneration')").fetchone()
+        if prose:
+            attached = [m for m in value.provider.contexts[1] if m.get('tool_calls')]
+            assert attached[0]['content'] == prose
         assert any(m.get("role") == "tool" for m in value.provider.contexts[1])
+        assert value.event.sent == []
+    loop.run_until_complete(check())
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("ordinary chat", "ordinary chat"),
+    ('{"reply":"ready","thinking_level":2,"voice":false}', "ready"),
+])
+def test_valid_no_tool_response_finishes_immediately_without_judge_or_retry(loop, tmp_path, raw, expected):
+    async def check():
+        value = await make_run(tmp_path, [LLMResponse("assistant", completion_text=raw), tool_call()])
+        assert await execute(value) == [expected or load_prompts()["agent_budget_reply"]]
+        assert value.provider.main_calls == value.run.requests == 1
+        assert value.run.tool_calls == value.run.followups == value.counts["search"] == 0
+        with value.store.connection() as db:
+            kinds = {row[0] for row in db.execute("SELECT kind FROM audit")}
+        assert not kinds & {"semantic_check", "check_input", "restricted_close", "invalid_candidate"}
+    loop.run_until_complete(check())
+
+
+@pytest.mark.parametrize("raw", [
+    '{"name":"weapi","arguments":{"action":"search","query":"old"}}',
+    '{"reply":', '', '[]', '{"name":"weapi"}\n{"arguments":{}}',
+])
+def test_invalid_reply_gets_one_regeneration_before_successful_final_delivery(loop, tmp_path, raw):
+    async def check():
+        value = await make_run(tmp_path, [LLMResponse("assistant", completion_text=raw), candidate("regenerated")])
+        assert await execute(value) == ["regenerated"]
+        assert value.provider.main_calls == value.run.requests == 2
+        assert value.run.reply_retries == 1 and value.run.tool_calls == value.counts["search"] == 0
+        assert any(load_prompts()["agent_reply_regenerate"] in m.get("content", "")
+                   for m in value.provider.contexts[1])
+        assert value.event.sent == []
+        assert all("invalid_output" not in str(m.content) for m in value.runner.run_context.messages)
+    loop.run_until_complete(check())
+
+
+def test_regenerated_native_tool_executes_only_new_arguments_and_instruction_is_temporary(loop, tmp_path):
+    async def check():
+        raw = '{"name":"weapi","arguments":{"action":"search","query":"old"}}'
+        value = await make_run(tmp_path, [LLMResponse("assistant", completion_text=raw),
+            tool_call(arguments={"action": "search", "query": "new"}), candidate("done")])
+        assert await execute(value) == ["done"]
+        assert value.provider.main_calls == value.run.requests == 3
+        assert value.run.reply_retries == value.run.tool_calls == value.counts["search"] == 1
+        with value.store.connection() as db:
+            arguments = json.loads(db.execute("SELECT arguments FROM actions").fetchone()[0])
+        assert arguments["query"] == "new"
+        assert not any("invalid_output" in str(m) for m in value.provider.contexts[2])
+        assert any(m.get("role") == "tool" for m in value.provider.contexts[2])
+    loop.run_until_complete(check())
+
+
+@pytest.mark.parametrize("tool_between", [False, True])
+def test_second_invalid_reply_uses_fallback_without_another_retry_even_after_tools(loop, tmp_path, tool_between):
+    async def check():
+        bad = lambda: LLMResponse("assistant", completion_text='{"reply":')
+        outputs = [bad()] + ([tool_call()] if tool_between else []) + [bad(), candidate("unreachable")]
+        value = await make_run(tmp_path, outputs)
+        assert await execute(value) == [load_prompts()["agent_budget_reply"]]
+        assert value.provider.main_calls == value.run.requests == 2 + int(tool_between)
+        assert value.run.reply_retries == 1
+        assert value.counts["search"] == int(tool_between)
+        with value.store.connection() as db:
+            assert db.execute("SELECT COUNT(*) FROM audit WHERE kind='reply_regeneration'").fetchone()[0] == 1
+    loop.run_until_complete(check())
+
+
+def test_invalid_reply_regeneration_respects_request_budget(loop, tmp_path):
+    async def check():
+        value = await make_run(tmp_path, [LLMResponse("assistant", completion_text='{"reply":')],
+                               limits={"max_requests": 1})
+        assert await execute(value) == [load_prompts()["agent_budget_reply"]]
+        assert value.run.requests == value.provider.main_calls == 1 and value.run.reply_retries == 0
+    loop.run_until_complete(check())
+
+
+def test_new_input_cancels_invalid_reply_regeneration_without_sending_old_output(loop, tmp_path):
+    async def check():
+        value = await make_run(tmp_path, [LLMResponse("assistant", completion_text='{"reply":'), candidate("stale")])
+        entered = asyncio.Event()
+        async def block_retry():
+            if value.provider.main_calls == 2:
+                entered.set()
+                await asyncio.Event().wait()
+        value.provider.on_main = block_retry
+        task = asyncio.create_task(execute(value))
+        await entered.wait()
+        value.store.observe(value.run.scope, "new-message")
+        assert await asyncio.wait_for(task, timeout=0.5) == []
+        assert value.run.reply_retries == 1 and not value.event.sent
         assert all(m.role != "assistant" for m in value.runner.run_context.messages)
+    loop.run_until_complete(check())
+
+
+async def deliver_primary(value):
+    assert await execute(value) == ["primary"]
+    chain = MessageEventResult().message("primary")
+    value.event.set_extra("qq_reply_ready", True)
+    value.event.set_extra("qq_delivery_chains", [chain])
+    await value.event.send(chain)
+    await value.owner.finish_paced_reply(value.event)
+
+
+def followup(text):
+    return LLMResponse("assistant", completion_text=json.dumps({"follow_up": text, "thinking_level": 1}))
+
+
+def test_separate_system_rules_survive_tool_rounds_and_followup_without_entering_history(loop, tmp_path):
+    async def check():
+        prompts = load_prompts()
+        persona = "CURRENT PERSONA"
+        rules = "\n".join((prompts["reply_output"], prompts["agent_policy"]))
+        history = [{"role": "user", "content": "past request"},
+                   {"role": "assistant", "content": "actually sent"}]
+        value = await make_run(tmp_path, [tool_call(), candidate("primary")],
+                               system_prompt=persona, contexts=history, prepare_request=True)
+        assert value.runner.req.system_prompt == persona + "\n" + prompts["qq_context"]
+        assert value.event.get_extra("qq_agent_rules_prompt") == rules
+        await deliver_primary(value)
+        assert value.provider.main_calls == 2 and value.provider.followup_calls == 1
+        assert value.run.reply_retries == 0 and value.counts["search"] == 1
+        for request in value.provider.requests:
+            messages = [m.model_dump() if hasattr(m, "model_dump") else m for m in request["contexts"]]
+            systems = [m["content"] for m in messages if m["role"] == "system"]
+            assert systems[:2] == [persona + "\n" + prompts["qq_context"], rules]
+            assert systems.count(rules) == 1
+        lifecycle = value.event.get_extra("qq_agent_lifecycle")
+        assert lifecycle.initial_messages[1] is lifecycle.rules_message
+        saved = value.runner.run_context.messages
+        assert all(m is not lifecycle.rules_message for m in saved)
+        assert rules not in repr(saved)
+        assert assistant_texts(saved) == ["actually sent", "primary"]
+    loop.run_until_complete(check())
+
+
+def test_post_agent_followups_are_sent_after_primary_and_stop_at_three(loop, tmp_path, monkeypatch):
+    monkeypatch.setattr("integrations.qq_astrbot.plugin.main.remaining_seconds", lambda *a, **kw: 0)
+    async def check():
+        value = await make_run(tmp_path, [candidate("primary")])
+        value.provider.followup_outputs = [followup(text) for text in ["one?", "two?", "three?", "four?"]]
+        async def verify_order():
+            assert value.runner.done()
+            assert value.event.sent[0].get_plain_text() == "primary"
+        value.provider.on_followup = verify_order
+        await deliver_primary(value)
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary", "one?", "two?", "three?"]
+        assert value.provider.main_calls == 1 and value.provider.followup_calls == value.run.followups == 3
+        assert value.run.requests == 4 and value.run.tool_calls == value.counts["search"] == 0
+        assert assistant_texts(value.runner.run_context.messages) == [
+            "primary", "one?", "two?", "three?"]
+        # Each subsequent decision sees the prior successfully sent addition.
+        requests = value.provider.requests[1:]
+        assert "one?" in str(requests[1]["contexts"]) and "two?" in str(requests[2]["contexts"])
+        assert all(request["func_tool"] is None for request in requests)
+        assert all(request["chat_template_kwargs"]["enable_thinking"] is False for request in requests)
+        await value.owner._maybe_followup(value.event)
+        assert value.provider.followup_calls == 3 and value.counts["commits"] == 1
+    loop.run_until_complete(check())
+
+
+def test_followups_inherit_complete_system_and_refresh_state_without_stale_persona_snapshot(
+        loop, tmp_path, monkeypatch):
+    monkeypatch.setattr("integrations.qq_astrbot.plugin.main.remaining_seconds", lambda *args: 0)
+    async def check():
+        prompts = load_prompts()
+        primary_system = "\n".join(["CURRENT PERSONA", prompts["qq_context"],
+                                    prompts["reply_output"], prompts["agent_policy"]])
+        extra_system = {"role": "system", "content": [{"type": "text", "text": "OTHER SYSTEM RULE"}]}
+        value = await make_run(tmp_path, [tool_call(), candidate("primary")],
+            system_prompt=primary_system, contexts=[extra_system])
+        value.event.set_extra("qq_persona_prompt", "OUTDATED PERSONA SNAPSHOT")
+        value.provider.followup_outputs = [followup("one?"), followup("two?"), followup(None)]
+        assert await execute(value) == ["primary"]
+        # A later state update must be visible even though the Agent has ended.
+        value.run.remember_song({"song_id": 2, "title": "second song"})
+        def system_texts(request):
+            rows = [message.model_dump() for message in request["contexts"] if message.role == "system"]
+            return [row["content"] if isinstance(row["content"], str) else
+                    "\n".join(part["text"] for part in row["content"]) for row in rows]
+        async def next_state():
+            if value.provider.followup_calls == 1:
+                value.run.remember_song({"song_id": 3, "title": "third song"})
+        value.provider.on_followup = next_state
+        chain = MessageEventResult().message("primary")
+        value.event.set_extra("qq_reply_ready", True)
+        value.event.set_extra("qq_delivery_chains", [chain])
+        await value.event.send(chain)
+        await value.owner.finish_paced_reply(value.event)
+        requests = value.provider.requests[2:]
+        assert len(requests) == value.run.followups == 3
+        for index, request in enumerate(requests):
+            texts = system_texts(request)
+            assert primary_system in texts and "OTHER SYSTEM RULE" in texts
+            assert "OUTDATED PERSONA SNAPSHOT" not in "\n".join(texts)
+            assert texts[-2:] == [prompts["followup_phase"], prompts["followup_system"]]
+            states = [text for text in texts if text.startswith(prompts["agent_execution_state"])]
+            assert len(states) == 1
+            state = json.loads(states[0].split("\n")[-1])
+            assert state["source_lookup_attempts"] == 1
+            assert state["registered_song_candidates"] == ([1, 2] if index == 0 else [1, 2, 3])
+            assert request["func_tool"] is None and request["response_format"] == FOLLOWUP_FORMAT
+        assert value.run.tool_calls == value.counts["search"] == 1
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary", "one?", "two?"]
+        assert prompts["followup_phase"] not in repr(value.runner.run_context.messages)
+        assert prompts["agent_execution_state"] not in repr(value.runner.run_context.messages)
+    loop.run_until_complete(check())
+
+
+@pytest.mark.parametrize("responses,expected,calls", [
+    ([followup(None)], [], 1),
+    ([followup("one?"), followup(None)], ["one?"], 2),
+    ([followup("primary")], [], 1),
+    ([followup("one?"), followup("one?")], ["one?"], 2),
+    ([tool_call()], [], 1),
+    ([LLMResponse("assistant", completion_text="not JSON")], [], 1),
+])
+def test_followup_null_duplicate_invalid_output_or_tool_call_stops_without_actions(
+        loop, tmp_path, monkeypatch, responses, expected, calls):
+    monkeypatch.setattr("integrations.qq_astrbot.plugin.main.remaining_seconds", lambda *a, **kw: 0)
+    async def check():
+        value = await make_run(tmp_path, [candidate("primary")])
+        value.provider.followup_outputs = responses
+        await deliver_primary(value)
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary"] + expected
+        assert value.provider.followup_calls == value.run.followups == calls
+        assert value.run.tool_calls == value.counts["search"] == 0
+    loop.run_until_complete(check())
+
+
+def test_new_input_cancels_post_agent_decision_without_losing_sent_primary(loop, tmp_path):
+    async def check():
+        value = await make_run(tmp_path, [candidate("primary")])
+        entered = asyncio.Event()
+        async def block():
+            entered.set()
+            await asyncio.Event().wait()
+        value.provider.on_followup = block
+        task = asyncio.create_task(deliver_primary(value))
+        await entered.wait()
+        value.store.observe(value.run.scope, "new-input")
+        await asyncio.wait_for(task, timeout=0.5)
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary"]
+        assert json.loads(value.runner.run_context.messages[-1].content)['reply'] == "primary"
+        assert value.run.followups == 1 and value.counts["released"] == 1
+    loop.run_until_complete(check())
+
+
+def test_group_does_not_start_private_followup_flow(loop, tmp_path):
+    async def check():
+        value = await make_run(tmp_path, [candidate("primary")])
+        try:
+            value.event.get_group_id = lambda: "201"
+            await value.owner._maybe_followup(value.event)
+            assert value.provider.followup_calls == value.run.followups == 0
+        finally:
+            unregister_active_runner(value.event.unified_msg_origin, value.runner)
+    loop.run_until_complete(check())
+
+
+def test_provider_fallback_keeps_native_tool_receipts_and_request_budget(loop, tmp_path):
+    async def check():
+        value = await make_run(tmp_path, [tool_call(), RuntimeError("provider unavailable")])
+        alternate = Provider([candidate("finished")])
+        value.runner.fallback_providers = [alternate]
+        assert await execute(value) == ["finished"]
+        assert value.run.requests == 3 and value.counts["search"] == 1
+        assert any(m.get("role") == "tool" for m in alternate.contexts[0])
+    loop.run_until_complete(check())
+
+
+def test_native_tool_roundtrip_then_direct_final_reply(loop, tmp_path):
+    async def check():
+        value = await make_run(tmp_path, [tool_call(), candidate("found it")])
+        assert await execute(value) == ["found it"]
+        assert value.counts["search"] == 1 and value.provider.main_calls == 2
+        assert value.run.requests == 2
+        assert any(m.get("role") == "tool" for m in value.provider.contexts[1])
+        assert not assistant_texts(value.runner.run_context.messages)
         lifecycle = value.event.get_extra("qq_agent_lifecycle")
         lifecycle.sent("found it")
-        assert value.runner.run_context.messages[-1].content == "found it"
+        assert json.loads(value.runner.run_context.messages[-1].content)['reply'] == "found it"
     loop.run_until_complete(check())
 
 
-def test_checker_receives_current_receipts_and_real_dialogue_without_rejected_drafts(loop, tmp_path):
+def test_full_protocol_survives_delivery_serialization_and_next_request_without_reexecuting_tools(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [candidate("draft"), tool_call(), candidate("final")], ["continue", "finish"])
-        value.runner.run_context.messages.insert(0, Message(role="system", content="persona is not dialogue"))
-        original, inputs = value.provider.text_chat, []
-        async def chat(**kwargs):
-            if kwargs.get("system_prompt") == load_prompts()["agent_completion_check"]:
-                inputs.append(json.loads(kwargs["prompt"]))
-            return await original(**kwargs)
-        value.provider.text_chat = chat
-        assert await execute(value) == ["final"]
-        assert inputs[0]["actions"] == []
-        assert inputs[0]["sent_this_run"] == []
-        assert inputs[0]['delivery_facts'] == {'any_message_sent': False, 'link_sent': False, 'audio_sent': False}
-        assert inputs[0]["current_request"] == "find a song"
-        assert {t["name"] for t in inputs[0]["available_tools"]} == {"emotion", "music", "musiccover", "sticker", "weapi"}
-        assert "draft" not in str(inputs[1]["dialogue"]) and "persona" not in str(inputs[1]["dialogue"])
-        assert inputs[1]["actions"][0]["result"]["status"] == "completed"
-        assert inputs[1]["actions"][0]["arguments"]["action"] == "search"
-        assert inputs[1]['reply_delivery'] == {'state': 'after_approval', 'automatic_tts': True}
+        raw_tool = '{"reply":"searching","thinking_level":2,"voice":false}'
+        raw_final = '{\n  "reply": "primary",\n  "thinking_level": 4,\n  "voice": false\n}'
+        value = await make_run(tmp_path / 'first', [tool_call(prose=raw_tool),
+            LLMResponse('assistant', completion_text=raw_final)])
+        await deliver_primary(value)
+        from astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal import InternalAgentSubStage
+        saved = []
+        async def update(origin, cid, **kwargs):
+            saved.append(json.loads(json.dumps(kwargs['history'])))
+        stage = SimpleNamespace(conv_manager=SimpleNamespace(update_conversation=update))
+        value.runner.req.conversation = SimpleNamespace(cid='cid', token_usage=0)
+        await InternalAgentSubStage._save_to_history(stage, value.event, value.runner.req,
+            value.runner.get_final_llm_resp(), value.runner.run_context.messages, value.runner.stats)
+        messages = saved[0]
+        call = next(m for m in messages if m.get('tool_calls'))
+        result = next(m for m in messages if m['role'] == 'tool')
+        assert call['content'] == raw_tool
+        assert call['tool_calls'][0]['id'] == result['tool_call_id'] == 'call_1'
+        assert call['tool_calls'][0]['function']['name'] == 'weapi'
+        assert json.loads(call['tool_calls'][0]['function']['arguments']) == {'action': 'search', 'query': 'song'}
+        assert messages[-1]['content'] == raw_final
+        followup_wire = value.provider.requests[-1]['contexts']
+        assert any(m.role == 'assistant' and m.content == raw_final for m in followup_wire)
+        assert any(m.role == 'tool' and m.tool_call_id == 'call_1' for m in followup_wire)
+        assert value.event.sent[0].get_plain_text() == 'primary'
+        newer = await make_run(tmp_path / 'second', [candidate('next')], contexts=messages)
+        assert await execute(newer) == ['next']
+        assert newer.counts['search'] == 0
+        wire = newer.provider.contexts[0]
+        assert next(m for m in wire if m.get('tool_calls')) == call
+        assert any(m['role'] == 'assistant' and m['content'] == raw_final for m in wire)
+        assert any(m['role'] == 'tool' and m['tool_call_id'] == 'call_1' for m in wire)
     loop.run_until_complete(check())
 
 
-def test_checker_receives_accepted_background_job_as_foreground_release_boundary(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [tool_call(), tool_call('musiccover', {'candidate': 1, 'action': 'start'}), candidate('preparing')], ['finish'])
-        original = value.owner.agent_tools.dispatch
-        async def dispatch(event, name, args, key):
-            if name == 'musiccover':
-                return {'ok': True, 'status': 'queued', 'job_id': 'job', 'song': {'title': 'song'}, 'completed': False, 'sent': False}
-            return await original(event, name, args, key)
-        value.owner.agent_tools.dispatch = dispatch
-        assert await execute(value) == ['preparing']
-        with value.store.connection() as db:
-            data = json.loads(db.execute("SELECT payload FROM audit WHERE run_id=? AND kind='check_input'", (value.run.run_id,)).fetchone()[0])
-        assert data['background_tasks'] == [{'tool': 'musiccover', 'job_id': 'job', 'song': {'title': 'song'},
-                                             'state': 'accepted_waiting_for_foreground_release'}]
-        assert value.provider.check_calls == 1
-    loop.run_until_complete(check())
 
 
-@pytest.mark.parametrize("text", ["sticker:开心", "自然回话~ sticker:开心", "[已发送《歌曲》原版演唱] 回话"])
-def test_control_markup_is_repaired_before_semantic_check_or_tts(loop, tmp_path, text):
-    async def check():
-        value = await make_run(tmp_path, [candidate(text), candidate("clean")], ["finish"])
-        assert await execute(value) == ["clean"]
-        assert value.run.checks == 1 and value.provider.main_calls == 2
-        rejected = await value.owner.agent_tools.execute(value.event, "emotion", {"text": text, "emotion": "happy"})
-        assert rejected["status"] == "rejected" and rejected["detail"] == "speech_contains_control_markup"
-        from integrations.qq_astrbot.plugin.media_router import MediaRouter
-        with pytest.raises(ValueError, match="speech_contains_control_markup"):
-            MediaRouter.speech_texts(text, group=False)
-    loop.run_until_complete(check())
 
 
-def test_three_checks_are_shared_across_tools_and_internal_continuations(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [candidate("draft1"), tool_call(), candidate("draft2"),
-                                         tool_call(call_id="call_2"), candidate("draft3")], ["continue"] * 3)
-        assert await execute(value) == ["bounded close"]
-        assert value.run.checks == 3 and value.provider.check_calls == 3 and value.provider.close_calls == 1
-        assert value.counts["search"] == 1  # same action with a new native call ID is cached
-        assert not any(m.get("role") == "user" and "complete the missing detail" in str(m) for ctx in value.provider.contexts for m in ctx)
-        assert len([m for m in value.runner.run_context.messages if m.role == "user"]) == 1
-    loop.run_until_complete(check())
 
 
-@pytest.mark.parametrize("verdict", ["{}", TimeoutError("checker timed out")])
-def test_bad_check_consumes_budget_and_cannot_retry_forever(loop, tmp_path, verdict):
-    async def check():
-        value = await make_run(tmp_path, [candidate() for _ in range(3)], [verdict] * 3)
-        assert await execute(value) == ["bounded close"]
-        assert value.run.checks == 3 and value.provider.check_calls == 3
-    loop.run_until_complete(check())
 
 
-def test_invalid_candidate_never_enters_semantic_check_and_global_budget_closes(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [LLMResponse("assistant", completion_text="not JSON") for _ in range(20)],
-                               [], limits={"max_requests": 4})
-        assert await execute(value) == ["bounded close"]
-        assert value.run.requests == 3 and value.run.checks == 0
-        assert value.provider.main_calls == 2 and value.provider.close_calls == 1
-    loop.run_until_complete(check())
 
 
-def test_repair_limit_is_shared_across_tool_steps_and_discards_bad_drafts(loop, tmp_path):
-    async def check():
-        bad = lambda text: LLMResponse('assistant', completion_text=text)
-        value = await make_run(tmp_path, [bad('invalid one'), candidate('needs action'), tool_call(),
-                                        bad('invalid two'), bad('invalid three')], ['continue'])
-        assert await execute(value) == ['bounded close']
-        assert value.provider.main_calls == 5 and value.run.checks == 1
-        assert value.counts['search'] == 1 and value.provider.close_calls == 1
-        assert not any('invalid one' in str(m) or 'invalid two' in str(m)
-                       for context in value.provider.contexts[1:] for m in context)
-        assert any(m.get('role') == 'tool' for m in value.provider.contexts[-1])
-    loop.run_until_complete(check())
 
 
-def test_restricted_close_gets_actual_state_instead_of_rejected_prose(loop, tmp_path):
-    async def check():
-        bad = candidate('[已发送《雨爱》整首翻唱]')
-        value = await make_run(tmp_path, [bad, candidate('[已发送《雨爱》整首翻唱]')], [])
-        original, inputs = value.provider.text_chat, []
-        async def chat(**kwargs):
-            if kwargs.get('system_prompt') == load_prompts()['agent_restricted_close']:
-                inputs.extend(kwargs['contexts'])
-            return await original(**kwargs)
-        value.provider.text_chat = chat
-        assert await execute(value) == ['bounded close']
-        data = json.loads(inputs[0].content)
-        assert data['actions'] == [] and data['sent_this_run'] == []
-        assert '[已发送' not in str(data)
-        assert value.provider.main_calls == 2
-    loop.run_until_complete(check())
 
 
-def test_format_repair_cannot_execute_unexpected_tools_and_restores_native_tools(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [LLMResponse('assistant', completion_text='not JSON'),
-            tool_call(), candidate('needs search'), tool_call(call_id='real'), candidate('done')], ['continue', 'finish'])
-        original, phases = value.provider.text_chat, []
-        async def chat(**kwargs):
-            if not kwargs.get('system_prompt'):
-                phases.append(kwargs.get('func_tool') is None)
-            return await original(**kwargs)
-        value.provider.text_chat = chat
-        assert await execute(value) == ['done']
-        assert value.counts['search'] == 1 and value.run.tool_calls == 1
-        assert phases == [False, True, True, False, False]
-        assert value.run.checks == 2
-    loop.run_until_complete(check())
 
 
-def test_plain_text_tool_request_is_regenerated_as_native_call_once(loop, tmp_path):
-    async def check():
-        malformed = LLMResponse('assistant', completion_text=json.dumps({
-            'name': 'weapi', 'arguments': {'action': 'search', 'query': 'discarded draft'}
-        }))
-        value = await make_run(tmp_path, [malformed, tool_call(), candidate('done')], ['finish'])
-        original, choices = value.provider.text_chat, []
-        async def chat(**kwargs):
-            if kwargs.get('system_prompt') != load_prompts()['agent_completion_check']:
-                choices.append(kwargs.get('tool_choice'))
-            return await original(**kwargs)
-        value.provider.text_chat = chat
-        assert await execute(value) == ['done']
-        assert choices == [None, {'type': 'function', 'function': {'name': 'weapi'}}, None]
-        assert value.counts['search'] == value.run.tool_calls == 1
-        with value.store.connection() as db:
-            actions = db.execute('SELECT arguments FROM actions WHERE run_id=?', (value.run.run_id,)).fetchall()
-            repairs = db.execute("SELECT payload FROM audit WHERE run_id=? AND kind='tool_protocol_repair'",
-                                 (value.run.run_id,)).fetchall()
-        assert len(actions) == 1 and json.loads(actions[0][0])['query'] == 'song'
-        assert [json.loads(row[0]) for row in repairs] == [{'tool': 'weapi'}]
-    loop.run_until_complete(check())
 
 
-def test_unregistered_plain_text_tool_cannot_force_a_native_call(loop, tmp_path):
-    async def check():
-        malformed = LLMResponse('assistant', completion_text=json.dumps({
-            'name': 'unregistered', 'arguments': {'query': 'song'}
-        }))
-        value = await make_run(tmp_path, [malformed, candidate('could not start')], ['finish'])
-        original, choices = value.provider.text_chat, []
-        async def chat(**kwargs):
-            choices.append(kwargs.get('tool_choice'))
-            return await original(**kwargs)
-        value.provider.text_chat = chat
-        assert await execute(value) == ['could not start']
-        assert not any(choices) and value.counts['search'] == value.run.tool_calls == 0
-    loop.run_until_complete(check())
+
+
 
 
 def test_new_input_cancels_inflight_generation_and_preserves_only_real_history(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [candidate("stale")], ["finish"])
+        value = await make_run(tmp_path, [candidate("stale")])
         entered = asyncio.Event()
         async def block():
             entered.set()
@@ -374,14 +562,14 @@ def test_new_input_cancels_inflight_generation_and_preserves_only_real_history(l
         await entered.wait()
         value.store.observe(value.run.scope, "m2")
         assert await task == []
-        assert value.provider.check_calls == 0 and not value.event.sent
+        assert value.provider.main_calls == 1 and not value.event.sent
         assert all(m.role != "assistant" for m in value.runner.run_context.messages)
     loop.run_until_complete(check())
 
 
-def test_checked_reply_is_discarded_if_input_changes_before_send(loop, tmp_path):
+def test_final_reply_is_discarded_if_input_changes_before_send(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [candidate("stale")], ["finish"])
+        value = await make_run(tmp_path, [candidate("stale")])
         await execute(value)
         value.event.result = MessageEventResult().message("stale").set_result_content_type(ResultContentType.LLM_RESULT)
         value.store.observe(value.run.scope, "m2")
@@ -395,18 +583,41 @@ def test_run_counters_survive_reopening_and_duplicates_have_uncertain_receipt(tm
     store = AgentStore(tmp_path / "agent.db")
     version = store.observe("qq:999:dm:101", "m1")
     run = store.begin("qq:999:dm:101", version, "m1")
-    store.consume(run, "checks")
+    store.consume(run, "followups")
     key, old = store.reserve_action(run, "music", {"song_id": 1})
     assert old is None
     reopened = AgentStore(store.path)
     same = reopened.begin(run.scope, version, "m1")
-    assert same.checks == 1
+    assert same.followups == 1
     assert reopened.reserve_action(same, "music", {"song_id": 1})[1]["status"] == "uncertain"
+    reopened.consume(same, "reply_retries")
+    reopened.consume(same, "followups")
+    reopened.consume(same, "followups")
+    again = AgentStore(store.path).begin(run.scope, version, "m1")
+    assert again.followups == 3
+    assert again.reply_retries == 1
+    with pytest.raises(BudgetExhausted):
+        reopened.consume(again, "followups")
+    with pytest.raises(BudgetExhausted):
+        reopened.consume(again, "reply_retries")
+
+
+def test_old_audit_database_migrates_followups_without_changing_history(tmp_path):
+    import sqlite3
+    path = tmp_path / "old-agent.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE runs(id TEXT PRIMARY KEY,scope TEXT,version INTEGER,started REAL,"
+                   "checks INTEGER DEFAULT 0,requests INTEGER DEFAULT 0,tool_calls INTEGER DEFAULT 0,status TEXT)")
+        db.execute("INSERT INTO runs VALUES ('old','scope',1,0,2,8,0,'sent')")
+    store = AgentStore(path)
+    with store.connection() as db:
+        row = db.execute("SELECT checks,requests,followups,reply_retries,status FROM runs WHERE id='old'").fetchone()
+        assert tuple(row) == (2, 8, 0, 0, "sent")
 
 
 def test_manual_tool_schema_rejects_wrong_types_without_side_effect(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [tool_call(arguments={"action": "search", "query": []}), candidate()], ["finish"])
+        value = await make_run(tmp_path, [tool_call(arguments={"action": "search", "query": []}), candidate()])
         await execute(value)
         assert value.counts["search"] == 0
         with value.store.connection() as db:
@@ -414,21 +625,11 @@ def test_manual_tool_schema_rejects_wrong_types_without_side_effect(loop, tmp_pa
     loop.run_until_complete(check())
 
 
-def test_new_input_during_checker_cancels_without_sending_checked_draft(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [candidate("stale")], ["finish"])
-        async def interrupt(): value.store.observe(value.run.scope, "m2")
-        value.provider.on_check = interrupt
-        assert await execute(value) == []
-        assert value.run.checks == 1
-        assert all(m.role != "assistant" for m in value.runner.run_context.messages)
-        assert value.counts["released"] >= 1
-    loop.run_until_complete(check())
 
 
-def test_send_guard_rechecks_after_semantic_approval(loop, tmp_path):
+def test_send_guard_rechecks_after_agent_completion(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [candidate()], ["finish"])
+        value = await make_run(tmp_path, [candidate()])
         value.store.guard_sender(value.event, value.run.scope, value.run.version)
         await execute(value)
         value.store.observe(value.run.scope, "m2")
@@ -441,7 +642,7 @@ def test_send_guard_rechecks_after_semantic_approval(loop, tmp_path):
 def test_new_input_interrupts_typing_delay_and_releases_lease(loop, tmp_path):
     import time
     async def check():
-        value = await make_run(tmp_path, [candidate("long enough to delay")], ["finish"])
+        value = await make_run(tmp_path, [candidate("long enough to delay")])
         await execute(value)
         value.event.set_extra("qq_reply_started_at", time.monotonic())
         value.event.result = MessageEventResult().message("old").set_result_content_type(ResultContentType.LLM_RESULT)
@@ -455,7 +656,7 @@ def test_new_input_interrupts_typing_delay_and_releases_lease(loop, tmp_path):
 
 def test_onebot_guard_rechecks_after_async_media_encoding(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         encoded = asyncio.Event()
         resume = asyncio.Event()
         writes = []
@@ -480,7 +681,7 @@ def test_onebot_guard_rechecks_after_async_media_encoding(loop, tmp_path):
 
 def test_only_successfully_sent_chunks_enter_chat_history(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [candidate("first.second.")], ["finish"])
+        value = await make_run(tmp_path, [candidate("first.second.")])
         await execute(value)
         chains = [MessageEventResult().message("first."), MessageEventResult().message("second.")]
         value.event.set_extra("qq_delivery_chains", chains)
@@ -488,7 +689,9 @@ def test_only_successfully_sent_chunks_enter_chat_history(loop, tmp_path):
         async def fail(chain): raise OSError("transport failed")
         value.event.send = fail
         await value.owner.finish_paced_reply(value.event)
-        assert [m.content for m in value.runner.run_context.messages if m.role == "assistant"] == ["first."]
+        assert assistant_texts(value.runner.run_context.messages) == ["first."]
+        assert json.loads(value.runner.run_context.messages[-1].content) == {
+            'reply': 'first.', 'thinking_level': 1, 'voice': False}
         assert value.counts["commits"] == 0
     loop.run_until_complete(check())
 
@@ -524,51 +727,29 @@ def test_background_onebot_send_checks_revision_after_native_encoding(loop, tmp_
 
 def test_native_step_budget_does_not_inject_a_fake_user_continuation(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [tool_call()], ["finish"])
+        value = await make_run(tmp_path, [tool_call()])
         result = []
         try:
             async for response in value.runner.step_until_done(1):
                 if response.type == "llm_result": result.append(response.data["chain"].get_plain_text())
         finally:
             unregister_active_runner(value.event.unified_msg_origin, value.runner)
-        assert [x for x in result if x] == ["bounded close"]
+        assert [x for x in result if x] == [load_prompts()["agent_budget_reply"]]
         assert value.counts["search"] == 0
         assert len([m for m in value.runner.run_context.messages if m.role == "user"]) == 1
     loop.run_until_complete(check())
 
 
-def test_restricted_close_rejects_unexpected_voice_action_even_if_provider_ignores_schema(loop, tmp_path):
+
+
+def test_tool_budget_exhaustion_stops_without_another_model_call(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [candidate(), candidate(), candidate()], ["continue"] * 3)
-        original = value.provider.text_chat
-        async def chat(**kwargs):
-            if kwargs.get("system_prompt") == load_prompts()["agent_restricted_close"]:
-                return LLMResponse("assistant", completion_text=json.dumps(
-                    {"reply": "unexpected synthesis", "thinking_level": 4, "voice": True}))
-            return await original(**kwargs)
-        value.provider.text_chat = chat
+        value = await make_run(tmp_path, [tool_call(), tool_call(call_id="call_2")], limits={"max_tools": 1})
         assert await execute(value) == [load_prompts()["agent_budget_reply"]]
-        assert value.event.get_extra("qq_voice") is False and value.run.checks == 3
+        assert value.run.tool_calls == 1 and value.run.followups == 0
     loop.run_until_complete(check())
 
 
-def test_tool_budget_exhaustion_closes_without_semantic_retries(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [tool_call(), tool_call(call_id="call_2")], [], limits={"max_tools": 1})
-        assert await execute(value) == ["bounded close"]
-        assert value.run.tool_calls == 1 and value.run.checks == 0
-    loop.run_until_complete(check())
-
-
-def test_provider_fallback_does_not_reset_semantic_check_count(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [candidate("draft1"), RuntimeError("provider unavailable")], ["continue"])
-        alternate = Provider([candidate("finished")], ["finish"])
-        value.runner.fallback_providers = [alternate]
-        assert await execute(value) == ["finished"]
-        assert value.run.checks == 2
-        assert value.provider.check_calls == alternate.check_calls == 1
-    loop.run_until_complete(check())
 
 
 def test_current_turn_overflow_closes_without_provider_error_or_replayed_tools(loop, tmp_path, monkeypatch):
@@ -577,19 +758,19 @@ def test_current_turn_overflow_closes_without_provider_error_or_replayed_tools(l
         return 9000
     monkeypatch.setattr(RequestBudget, "count", count)
     async def check():
-        value = await make_run(tmp_path, [tool_call()], [])
+        value = await make_run(tmp_path, [tool_call()])
         value.provider.provider_config = {"id": "fake", "max_context_tokens": 8192}
         assert await execute(value) == [load_prompts()["agent_budget_reply"]]
         assert value.provider.main_calls == value.counts["search"] == 0
-        assert value.run.closing and value.run.checks == 0
+        assert value.run.closing and value.run.followups == 0
     loop.run_until_complete(check())
 
 
 def test_final_provider_error_is_internal_and_cleanup_still_runs(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [RuntimeError("HTTP 400 private diagnostic")], [])
+        value = await make_run(tmp_path, [RuntimeError("HTTP 400 private diagnostic")])
         assert await execute(value) == [load_prompts()["agent_budget_reply"]]
-        assert value.event.get_extra("qq_agent_approved")
+        assert value.event.get_extra("qq_agent_completed")
         value.event.set_extra("qq_reply_ready", True)
         value.event.set_extra("qq_delivery_chains", [MessageEventResult().message(load_prompts()["agent_budget_reply"])])
         await value.owner.finish_paced_reply(value.event)
@@ -598,32 +779,21 @@ def test_final_provider_error_is_internal_and_cleanup_still_runs(loop, tmp_path)
     loop.run_until_complete(check())
 
 
-def test_context_replacement_does_not_reset_semantic_budget(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [candidate("draft1"), candidate("draft2"), candidate("draft3")], ["continue"] * 3)
-        calls = []
-        async def compact(messages, **kwargs):
-            calls.append(len(messages))
-            return [Message.model_validate(m.model_dump()) for m in messages]
-        value.runner.request_context_manager.process = compact
-        assert await execute(value) == ["bounded close"]
-        assert value.run.checks == 3 and len(calls) == 3
-    loop.run_until_complete(check())
 
 
 def test_expired_global_deadline_stops_work_and_emits_only_bounded_close(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [tool_call()], [])
+        value = await make_run(tmp_path, [tool_call()])
         value.run.started -= 1000
         result = await execute(value)
-        assert len(result) == 1 and value.counts["search"] == 0 and value.provider.check_calls == 0
+        assert len(result) == 1 and value.counts["search"] == 0 and value.provider.followup_calls == 0
         assert not value.event.get_extra("qq_voice")
     loop.run_until_complete(check())
 
 
 def test_admission_wait_cannot_outlive_global_budget(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         value.run.started -= 1000
         value.owner.media.client.state.enter = lambda: None
         await value.owner.request_paced_reply(value.event, ProviderRequest())
@@ -636,7 +806,7 @@ def test_admission_wait_cannot_outlive_global_budget(loop, tmp_path):
 
 def test_all_five_registered_native_tools_have_concrete_results(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         media = value.owner.media
         media.character_id = "elysia"
         media.sticker_last = {}
@@ -680,7 +850,7 @@ def test_voice_reply_sends_face_as_text_with_matching_sent_audit(loop, tmp_path,
     from integrations.qq_astrbot.plugin.media_router import MediaRouter
     from integrations.qq_astrbot.plugin.reply_content import spoken_text
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         media = MediaRouter(SimpleNamespace(), tmp_path / 'media')
         media.commit_run = value.owner.media.commit_run
         value.owner.media = media
@@ -698,15 +868,17 @@ def test_voice_reply_sends_face_as_text_with_matching_sent_audit(loop, tmp_path,
             value.event.set_extra('qq_primary_reply', reply)
             value.event.set_extra('qq_voice', True)
             value.event.set_extra('qq_thinking_level', 1)
-            value.event.set_extra('qq_agent_approved', True)
-            value.event.set_extra('qq_agent_lifecycle', SimpleNamespace(sent=lambda text, modality:
+            value.event.set_extra('qq_agent_completed', True)
+            value.event.set_extra('qq_followup_finished', True)
+            value.event.set_extra('qq_agent_lifecycle', SimpleNamespace(sent=lambda text, modality, **kwargs:
                 value.store.record(value.run, 'sent', {'text': text, 'modality': modality})))
             value.event.result = MessageEventResult().message(reply).set_result_content_type(ResultContentType.LLM_RESULT)
             await value.owner.delay_paced_reply(value.event)
             chains = value.event.get_extra('qq_delivery_chains')
             assert isinstance(chains[0].chain[0], Record)
             assert chains[-1].get_plain_text() == face and isinstance(chains[-1].chain[0], Plain)
-            assert calls == ([spoken_text(reply)] if prepared else ['司凤版的《雨爱》正在准备中哦~', '稍等一下！'])
+            assert calls == [spoken_text(reply)]
+            assert len(chains) == 2
             await value.event.send(chains[0])
             await value.owner.finish_paced_reply(value.event)
             assert value.event.sent[-1].get_plain_text() == face
@@ -719,9 +891,86 @@ def test_voice_reply_sends_face_as_text_with_matching_sent_audit(loop, tmp_path,
     loop.run_until_complete(check())
 
 
+@pytest.mark.parametrize('voice,tts_failed', [(False, False), (True, False), (True, True)])
+def test_model_voice_choice_controls_sentence_delivery_and_complete_text_fallback(loop, tmp_path, voice, tts_failed):
+    from astrbot.core.message.components import Record
+    from integrations.qq_astrbot.plugin.media_router import MediaRouter
+    async def check():
+        reply = '吃过啦。你呢？'
+        response = LLMResponse('assistant', completion_text=json.dumps(
+            {'reply': reply, 'thinking_level': 1, 'voice': voice}))
+        value = await make_run(tmp_path, [response])
+        assert await execute(value) == [reply]
+        media = MediaRouter(SimpleNamespace(), tmp_path / 'media')
+        media.commit_run = value.owner.media.commit_run
+        value.owner.media = media
+        calls = []
+        async def speech(text, *args):
+            calls.append(text)
+            if tts_failed:
+                raise RuntimeError('injected TTS failure')
+            return b'RIFF0000WAVEfake'
+        media.client.speech = speech
+        value.event.result = MessageEventResult().message(reply).set_result_content_type(ResultContentType.LLM_RESULT)
+        await value.owner.delay_paced_reply(value.event)
+        chains = value.event.get_extra('qq_delivery_chains')
+        await value.event.send(chains[0])
+        await value.owner.finish_paced_reply(value.event)
+        assert value.store.run_status(value.run.run_id) == 'sent'
+        if voice and not tts_failed:
+            assert len(value.event.sent) == 1 and isinstance(value.event.sent[0].chain[0], Record)
+            expected_history = [reply]
+        else:
+            assert [chain.get_plain_text() for chain in value.event.sent] == ['吃过啦。', '你呢？']
+            expected_history = [reply]
+        assert calls == ([reply] if voice else [])
+        assert assistant_texts(value.runner.run_context.messages) == expected_history
+        assert value.runner.run_context.messages[-1].content == json.dumps(
+            {'reply': reply, 'thinking_level': 1, 'voice': voice})
+    loop.run_until_complete(check())
+
+
+@pytest.mark.parametrize('fault', [None, 'synthesis', 'sample_rate'])
+def test_long_voice_is_one_valid_recording_or_complete_fallback(loop, tmp_path, fault):
+    import io
+    import wave
+    from astrbot.core.message.components import Record
+    from integrations.qq_astrbot.plugin.media_router import MediaRouter
+    async def check():
+        media = MediaRouter(SimpleNamespace(), tmp_path)
+        reply = '中文。' * 201
+        calls, frames = [], []
+        async def speech(text, *args):
+            calls.append(text)
+            if fault == 'synthesis' and len(calls) == 2:
+                raise RuntimeError('injected TTS failure')
+            output = io.BytesIO()
+            samples = len(calls).to_bytes(2, 'little') * 16
+            frames.append(samples)
+            with wave.open(output, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000 if fault == 'sample_rate' and len(calls) == 2 else 24000)
+                wav.writeframes(samples)
+            return output.getvalue()
+        media.client.speech = speech
+        chains = await media.voice_chains(reply, 'neutral', group=False)
+        if fault:
+            assert chains == [] and not list((tmp_path / 'media_cache').glob('*.wav'))
+        else:
+            assert len(chains) == 1 and isinstance(chains[0].chain[0], Record)
+            assert ''.join(calls) == reply and max(map(len, calls)) <= 120
+            saved = next((tmp_path / 'media_cache').glob('*.wav'))
+            with wave.open(str(saved), 'rb') as wav:
+                assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) == (1, 2, 24000)
+                assert wav.readframes(wav.getnframes()) == b''.join(frames)
+            assert media.speech_texts(reply, group=False) == [reply]
+    loop.run_until_complete(check())
+
+
 def test_emotion_tool_does_not_synthesize_a_face_only(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         try:
             result = await value.owner.agent_tools.execute(value.event, 'emotion', {'text': '(๑•̀ㅂ•́)و✧', 'emotion': 'happy'})
             assert result['status'] == 'skipped' and result['error'] == 'no_spoken_text'
@@ -732,7 +981,7 @@ def test_emotion_tool_does_not_synthesize_a_face_only(loop, tmp_path):
 
 def test_cancel_music_tool_is_owner_scoped_and_does_not_require_new_search(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         tasks = value.owner.media.song_tasks
         tasks.register('a'*32, value.run.scope, '101', 'cover', 'old', 'old song')
         tasks.register('b'*32, value.run.scope, '102', 'cover', 'other', 'other song')
@@ -751,7 +1000,7 @@ def test_cancel_music_tool_is_owner_scoped_and_does_not_require_new_search(loop,
 
 def test_replacement_requires_available_new_song_before_canceling_old(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         tasks = value.owner.media.song_tasks
         tasks.register('a'*32, value.run.scope, '101', 'cover', 'old', 'old song')
         value.run.candidate_refs[1] = 1
@@ -766,7 +1015,7 @@ def test_replacement_requires_available_new_song_before_canceling_old(loop, tmp_
 @pytest.mark.parametrize('superseded', [False, True])
 def test_replacement_rechecks_foreground_after_submission(loop, tmp_path, superseded):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         media = value.owner.media
         tasks = media.song_tasks
         tasks.register('a'*32, value.run.scope, '101', 'cover', 'old', 'old song')
@@ -804,7 +1053,7 @@ def test_group_chatter_does_not_invalidate_foreground_or_music(loop, tmp_path):
     from integrations.qq_astrbot.plugin.message_router import MessageRouter
     from astrbot.core.message.components import At
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         owner = value.owner
         owner.guard = InboundGuard(tmp_path / 'inbound.db')
         owner.router = MessageRouter(tmp_path / 'routing.db')
@@ -852,7 +1101,7 @@ def test_group_chatter_does_not_invalidate_foreground_or_music(loop, tmp_path):
 
 def test_unavailable_selected_cover_returns_explicit_failure_without_creating_job(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         value.run.candidate_refs[1] = 1
         value.run.candidates[1] = {"song_id": 1, "title": "song", "available": False,
                                    "link": "https://music.163.com/song?id=1"}
@@ -866,40 +1115,11 @@ def test_unavailable_selected_cover_returns_explicit_failure_without_creating_jo
     loop.run_until_complete(check())
 
 
-def test_early_unknown_candidate_does_not_poison_later_selection(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [], [])
-        try:
-            tools = value.owner.agent_tools
-            rejected = await tools.execute(value.event, "musiccover", {"candidate": 1})
-            assert rejected["status"] == "rejected" and rejected["executed"] is False
-            assert rejected["error"] == "candidate_not_registered" and rejected["required_next_step"] == "weapi_search"
-            from integrations.qq_astrbot.plugin.agent_runtime import NativeAgentLifecycle
-            lifecycle = NativeAgentLifecycle(value.runner, value.store, value.run, value.event)
-            data = lifecycle.completion_input({"reply": "draft", "thinking_level": 1, "voice": False})
-            assert data["draft_reply"]["reply"] == "draft" and "candidate" not in data
-            assert data["preflight_rejections"][0]["result"]["required_next_step"] == "weapi_search"
-            assert data["current_task_facts"]["source_lookup_attempts"] == 0
-            assert data["actions"] == []  # No action key poisoned by preflight.
-            value.run.remember_song({"song_id": 98765, "title": "song", "available": False})
-            result = await tools.execute(value.event, "musiccover", {"candidate": 1})
-            assert result["status"] == "unavailable" and not result.get("replayed")
-            updated = lifecycle.completion_input()
-            assert updated["preflight_rejections"] == []
-            assert updated["current_task_facts"]["last_preflight_rejection"] is None
-            with value.store.connection() as db:
-                assert db.execute("SELECT COUNT(*) FROM audit WHERE run_id=? AND kind='tool_rejected'",
-                                  (value.run.run_id,)).fetchone()[0] == 1
-            assert updated["current_task_facts"]["known_songs"] == [{"candidate": 1, "title": "song",
-                "artists": None, "aliases": None, "available": False}]
-        finally:
-            unregister_active_runner(value.event.unified_msg_origin, value.runner)
-    loop.run_until_complete(check())
 
 
 def test_main_request_state_is_current_replaced_and_never_saved_as_chat(loop, tmp_path):
     async def check():
-        value = await make_run(tmp_path, [tool_call('musiccover', {'candidate': 1}), tool_call(), candidate('ready')], ['finish'])
+        value = await make_run(tmp_path, [tool_call('musiccover', {'candidate': 1}), tool_call(), candidate('ready')])
         assert await execute(value) == ['ready']
         prompt = load_prompts()['agent_execution_state']
         states = []
@@ -920,49 +1140,15 @@ def test_main_request_state_is_current_replaced_and_never_saved_as_chat(loop, tm
     loop.run_until_complete(check())
 
 
-@pytest.mark.parametrize('claim', ['claims_music_started', 'claims_music_completed', 'claims_link_sent', 'claims_audio_sent'])
-def test_finish_verdict_cannot_override_unverified_semantic_claims(loop, tmp_path, claim):
-    async def check():
-        raw = json.dumps({'claims_music_started': False, 'claims_music_completed': False,
-            'claims_link_sent': False, 'claims_audio_sent': False, 'decision': 'finish', 'instruction': '', claim: True})
-        value = await make_run(tmp_path, [candidate('sung and link sent'), candidate('not started')], [raw, 'finish'])
-        assert await execute(value) == ['not started']
-        assert value.run.checks == 2
-        with value.store.connection() as db:
-            verdict = json.loads(db.execute("SELECT payload FROM audit WHERE run_id=? AND kind='semantic_check' ORDER BY id LIMIT 1",
-                                           (value.run.run_id,)).fetchone()[0])
-        assert verdict['decision'] == 'continue' and verdict[claim] is True
-    loop.run_until_complete(check())
 
 
-def test_restricted_close_keeps_persona_and_disables_thinking(loop, tmp_path):
-    async def check():
-        value = await make_run(tmp_path, [], [])
-        value.event.set_extra("qq_persona_prompt", "CURRENT PERSONA")
-        observed = []
-        async def close(**kwargs):
-            observed.append(kwargs)
-            return candidate("bounded close")
-        value.provider.text_chat = close
-        from integrations.qq_astrbot.plugin.agent_runtime import NativeAgentLifecycle
-        value.runner.run_context.messages.insert(0, Message(role="assistant", content="OLD FAILURE SHOULD NOT OVERRIDE THIS RUN"))
-        lifecycle = NativeAgentLifecycle(value.runner, value.store, value.run, value.event)
-        try:
-            assert (await lifecycle.restricted_close()).completion_text == candidate("bounded close").completion_text
-            assert observed[0]["system_prompt"] == "CURRENT PERSONA\n" + load_prompts()["agent_restricted_close"]
-            assert observed[0]["chat_template_kwargs"]["enable_thinking"] is False
-            assert observed[0]["func_tool"] is None and value.run.requests == 1
-            assert "OLD FAILURE" not in repr(observed[0])
-        finally:
-            unregister_active_runner(value.event.unified_msg_origin, value.runner)
-    loop.run_until_complete(check())
 
 
 def test_native_summary_preserves_persona_and_shares_run_budget_without_thinking(loop, tmp_path):
     from astrbot.core.agent.context.compressor import LLMSummaryCompressor
     from integrations.qq_astrbot.plugin.agent_runtime import NativeAgentLifecycle
     async def check():
-        value = await make_run(tmp_path, [], [])
+        value = await make_run(tmp_path, [])
         observed = []
         async def summary(**kwargs):
             observed.append(kwargs)
@@ -971,18 +1157,19 @@ def test_native_summary_preserves_persona_and_shares_run_budget_without_thinking
         compressor = LLMSummaryCompressor(value.provider)
         value.runner.request_context_manager.compressor = compressor
         NativeAgentLifecycle(value.runner, value.store, value.run, value.event)
-        messages = [Message(role="system", content="PERSONA AND CHAT JSON"),
+        messages = [Message(role="system", content="PERSONA"),
+            Message(role="system", content="CHAT JSON AND AGENT RULES"),
             Message(role="user", content="old request"), Message(role="assistant", content="actually sent"),
             Message(role="user", content="current request")]
         try:
             result = await compressor(messages)
-            assert result[0] == messages[0] and result[-1] == messages[-1]
-            assert value.run.requests == 1 and value.run.checks == 0
+            assert result[:2] == messages[:2] and result[-1] == messages[-1]
+            assert value.run.requests == 1 and value.run.followups == 0
             wire = observed[0]
             assert wire["chat_template_kwargs"]["enable_thinking"] is False
             assert wire["reasoning_budget_tokens"] == 0 and wire["request_max_retries"] == 1
             assert wire["system_prompt"] == load_prompts()["agent_summary"]
-            assert "PERSONA AND CHAT JSON" not in repr(wire)
+            assert "PERSONA" not in repr(wire) and "CHAT JSON AND AGENT RULES" not in repr(wire)
             value.run.requests = value.run.max_requests - 1
             assert await compressor(messages) == messages
             assert len(observed) == 1  # Native fallback; no hidden over-budget request.

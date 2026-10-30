@@ -1,4 +1,4 @@
 name: astrbot_chat_q1
-desc: Native tool-loop Agent with bounded semantic completion and versioned QQ delivery
+desc: Native tool-loop Agent with bounded replies and complete rotating model debug logs
 author: astrbot-chat
-version: 0.8.1
+version: 0.9.8

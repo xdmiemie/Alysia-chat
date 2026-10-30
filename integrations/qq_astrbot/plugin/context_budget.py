@@ -62,17 +62,6 @@ def tool_result_view(result, run=None):
     return result
 
 
-def action_receipts(actions, run=None):
-    """Completion checks need execution evidence, not another full search list."""
-    actions = deepcopy(actions)
-    for action in actions:
-        result = action.get("result")
-        if isinstance(result, dict) and isinstance(result.get("songs"), list):
-            result["candidate_count"] = len(result.pop("songs"))
-        action["result"] = tool_result_view(result, run)
-    return actions
-
-
 class RequestBudget:
     def __init__(self, provider, phase=None):
         config = request_config(provider, phase)

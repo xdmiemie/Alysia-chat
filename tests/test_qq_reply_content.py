@@ -61,3 +61,25 @@ def test_checker_dialogue_uses_actual_user_text_without_transport_envelope():
         {'type': 'text', 'text': json.dumps({'current_message': {'text': '我想听你唱雨爱', 'message_id': 'private-id'}})},
         {'type': 'text', 'text': '<system_reminder>Current datetime: old</system_reminder>'}]}]
     assert dialogue_view(rows) == [{'role': 'user', 'content': '我想听你唱雨爱'}]
+
+
+def test_protocol_content_and_native_tool_pairs_are_preserved_while_dialogue_view_extracts_words():
+    raw = '{\n"reply":"保留 sticker:标签 与字段", "thinking_level":4, "voice":true\n}'
+    rows = [{'role': 'assistant', 'content': 'ignored sticker:tool-stage', 'tool_calls': [
+        {'id': 'call1', 'type': 'function', 'function': {'name': 'weapi', 'arguments': '{"query":"song"}'}}]},
+        {'role': 'tool', 'tool_call_id': 'call1', 'content': '{"ok":true}'},
+        {'role': 'assistant', 'content': raw},
+        {'role': 'assistant', 'content': '{"follow_up":"补发一句","thinking_level":2}'}]
+    assert chat_history(rows) == rows
+    assert dialogue_view(rows) == [{'role': 'assistant', 'content': '保留 sticker:标签 与字段'},
+                                   {'role': 'assistant', 'content': '补发一句'}]
+
+
+def test_protocol_view_bounds_whole_turns_without_truncating_json_or_orphaning_tools():
+    from integrations.qq_astrbot.plugin.reply_content import protocol_view
+    rows = [{'role': 'user', 'content': 'old'}, {'role': 'assistant', 'content': 'old answer'},
+        {'role': 'user', 'content': 'current'}, {'role': 'assistant', 'content': None, 'tool_calls': [
+            {'id': 'call', 'type': 'function', 'function': {'name': 'weapi', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'call', 'content': '{"data":"' + 'x' * 1400 + '"}'},
+        {'role': 'assistant', 'content': '{"reply":"ready","thinking_level":2,"voice":true}'}]
+    assert protocol_view(rows, max_turns=1) == rows[2:]

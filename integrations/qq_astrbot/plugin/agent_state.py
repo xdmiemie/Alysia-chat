@@ -44,9 +44,10 @@ class AgentRun:
     scope: str
     version: int
     started: float
-    checks: int = 0
+    followups: int = 0
     requests: int = 0
     tool_calls: int = 0
+    reply_retries: int = 0
     max_requests: int = 16
     max_tools: int = 16
     max_seconds: float = 180
@@ -78,13 +79,18 @@ class AgentStore:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS versions(scope TEXT PRIMARY KEY, version INTEGER, message_id TEXT);
                 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, scope TEXT, version INTEGER,
-                    started REAL, checks INTEGER DEFAULT 0, requests INTEGER DEFAULT 0,
-                    tool_calls INTEGER DEFAULT 0, status TEXT);
+                    started REAL, followups INTEGER DEFAULT 0, requests INTEGER DEFAULT 0,
+                    tool_calls INTEGER DEFAULT 0, reply_retries INTEGER DEFAULT 0, status TEXT);
                 CREATE TABLE IF NOT EXISTS actions(run_id TEXT, action_key TEXT, tool TEXT,
                     arguments TEXT, status TEXT, result TEXT, PRIMARY KEY(run_id,action_key));
                 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, run_id TEXT, kind TEXT,
                     payload TEXT, created REAL);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(runs)")}
+            if "followups" not in columns:
+                db.execute("ALTER TABLE runs ADD COLUMN followups INTEGER DEFAULT 0")
+            if "reply_retries" not in columns:
+                db.execute("ALTER TABLE runs ADD COLUMN reply_retries INTEGER DEFAULT 0")
 
     @contextmanager
     def connection(self):
@@ -124,7 +130,7 @@ class AgentStore:
 
         async def send(chain):
             # Framework diagnostic chains are internal; only tool effects and
-            # approved dialogue belong on the QQ transport.
+            # actual dialogue belong on the QQ transport.
             if getattr(chain, "type", None) in {"tool_call", "reasoning"}:
                 return None
             if not self.current(scope, version):
@@ -152,7 +158,8 @@ class AgentStore:
             db.execute("INSERT OR IGNORE INTO runs(id,scope,version,started,status) VALUES (?,?,?,?,?)",
                        (key, scope, version, time.time(), "running"))
             row = db.execute("SELECT * FROM runs WHERE id=?", (key,)).fetchone()
-        run = AgentRun(key, scope, version, row["started"], row["checks"], row["requests"], row["tool_calls"], **limits)
+        run = AgentRun(key, scope, version, row["started"], row["followups"], row["requests"], row["tool_calls"],
+                       reply_retries=row["reply_retries"], **limits)
         self.active[scope] = run
         return run
 
@@ -167,7 +174,8 @@ class AgentStore:
 
     def consume(self, run: AgentRun, kind: str):
         self.work(run)
-        field_name, maximum = {"checks": ("checks", 3), "requests": ("requests", run.max_requests),
+        field_name, maximum = {"followups": ("followups", 3), "reply_retries": ("reply_retries", 1),
+                               "requests": ("requests", run.max_requests),
                                "tool_calls": ("tool_calls", run.max_tools)}[kind]
         if getattr(run, field_name) >= maximum:
             raise BudgetExhausted(kind)

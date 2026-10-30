@@ -10,13 +10,15 @@ from copy import copy, deepcopy
 
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 
+from .model_debug import debug_client
+
 
 REQUEST_OPTIONS = frozenset({"response_format", "max_tokens", "temperature", "top_p",
                              "top_k", "chat_template_kwargs", "reasoning_budget_tokens", "tool_choice"})
 
 
-PHASE_DEFAULTS = {"agent": True, "selection": True, "check": False, "repair": False,
-                  "close": False, "music_result": False, "compression": False}
+PHASE_DEFAULTS = {"agent": True, "selection": True, "followup": False,
+                  "music_result": False, "compression": False}
 
 
 def request_config(provider, phase=None):
@@ -43,6 +45,12 @@ async def request_chat(provider, *, phase=None, **kwargs):
             kwargs.setdefault(name, config["custom_extra_body"][name])
         if "temperature" in config["custom_extra_body"]:
             kwargs.setdefault("temperature", config["custom_extra_body"]["temperature"])
+    tools = kwargs.get("func_tool")
+    if tools and not tools.empty():
+        # Native tools own their protocol. A content-only JSON grammar would
+        # suppress tool calls; discard it from both request and provider options.
+        kwargs.pop("response_format", None)
+        config["custom_extra_body"].pop("response_format", None)
     if not isinstance(provider, ProviderOpenAIOfficial):
         return await provider.text_chat(**kwargs)
     view = copy(provider)
@@ -55,6 +63,8 @@ async def request_chat(provider, *, phase=None, **kwargs):
             value = {**extra.get(name, {}), **value}
         extra[name] = deepcopy(value)
     view.provider_config = {**config, "custom_extra_body": extra}
+    view.client = debug_client(provider.client, phase=phase,
+        provider_id=config.get("id"), session_id=kwargs.get("session_id"))
     return await view.text_chat(**kwargs)
 
 
@@ -67,13 +77,6 @@ class RequestProvider:
         return getattr(self.provider, name)
 
     async def text_chat(self, **kwargs):
-        defaults = dict(self.defaults)
         if self.content_only:
             kwargs["func_tool"] = None
-        tools = kwargs.get("func_tool")
-        if tools and not tools.empty():
-            # In this llama.cpp build response_format selects the content-only
-            # grammar, suppressing native tool calls. Keep tools on their native
-            # auto-choice path; validate any resulting candidate locally.
-            defaults.pop("response_format", None)
-        return await request_chat(self.provider, **{**defaults, **kwargs})
+        return await request_chat(self.provider, **{**self.defaults, **kwargs})

@@ -80,7 +80,7 @@ def test_shared_model_file_drives_server_and_astrbot_limits(tmp_path):
     assert provider['custom_extra_body']['temperature'] == runtime.temperature
     assert provider['custom_extra_body']['top_p'] == runtime.top_p
     assert provider['custom_extra_body']['top_k'] == runtime.top_k
-    assert provider['thinking_phases']['check'] is False
+    assert provider['thinking_phases']['followup'] is False
     assert provider['thinking_phases']['compression'] is False
 
 

@@ -12,6 +12,14 @@ Qwen3 runtime settings are shared in [`configs/runtime/qwen3.yaml`](../../config
 The launcher and AstrBot provider generator read the same file; restart the managed
 stack after changes to apply both. Internal request budgeting uses the generated provider settings.
 
+Complete model requests and raw API responses are recorded in
+`storage/qq_companion/logs/model_debug/model-*.json`: indented JSON arrays with
+line breaks, 50 request/response exchanges per file, at most five files, deleting
+the oldest on rotation. Old JSONL files are automatically converted.
+The archive covers the Agent, retries, post-reply decisions, song notifications
+and summaries. `ASTRBOT_CHAT_MODEL_DEBUG_DIR` overrides the location. See
+[the log field definitions](../../docs/qq_companion/agent.md#完整模型调试日志).
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/qq_companion/install_astrbot.ps1
 runtime_env/python.exe scripts/qq_companion/configure.py --apply
@@ -40,7 +48,7 @@ During authorized live tests, `runtime_env/python.exe scripts/qq_companion/live_
 
 # Q4 local acceptance
 
-`probe_q4_local.py` runs with the AstrBot Python environment and fake transport/inference. `probe_q4_source.py`, `probe_q4_audio.py`, `probe_q4_model.py` and `supervisor.py --local-q4-acceptance` run with the model environment for real local backend checks. They never start QQ components. Run GPU probes sequentially. See [Q4 operations](../../docs/qq_companion/q4.md).
+`probe_q4_local.py` runs with the AstrBot Python environment and fake transport/inference. `probe_q4_source.py`, `probe_q4_audio.py` and `supervisor.py --local-q4-acceptance` run with the model environment for real local backend checks. `probe_q4_model.py` now delegates to current native-Agent acceptance in the AstrBot environment; `--quick` verifies direct chat, post-Agent follow-up and native song tools. They never start QQ components. Run GPU probes sequentially. See [Q4 operations](../../docs/qq_companion/q4.md).
 
 `search_music.py` exports twenty weapi candidates each for 雨爱、奇迹再现、年轮、叹云兮,
 including aliases/subtitles, without downloading audio. Run `probe_q4_selection.py`
