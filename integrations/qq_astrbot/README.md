@@ -1,14 +1,18 @@
 # AstrBot integration
 
-Plugin 0.7.0 adds a single native tool-loop Agent, at most three semantic completion checks, conversation-version cancellation and durable action/send receipts. See [the current Agent contract and validation](../../docs/qq_companion/agent.md). Media decisions use native `emotion`, `weapi`, `musiccover`, `music` and `sticker` tools; final candidates contain only `reply`, `thinking_level` and `voice`.
+Plugin 0.10.0 uses a single native tool-loop Agent with scoped persistent memory,
+bounded recall and private daily diaries. See [Q5](../../docs/qq_companion/q5.md)
+and [the Agent contract](../../docs/qq_companion/agent.md). Media decisions use
+native `emotion`, `weapi`, `musiccover`, `music` and `sticker` tools; final replies
+contain `reply`, `thinking_level` and `voice`. There is no semantic completion judge.
 
 The QQ phase plan is in `astrbot-chat项目阶段计划.md`. AstrBot is the intended
 message and Agent owner; SnowLuma provides OneBot v11. `plugin/` contains the
 Q1 persistent inbound guard, Q2 `q2_echo` tool, Q3 scoped routing and permissions,
 and paced QQ text replies. Primary replies send at most three messages in a
 group or six in private chat; remaining sentences are combined into the last
-message. Semantic completion replaces the separate optional private follow-up;
-continuation stays inside the same Runner, with no fabricated user event. Only AstrBot's Runner owns
+message. After successful primary delivery, private conversations may receive
+up to three tool-free optional follow-ups. Only AstrBot's Runner owns
 QQ history and calls the local Qwen3 provider. The plugin never invokes
 `AstrbotChatCore.process`.
 
@@ -21,7 +25,7 @@ SQLite. See [operations](../../docs/qq_companion/operations.md) for configuratio
 administrator commands, and local acceptance commands. No QQ connection is
 needed for `scripts/qq_companion/probe_q3_local.py`.
 
-All fixed prompts for the current QQ Agent, completion checks and tools are
+All fixed prompts for the current QQ Agent, memory, diaries and tools are
 editable in [`configs/qq_companion/prompts.yaml`](../../configs/qq_companion/prompts.yaml),
 with comments describing every section. This includes the active AstrBot
 safety/tool/date blocks and the echo tool descriptions. `prompt_loader.py` reads

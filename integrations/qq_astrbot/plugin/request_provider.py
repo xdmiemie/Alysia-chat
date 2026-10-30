@@ -18,7 +18,7 @@ REQUEST_OPTIONS = frozenset({"response_format", "max_tokens", "temperature", "to
 
 
 PHASE_DEFAULTS = {"agent": True, "selection": True, "followup": False,
-                  "music_result": False, "compression": False}
+                  "music_result": False, "compression": False, "memory": False}
 
 
 def request_config(provider, phase=None):

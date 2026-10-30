@@ -1,5 +1,13 @@
 # Planned AstrBot integration contract; this file is not a runnable AstrBot config.
 character_id: elysia
+memory:
+  enabled: true
+  retention: indefinite
+  max_context_fraction: 0.25  # derived per request from the provider's actual context
+  timezone: system
+diary:
+  enabled: true
+  time: "23:30"
 qwen:
   active_manifest: model_store/active/qwen3.json
   model_id: qwen3-14b-q4-k-m-base-v1

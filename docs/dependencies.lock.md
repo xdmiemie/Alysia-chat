@@ -1,5 +1,13 @@
 # Q0 dependency lock and license review
 
+Q5 (2026-10-30) reuses AstrBot's installed SQLite/FTS5, APScheduler 3.11.3,
+tzlocal, tzdata and jsonschema; no production dependency was upgraded. Local
+Python 3.12 test tooling now also has pytest 9.2.0, iniconfig 2.3.1 and pluggy
+1.7.0. The model runtime and training environments were not changed. Q5's real
+model probe uses the same pinned llama.cpp and Qwen3 below; compression uses an
+unbounded JSON string grammar with token-budget and post-generation size checks
+to avoid llama.cpp's bounded-repetition grammar limit.
+
 Q4 reuses the installed model runtime: requests 2.34.2, pycryptodome 3.23.0, Pillow 10.4.0 and psutil 7.2.2 (pinned in `services/media_api/requirements.txt`); the isolated AstrBot environment already provides psutil 7.1.3. No runtime package upgrade was performed. Feiyu/Applio/audio-separator source, weight and compatibility pins remain those recorded in `qq_companion/stage14a.md`. The matsuko_cover UI was reviewed but is not a new runtime dependency.
 
 Recorded 2026-10-28 (Asia/Hong_Kong). Git SHA or release tag is the source lock; binaries below also have local SHA256. These are local verification values, not upstream published checksums unless explicitly noted. Model weights, audio references, account data and secrets stay outside Git.

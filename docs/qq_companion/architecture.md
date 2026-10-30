@@ -1,6 +1,6 @@
-# QQ Q0–Q3 architecture
+# QQ Q0–Q5 architecture
 
-The current 0.7.0 lifecycle, native media tools, versioned delivery and history
+The current 0.10.0 lifecycle, native media tools, versioned delivery and history
 provenance are described in [大肥鱼原生工具 Agent](agent.md). The Q0–Q3 foundations
 below remain; the Q3-only echo restriction has been extended to the five native
 media tools through the same guarded registration path.
@@ -25,7 +25,7 @@ Q2 connects the single AstrBot Runner to `127.0.0.1:8080/v1`, exposes the authen
 
 Q3 changes the event's session ID before the Runner's session lock and conversation lookup: `qq:{bot_uin}:dm:{sender_uin}` or `qq:{bot_uin}:group:{group_id}`. AstrBot retains its platform/message-type prefix in the UMO; the canonical QQ ID is its session component. Existing conversations under legacy keys are not imported. Direct replies use the original numeric event sender/group via `AiocqhttpMessageEvent.send`, independent of the history key. Proactive sends must use an audited numeric-recipient adapter, never pass a canonical session key directly to OneBot.
 
-`message_router.py` admits @bot, quotes of bot messages, wake words, then optional automatic participation. It stores only per-group settings and automatic-participation timestamps. `memory_context.py` holds an ephemeral, scoped, TTL-limited window, not a second durable chat database. Each row includes speaker ID, display name, message IDs, @ flag, reply ID and receipt time. Group requests replace the Runner's historical contexts with this window; private requests retain AstrBot's newly scoped history. The future memory retrieval helper first filters exact `owner_key` and deletion state.
+`message_router.py` admits @bot, quotes of bot messages, wake words, then optional automatic participation. It stores only per-group settings and automatic-participation timestamps. `memory_context.py` holds an ephemeral, scoped, TTL-limited window, not a second durable chat database. Each row includes speaker ID, display name, message IDs, @ flag, reply ID and receipt time. Group requests replace the Runner's historical contexts with this window; private requests retain AstrBot's newly scoped history. Q5 separately adds a durable fact repository with an authorized SQL set before FTS, scoped temporary prompt injection, versioned compaction and private diaries. Only fixed generalized topic projections and diaries generated from those projections can cross conversations; see [Q5](q5.md).
 
 `permissions.py` rejects unknown and prohibited capabilities. The request hook runs last, copies the tool set and exposes only audited adapters. In Q3 this is `q2_echo`; its execution wrapper rechecks current group controls. AstrBot's tool-start hook cannot veto execution, so security does not depend on it. The persistent private-send reservation enforces a bot-wide, per-recipient daily quota and request idempotency across source groups. Q3 installs no proactive-send or Qzone tool. Qzone's gate remains closed.
 

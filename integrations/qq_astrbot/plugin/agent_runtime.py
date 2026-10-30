@@ -274,6 +274,16 @@ class NativeAgentLifecycle:
                 yield self.fallback()
                 return
             self.update_execution_state()
+            if memory := self.event.get_extra("qq_persistent_memory"):
+                def consume_memory_request():
+                    if self.run.requests >= self.run.max_requests - 1:
+                        raise ValueError("memory_compaction_budget_unavailable")
+                    self.store.consume(self.run, "requests")
+                self.runner.run_context.messages = await memory.prepare(
+                    self.runner.run_context.messages, self.runner.provider, self.run.scope, self.runner.req.func_tool,
+                    wait=lambda operation: self.store.wait(self.run, operation, timeout=60),
+                    consume=consume_memory_request,
+                    record=lambda payload: self.store.record(self.run, "memory_context", payload))
             budget = RequestBudget(self.runner.provider, "agent")
             messages, tokens, dropped = await self.store.wait(self.run,
                 budget.fit(self.runner.run_context.messages, self.runner.req.func_tool), timeout=10)

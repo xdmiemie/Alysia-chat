@@ -1,5 +1,32 @@
 # Q0–Q2 acceptance record
 
+## Q5 acceptance — 2026-10-30 (Asia/Hong_Kong), plugin 0.10.0
+
+Q5 is complete for the requested local acceptance scope. User decisions are
+automatic preferences/events/sensitive facts, exact-owner originals with
+processed shared summaries, indefinite retention with bounded recall/compaction,
+and no forgetting/deletion interface. Implementation and operations: [Q5](q5.md).
+
+| Gate | Result | Evidence |
+|---|---|---|
+| Durable facts, FTS5, revision and source queue | Pass | Restart, deduplication, Chinese terms, correction revisions, lease/retry, no expiry of generated facts |
+| Privacy boundaries | Pass | Different DMs/groups/bots/characters isolated; public projections cannot carry free-form private facts; mixed private diaries excluded from ordinary retrieval |
+| Prompt injection and compaction | Pass | Pinned real Runner receives temporary current-user memory; saved history remains clean; changed source invalidates cache; original records preserved |
+| Seven daily entries, timezone and retries | Pass locally | Seven-day simulation, date cutoff, missed runs, DST, duplicate requests and transaction uniqueness; empty-material day supported |
+| 100 subtitle pseudo-instructions | Pass for fixtures | Rejected by data filtering; extraction/model-tool forgeries have no executor or QQ transport; all utility requests disable tools |
+| Full QQ automated regression | Pass | 411 tests passed using `envs/astrbot/Scripts/python.exe`; includes 117 Q5 tests |
+| Original Stage 5/6/10 and training | Pass | 33 tests passed using `runtime_env/python.exe` |
+| Q3 local adapter probe | Pass | `Q3_LOCAL_PASS`; obsolete completion-approval/system-block fixtures updated to current lifecycle contract |
+| Real local Qwen pipeline | Pass | `probe_q5_local.py`: extraction including health fixture, corrected singer preference, actual recall, 64-record compaction, private/public diary, idempotency and isolation; `Q5_MODEL_PASS` |
+| Real token and diary sizes | Pass | Memory allowance8192; compressed full request1841 tokens; private/public drafts217/208 characters |
+| External side effects | None | Zero QQ connections, zero QQ sends, no Qzone enablement; only a Broker-owned isolated model on18080 was started and stopped |
+
+Synthetic data, temporary databases and the model report are under ignored
+`storage/temporary/q5-acceptance/`. Seven simulated days are not seven days of
+live unattended operation. Q6/Q7 gates and Q1's historical pending live counts
+are unchanged. The new plugin files install on the normal managed startup;
+no QQ stack was started for this acceptance.
+
 Date: 2026-10-28 (Asia/Hong_Kong). This record distinguishes code checks from tests requiring a logged-in NTQQ client.
 
 | Gate | Result | Evidence / next action |

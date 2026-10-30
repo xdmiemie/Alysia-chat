@@ -199,8 +199,8 @@ conversation keys are not migrated into the new scopes. Group prompts rebuild
 their recent context from the current group's TTL window, with sender IDs,
 display names, @ flags and quote IDs. A restart clears that ephemeral window.
 The `context_token_budget` applies to the recent window; the current message and
-persona remain separate. Future persistent memories must use the same exact
-owner key; Q5's repository is not implemented by Q3.
+persona remain separate. Q5 now adds exact-owner durable facts plus separately
+processed shared projections; see [Q5 memory and diary operations](q5.md).
 
 The Agent receives only audited tool adapters. Q3 keeps `q2_echo` as a public
 read-only test tool; unknown tools, arbitrary shell/Python, profile changes,

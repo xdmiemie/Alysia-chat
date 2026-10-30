@@ -1,4 +1,4 @@
 name: astrbot_chat_q1
-desc: Native tool-loop Agent with bounded replies and complete rotating model debug logs
+desc: Native Agent with scoped persistent memory, bounded recall and private daily diaries
 author: astrbot-chat
-version: 0.9.8
+version: 0.10.0

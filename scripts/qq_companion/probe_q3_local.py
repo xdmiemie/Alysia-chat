@@ -184,7 +184,7 @@ def main() -> int:
                 pending = event(group="401", at=True)
                 await plugin.filter_inbound(pending)
                 await plugin.request_paced_reply(pending, ProviderRequest())
-                pending.set_extra("qq_agent_approved", True)
+                pending.set_extra("qq_agent_completed", True)
                 pending.set_extra("qq_thinking_level", 1)
                 pending.set_result(MessageEventResult().message("应被取消").set_result_content_type(ResultContentType.LLM_RESULT))
                 command = event(group="401", text="/q3 off", role="admin")
@@ -202,7 +202,7 @@ def main() -> int:
                 # outgoing messages in a group and without a second model call.
                 allowed.set_extra("qq_reply_started_at", time.monotonic() - 100)
                 await plugin.request_paced_reply(allowed, ProviderRequest())
-                allowed.set_extra("qq_agent_approved", True)
+                allowed.set_extra("qq_agent_completed", True)
                 raw = '{"reply":"一。二。三。四。五。","thinking_level":1,"voice":false}'
                 response = LLMResponse(role="assistant", completion_text=raw)
                 history = SimpleNamespace(messages=[])
@@ -263,8 +263,9 @@ def main() -> int:
                         parameters={"type": "object", "properties": {"value": {"type": "string"}}}, handler=plugin.q2_echo)]))
                 await plugin.request_paced_reply(edited, req)
                 assert "PERSONA UNCHANGED" in req.system_prompt
-                for key in ("qq_context", "agent_policy", "astrbot_safety", "astrbot_tool_call"):
+                for key in ("qq_context", "astrbot_safety", "astrbot_tool_call"):
                     assert "FILE " + key in req.system_prompt
+                assert "FILE agent_policy" in edited.get_extra("qq_agent_rules_prompt")
                 assert req.extra_user_content_parts[0].text == "FILE datetime_reminder"
                 assert req.func_tool.tools[0].description == "FILE echo_description"
                 assert req.func_tool.tools[0].parameters["properties"]["value"]["description"] == "FILE echo_value_description"

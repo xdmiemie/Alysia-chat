@@ -20,6 +20,7 @@ REQUIRED_PROMPTS = frozenset({
     "tool_sticker", "tool_weapi", "tool_speech_text", "tool_emotion_value", "tool_song_id",
     "tool_sticker_tag", "tool_weapi_action", "tool_music_query", "tool_music_page", "tool_song_action",
     "tool_candidate", "agent_summary", "agent_execution_state", "music_reselection",
+    "memory_use", "memory_extract", "memory_compress", "memory_shared_topics", "diary_generate", "diary_public",
 })
 
 

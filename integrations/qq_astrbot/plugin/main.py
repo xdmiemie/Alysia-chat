@@ -39,6 +39,7 @@ from .reply_pacing import (
 from .reply_content import chat_history, protocol_view, has_control_markup, spoken_text
 from .request_provider import request_chat
 from .context_budget import RequestBudget
+from .persistent_memory import PersistentMemory
 
 
 FOLLOWUP_FORMAT = {"type": "json_schema", "json_schema": {"name": "optional_followup", "strict": True,
@@ -91,6 +92,27 @@ class Q1Guard(star.Star):
                 scope.split(":")[1], "bot", text, ["song:" + key], False, None, time.time(), "assistant"))
             self.router.context.remember_protocol(scope, 'song:' + key, [{'role': 'assistant', 'content': text}])
         self.media.record_group_result = record_group_result
+        self.memory = PersistentMemory(state_dir,
+            character=os.environ.get("ASTRBOT_CHAT_CHARACTER_ID", "elysia"),
+            timezone_name=str(config.get("memory_timezone", "system")),
+            enabled=bool(config.get("memory_enabled", True)),
+            diary_enabled=bool(config.get("diary_enabled", True)),
+            diary_time=str(config.get("diary_time", "23:30")), logger=self.logger)
+
+    async def initialize(self):
+        async def provider():
+            return await self.context.provider_manager.get_provider_by_id("astrbot_chat_qwen3")
+
+        async def persona():
+            from .prompt_loader import prompt_path
+            # Same character source synchronized into AstrBot by model setup.
+            character = self.memory.character
+            if not character.replace("_", "").replace("-", "").isalnum():
+                raise ValueError("Invalid memory character")
+            path = prompt_path().parents[2] / "configs" / "characters" / character / "system_prompt.txt"
+            return path.read_text(encoding="utf-8-sig")
+
+        await self.memory.start(provider, self.media.client.admission, persona)
 
     async def _group_size(self, event: AstrMessageEvent) -> int | None:
         group = getattr(event.message_obj, "group", None)
@@ -208,6 +230,12 @@ class Q1Guard(star.Star):
             finally:
                 self._release_song_hold(event)
             return
+        if (decision.trigger != "disabled" and not any(isinstance(part, Record) for part in chain)
+                and (memory := getattr(self, "memory", None))):
+            # Capture each accepted original message, including fragments that
+            # may later be coalesced or superseded. This is not chat history.
+            memory.enqueue(incoming)
+            memory.wake()
         if not decision.should_reply:
             event.stop_event()
             self._release_song_hold(event)
@@ -244,6 +272,9 @@ class Q1Guard(star.Star):
             event.set_extra("qq_voice_input", True)
             self.router.context.replace_text(scope, incoming.message_id, transcript)
         event.message_str = self.router.context.text_for(scope, incoming.message_id, incoming.text)
+        if record is not None and (memory := getattr(self, "memory", None)):
+            memory.enqueue(incoming, event.message_str)
+            memory.wake()
 
     def _observe_request(self, event, incoming, *, hold_music=True):
         sequence = self.agent_store.observe(incoming.scope, incoming.message_id)
@@ -358,6 +389,9 @@ class Q1Guard(star.Star):
             # The lifecycle inserts these rules as a second system message,
             # retaining them for this run without saving them as chat history.
             event.set_extra("qq_agent_rules_prompt", "\n".join((prompts["reply_output"], prompts["agent_policy"])))
+            if memory := getattr(self, "memory", None):
+                event.set_extra("qq_persistent_memory", memory)
+                event.set_extra("qq_agent_rules_prompt", event.get_extra("qq_agent_rules_prompt") + "\n" + prompts["memory_use"])
             task_input = json.loads(req.prompt)
             tasks = getattr(self.media, 'song_tasks', None)
             task_input['active_music_tasks'] = [{k: row[k] for k in ('id', 'mode', 'title', 'state')}
@@ -568,6 +602,10 @@ class Q1Guard(star.Star):
                 messages.append(Message(role="user", content=prompts["followup_user"]))
                 budget = RequestBudget(provider, "followup")
                 budget.output_tokens = 160
+                if memory := event.get_extra("qq_persistent_memory"):
+                    messages = await memory.prepare(messages, provider, run.scope,
+                        wait=lambda operation: self.agent_store.wait(run, operation, timeout=60),
+                        consume=lambda: self.agent_store.consume(run, "requests"))
                 fitted, tokens, dropped = await self.agent_store.wait(run, budget.fit(messages), timeout=10)
                 self.agent_store.consume(run, "followups")
                 self.agent_store.consume(run, "requests")
@@ -620,6 +658,8 @@ class Q1Guard(star.Star):
         return f"character_id={character_id}; echo={value[:80]}"
 
     async def terminate(self):
+        if memory := getattr(self, "memory", None):
+            await memory.close()
         await self.media.close()
         self.guard.close()
         self.router.close()

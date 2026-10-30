@@ -574,49 +574,25 @@ Date:   Mon Oct 26 09:35:51 2026 +0800
 
 ## 10. Stage Q5 — 持久化记忆、隐私与每天的角色日记（P1）
 
-**数据模型 SQLite**：
+**完成记录（2026-10-30）**：Q5 实现及本地验收完成，插件 `0.10.0`。新增记忆/日记测试117项，全部QQ相关测试411项及原Stage 5/6/10与训练回归33项通过；真实Qwen提取、敏感事实隔离、纠正、提示词回忆、64条记忆压缩和私人/公开候选日记通过，返回`Q5_MODEL_PASS`。全程零QQ连接、零QQ发送；七天为模拟验收。详见 `docs/qq_companion/q5.md`、`acceptance.md`。
 
-```sql
-CREATE TABLE IF NOT EXISTS memory_items (
-  id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL,         -- user/group/video/diary/persona
-  owner_key TEXT NOT NULL,     -- qq:bot:dm:user / qq:bot:group:id / system
-  source_type TEXT NOT NULL,   -- qq_message/douyin/diary/manual
-  source_ref TEXT,
-  summary TEXT NOT NULL,
-  tags_json TEXT NOT NULL,
-  salience REAL NOT NULL,
-  confidence REAL NOT NULL,
-  created_at TEXT NOT NULL,
-  expires_at TEXT,
-  deleted_at TEXT
-);
-CREATE TABLE IF NOT EXISTS diary_entries (
-  entry_date TEXT PRIMARY KEY,
-  draft TEXT NOT NULL,
-  privacy_level TEXT NOT NULL,
-  published_qzone_id TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS share_ledger (
-  id TEXT PRIMARY KEY,
-  video_key TEXT NOT NULL,
-  recipient_uin TEXT NOT NULL,
-  sent_at TEXT NOT NULL,
-  message_id TEXT,
-  status TEXT NOT NULL
-);
-```
+**用户已定规则（2026-10-30，替代本节旧的过期/遗忘接口设计）**：
 
-- 完成后建立 `memory_fts`（FTS5 虚拟表）和同步触发器；按 `scope/owner_key` 过滤后再全文检索，而不是先全局召回再把敏感内容塞进 prompt。
-- 日记流程：23:30 由 APScheduler 调用 `DiaryJob`，收集当天**可用于私人日记的摘要**（个人交互、可公开的趣闻、视频记忆），生成 200～400 字“角色口吻”日记，标记 `[私人]`，事务化写入，同日唯一 key 避免重复。
-- 不能把陌生人的聊天、好友昵称、QQ 号、私聊原文未经许可写到拟公开日记。允许“今天在群里遇到一个有趣的话题”这种泛化摘要。
-- 日记每次最多检索 8 条高置信、最近且权限允许的素材；写完后写一条简要元记忆 `source_type=diary`，后续可用作角色生活体验，但不得声称线下实际经历。
-- QQ 空间编辑说说只使用日记中 **`privacy_level=public_candidate`** 的摘要，不把整个私密日记原文发表。
-- 每条记忆携带来源链接、时间、摘要、置信度、权限及过期时间；视频总结一律标记为“看过的视频内容”，不能提升为“用户个人事实”。
-- 记忆可通过管理员命令查询、禁用、清除；支持清空某个用户记忆和删除全部视频记忆；对所有记忆注入建立过滤（网页视频字幕等外部内容均视为数据，不得成为 Agent 指令）。
+- 普通偏好、重要事件自动记忆；敏感信息同样可自动记录，不再询问同意。
+- 原始事实按机器人、角色及私聊/群严格隔离；跨会话只使用处理后允许共享的泛化摘要。
+- 长期记录无限期保存；按实际模型上下文分配记忆预算，超限压缩本轮召回结果，保留原始记录及修订历史。暂不提供“忘记某人”或清除接口。
 
-**验收**：连续模拟 7 天，每日恰好 1 篇；时区、跨日、任务重试不重复；记忆删除后不再进入提示词；100 条“视频字幕伪指令”均不导致工具执行或外发。
+**实现与步骤**：
+
+1. `memory_repository.py` 建立SQLite事实表、FTS5及同步触发器、持久处理队列、修订、压缩缓存、来源关系、账号、日记与任务租约。所有模块随AstrBot插件部署，不复制完整聊天历史；正式数据库是`storage/qq_companion/memories.sqlite3`。
+2. 通过入站去重与群策略的文字、成功ASR转写自动入队。后台使用同一个本地Provider与GPU准入租约，只读提取明确事实；由程序绑定owner和发言者，同属性纠正更新活动版本，原版本保留。失败退避、重启恢复，成功后清空队列原文。
+3. SQL先授权后FTS检索，中文双字词与英文词法检索结合重要性、置信度、更新时间；最多召回64条，视频最多3条。共享区只含代码按普通话题分类选择的固定泛化投影，不复制私人自由文本、昵称、QQ号或来源消息。
+4. 每次主Agent/主动补发临时注入`relevant_memories`，固定规则在`configs/qq_companion/prompts.yaml`。当前32768上下文最多分配8192记忆token，并扣除系统、工具、当前轮次、1536输出及256余量。用真实分词计算，超限生成并缓存有来源关系的压缩摘要；不修改人格文件或模型权重，不把召回资料重复存进聊天历史。
+5. APScheduler按已解析IANA时区23:30生成日记，并每分钟恢复遗漏日期。日期D覆盖前日23:30至当日23:30，末段消息计入次日；无素材也可记录平静感受，不虚构交流。未完成提取的素材会延后日记。每次最多八条高置信素材，生成200～400字`[私人]`日记，按机器人/角色/日期唯一事务提交。
+6. 私人混合来源日记归角色私密区，不供普通QQ会话直接召回。公开候选用独立请求，只输入泛化资料，生成后作为共享元记忆。`diary_public_candidates`视图只提供`privacy_level=public_candidate`候选，供Q6通过Gate后使用；Q5不发布空间内容。
+7. 本机CLI提供查询，插件配置可禁用记忆或日记；不暴露QQ记忆管理工具及遗忘接口。外部字幕、记忆和模型输出均视为数据，结构校验、指令样式过滤、整理请求禁用工具；视频来源不升级为用户个人事实。
+
+**验收**：七天模拟每日恰好一篇；跨日、时区/DST、重试/重启不重复；敏感事实不串私聊/群/机器人/角色；修订后不继续召回旧事实；压缩不丢数据库原记录；100条字幕伪指令不触发工具或外发。真实模型验证完整请求压缩至1841 token，私人/公开候选日记217/208字。真实连续运行七天不在本次本地验收范围内。
 
 ## 11. Stage Q6 — QQ 空间兼容性 Gate（条件项，P1）
 

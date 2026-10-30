@@ -1,4 +1,8 @@
 {
+  "memory_enabled": {"description": "Q5 自动持久化记忆（含敏感事实；原始事实仅当前私聊或群可用）", "type": "bool", "default": true},
+  "memory_timezone": {"description": "日记 IANA 时区；system 使用本机时区并记录解析结果", "type": "string", "default": "system"},
+  "diary_enabled": {"description": "每天生成本地私人角色日记；不自动发布", "type": "bool", "default": true},
+  "diary_time": {"description": "本地日记截止及生成时间 HH:MM；末段消息计入次日日记", "type": "string", "default": "23:30"},
   "wake_words": {"description": "群聊明确唤醒词", "type": "list", "default": ["爱莉希雅", "elysia"]},
   "context_messages": {"description": "群暂存消息数（1–100）", "type": "int", "default": 20},
   "context_ttl_seconds": {"description": "群暂存 TTL 秒（1–3600）", "type": "int", "default": 300},
