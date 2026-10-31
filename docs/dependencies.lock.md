@@ -1,5 +1,14 @@
 # Q0 dependency lock and license review
 
+Q6 (2026-10-30) adds no packages and upgrades no dependency. It reuses pinned
+AstrBot/SnowLuma, httpx, SQLite, APScheduler, jsonschema and the existing Qwen
+Provider/GPU admission. The tracked execution adapter is
+`integrations/qq_astrbot/plugin/qzone_client.py`; no independent upstream Qzone
+plugin or autonomous scheduler was installed. Protocol references, download
+limitations and live evidence are in `qq_companion/q6.md`. Own publication,
+access rights and deletion passed against AstrBot v4.29.3 / SnowLuma v2.1.1;
+friend interactions remain unverified.
+
 Q5 (2026-10-30) reuses AstrBot's installed SQLite/FTS5, APScheduler 3.11.3,
 tzlocal, tzdata and jsonschema; no production dependency was upgraded. Local
 Python 3.12 test tooling now also has pytest 9.2.0, iniconfig 2.3.1 and pluggy

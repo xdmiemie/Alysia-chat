@@ -1,5 +1,14 @@
 # QQ companion operations (Windows 11)
 
+Q6 publishing, local controls and verification boundaries are documented in
+[q6.md](q6.md). Daily publishing defaults to23:40, two short sentences, once per
+natural day; important calendar/admin events have no daily count quota and are
+deduplicated. Edit `configs/qq_companion/qzone.local.yaml` for time/audience/events
+and `configs/qq_companion/prompts.yaml` keys `qzone_daily`, `qzone_event`,
+`qzone_interaction` for wording. Local policy reloads every minute. Friend
+interactions remain disabled until real visible verification; no such tests
+were run in Q6. `qzone.py stop` immediately prevents new reservations.
+
 Q4 voice, music, whole-song cover, GPU switching and local acceptance are documented in [q4.md](q4.md). Normal startup now includes TTS; `-WithoutTTS` explicitly disables it. All Q4 development tests use local transport instead of QQ.
 
 Cover switching unloads and restores only Qwen. SenseVoice, GPT-SoVITS and the

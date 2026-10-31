@@ -1,5 +1,28 @@
 # Q0–Q2 acceptance record
 
+## Q6 acceptance — 2026-10-30 (Asia/Hong_Kong), plugin 0.11.0
+
+Q6 development and the user-authorized self-post acceptance are complete.
+The new user scope supersedes the old all-capabilities-at-once gate:
+publication and friend interactions have separate evidence. Settings: [Q6](q6.md).
+
+| Gate | Result | Evidence |
+|---|---|---|
+| Account / cookies / own list and detail | Pass live | Account matched; required fields present; credentials never printed |
+| Own publish / visibility / delete | Pass live | Ten temporary posts created, queried and confirmed removed; self visibility and exact three-friend whitelist verified |
+| Isolation | Pass | No chat/history/memory insertion path in self-test; separate Qzone outbox |
+| Daily policy / important events | Pass locally | Two sentences, one regular post per day; independent unlimited events deduplicated by event/date; seven-day simulation |
+| Real local Qwen formatting | Pass | `Q6_MODEL_PASS`: summary, quiet day, important event; GPU admission, no QQ/history/memory writes |
+| Quotas, reload, recovery and boundaries | Pass locally | Atomic reservation, unknown-write reconciliation, uncertain-delete verification, exact allowlist and gates;47 Q6 tests |
+| Regression | Pass |451 QQ tests passed; final Q6 additions separately verified; original Stage5/6/10 and training33 passed |
+| Friend feed / comment / like | Not tested, disabled | User requested no friend-interaction tests; none issued |
+| Seven days unattended / friend's client display | Not tested | Simulation and server access rights do not replace those observations |
+
+Evidence stays under ignored `storage/temporary/q6/` and independent
+`storage/qq_companion/qzone.sqlite3`. Existing QQ/model services were reused.
+No ordinary QQ messages or Qzone friend comments/likes were sent. Plugin files
+install on normal managed startup; policy and prompts then reload automatically.
+
 ## Q5 acceptance — 2026-10-30 (Asia/Hong_Kong), plugin 0.10.0
 
 Q5 is complete for the requested local acceptance scope. User decisions are

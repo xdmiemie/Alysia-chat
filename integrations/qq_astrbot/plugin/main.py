@@ -40,6 +40,7 @@ from .reply_content import chat_history, protocol_view, has_control_markup, spok
 from .request_provider import request_chat
 from .context_budget import RequestBudget
 from .persistent_memory import PersistentMemory
+from .qzone_runtime import DiaryPublisher
 
 
 FOLLOWUP_FORMAT = {"type": "json_schema", "json_schema": {"name": "optional_followup", "strict": True,
@@ -113,6 +114,23 @@ class Q1Guard(star.Star):
             return path.read_text(encoding="utf-8-sig")
 
         await self.memory.start(provider, self.media.client.admission, persona)
+        # Protocol credentials are read locally, never exposed as Agent tools.
+        from .qzone_client import OneBotHTTP, QzoneClient
+        def qzone_client(account):
+            from .prompt_loader import prompt_path
+            root = prompt_path().parents[2]
+            paths = list((root / 'external/SnowLuma/v2.1.1/config').glob('onebot_*.json'))
+            expected = [p for p in paths if p.stem == 'onebot_' + account]
+            if len(expected) != 1:
+                raise ValueError('qzone_account_config_required')
+            data = json.loads(expected[0].read_text(encoding='utf-8-sig'))
+            server = next((s for s in data.get('networks', {}).get('httpServers', [])
+                           if s.get('port') == 3000 and s.get('host') in {'127.0.0.1', 'localhost'}), None)
+            if not server:
+                raise ValueError('qzone_loopback_required')
+            return QzoneClient(OneBotHTTP(server.get('accessToken', '')), account)
+        self.qzone = DiaryPublisher(self.memory.repository.path.parent, self.memory, qzone_client, logger=self.logger)
+        await self.qzone.start()
 
     async def _group_size(self, event: AstrMessageEvent) -> int | None:
         group = getattr(event.message_obj, "group", None)
@@ -658,6 +676,8 @@ class Q1Guard(star.Star):
         return f"character_id={character_id}; echo={value[:80]}"
 
     async def terminate(self):
+        if qzone := getattr(self, "qzone", None):
+            await qzone.close()
         if memory := getattr(self, "memory", None):
             await memory.close()
         await self.media.close()

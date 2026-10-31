@@ -1,0 +1,31 @@
+# Copy to qzone.local.yaml; IDs remain local and out of Git.
+# The publisher reloads this policy every minute. Prompts are in prompts.yaml.
+enabled: false
+account_id: ""
+timezone: Asia/Hong_Kong
+daily_time: "23:40"
+daily_deadline: "23:59"
+daily_max_chars: 100
+# Only self or the explicit friend_allowlist. Never silently publish to everyone.
+visibility: allowlist
+friend_allowlist: []
+# Remains disabled until read/comment/like have separate real capability evidence.
+interactions_enabled: false
+interaction_time: "19:30"
+comment_daily_limit: 2
+like_daily_limit: 3
+event_time: "10:00"
+# Public calendar events only; unlimited count, each id/date is deduplicated.
+events:
+  - id: new-year
+    date: "2026-01-01"
+    annual: true
+    text: "今天是元旦，记录对新一年的期待。"
+  - id: labour-day
+    date: "2026-05-01"
+    annual: true
+    text: "今天是劳动节，向日常的认真与努力致意。"
+  - id: national-day
+    date: "2026-10-01"
+    annual: true
+    text: "今天是国庆节，记录节日心情与祝愿。"

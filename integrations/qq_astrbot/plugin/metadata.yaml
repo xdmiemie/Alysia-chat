@@ -1,4 +1,4 @@
 name: astrbot_chat_q1
-desc: Native Agent with scoped persistent memory, bounded recall and private daily diaries
+desc: Native Agent with scoped memory, private diaries and gated daily Qzone publishing
 author: astrbot-chat
-version: 0.10.0
+version: 0.11.0

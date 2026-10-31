@@ -1,6 +1,8 @@
 # AstrBot integration
 
-Plugin 0.10.0 uses a single native tool-loop Agent with scoped persistent memory,
+Plugin 0.11.0 adds gated Qzone publishing with editable daily/event prompts;
+friend interactions remain disabled pending real tests. See [Q6](../../docs/qq_companion/q6.md).
+It uses a single native tool-loop Agent with scoped persistent memory,
 bounded recall and private daily diaries. See [Q5](../../docs/qq_companion/q5.md)
 and [the Agent contract](../../docs/qq_companion/agent.md). Media decisions use
 native `emotion`, `weapi`, `musiccover`, `music` and `sticker` tools; final replies
