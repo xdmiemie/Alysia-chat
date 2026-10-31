@@ -22,7 +22,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "external/AstrBot")]
 OUTPUT = ROOT / "storage/temporary/q5-acceptance"
 
 
-async def cases(base, model_id):
+async def cases(base, model_id, *, prompt_profile="qwen3"):
     from astrbot.core.agent.message import Message
     from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
     from integrations.qq_astrbot.plugin.agent_runtime import parse_final_reply
@@ -32,7 +32,7 @@ async def cases(base, model_id):
     from integrations.qq_astrbot.plugin.context_budget import RequestBudget
     from scripts.qq_companion.configure_model import configure, PROVIDER_ID
 
-    config = configure(json.loads((ROOT / "external/AstrBot/data/cmd_config.json").read_text(encoding="utf-8-sig")), model_id, "elysia")
+    config = configure({}, model_id, "elysia", prompt_profile=prompt_profile)
     model = next(p for p in config["provider"] if p["id"] == PROVIDER_ID)
     source = next(p for p in config["provider_sources"] if p["id"] == model["provider_source_id"])
     provider = ProviderOpenAIOfficial({**source, **model, "api_base": base + "/v1", "timeout": 90}, {})
@@ -115,6 +115,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--existing", action="store_true")
     args = parser.parse_args()
+    from runtime.qwen3.model_registry import resolve_model
+    entry = resolve_model()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["ASTRBOT_ROOT"] = str(OUTPUT)
     os.environ["ASTRBOT_CHAT_MODEL_DEBUG_DIR"] = str(OUTPUT / "model_debug")
@@ -128,7 +130,7 @@ def main():
         try:
             with opener.open("http://127.0.0.1:8080/v1/models", timeout=3) as response:
                 model_id = json.load(response)["data"][0]["id"]
-            asyncio.run(cases("http://127.0.0.1:8080", model_id))
+            asyncio.run(cases("http://127.0.0.1:8080", model_id, prompt_profile=entry.prompt_profile))
         finally:
             state.leave(lease)
     else:
@@ -157,7 +159,7 @@ def main():
                         time.sleep(0.5)
                 with opener.open("http://127.0.0.1:18080/v1/models", timeout=3) as response:
                     model_id = json.load(response)["data"][0]["id"]
-                asyncio.run(cases("http://127.0.0.1:18080", model_id))
+                asyncio.run(cases("http://127.0.0.1:18080", model_id, prompt_profile=entry.prompt_profile))
         finally:
             if process:
                 process.terminate()

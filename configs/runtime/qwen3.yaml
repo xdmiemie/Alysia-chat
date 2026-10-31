@@ -5,6 +5,8 @@ model_manifest: model_store/active/qwen3.json
 # Shared by llama.cpp, AstrBot provider generation, and local model probes.
 context_size: 32768
 gpu_layers: 99
+# Server arguments also disable automatic fit and enable flash attention:
+# keep the configured GPU placement/context instead of silently downsizing.
 cache_type_k: q8_0
 cache_type_v: q8_0
 enable_thinking: true

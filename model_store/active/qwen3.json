@@ -1,15 +1,16 @@
 {
   "model_type": "qwen3",
   "character_id": "elysia",
-  "model_id": "qwen3-14b-q4-k-m-base-v1",
-  "version": "qwen3-14b-q4-k-m-base-v1",
+  "model_id": "qwen3.5-9b-q8-0-base-v1",
+  "version": "qwen3.5-9b-q8-0-base-v1",
   "model_format": "gguf",
   "required_files": [
-    "model_store/registry/qwen3/elysia/qwen3-14b-q4-k-m-base-v1/Qwen3-14B-Q4_K_M.gguf"
+    "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf"
   ],
   "registry_manifest": "model_store/registry/qwen3/elysia/models.json",
   "runtime": {
-    "model_file": "model_store/registry/qwen3/elysia/qwen3-14b-q4-k-m-base-v1/Qwen3-14B-Q4_K_M.gguf"
+    "model_file": "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf",
+    "prompt_profile": "qwen35"
   },
-  "base_model_id": "qwen3-14b-q4-k-m-base-v1"
+  "activated_at": "2026-10-31T19:06:37.522680+00:00"
 }

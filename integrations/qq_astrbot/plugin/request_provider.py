@@ -11,6 +11,7 @@ from copy import copy, deepcopy
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 
 from .model_debug import debug_client
+from .model_messages import normalize_messages, protocol_prompt
 
 
 REQUEST_OPTIONS = frozenset({"response_format", "max_tokens", "temperature", "top_p",
@@ -53,6 +54,8 @@ async def request_chat(provider, *, phase=None, **kwargs):
         config["custom_extra_body"].pop("response_format", None)
     if not isinstance(provider, ProviderOpenAIOfficial):
         return await provider.text_chat(**kwargs)
+    kwargs["contexts"] = normalize_messages(kwargs.get("contexts") or [],
+        system_prompt=kwargs.pop("system_prompt", None), protocol=protocol_prompt(config))
     view = copy(provider)
     extra = config["custom_extra_body"]
     for name in REQUEST_OPTIONS:

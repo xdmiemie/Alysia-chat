@@ -20,6 +20,7 @@ async def probe(output):
     from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
     from integrations.qq_astrbot.plugin.media_router import MediaRouter
     from scripts.qq_companion.configure_model import configure, PROVIDER_ID
+    from runtime.qwen3.model_registry import resolve_model
     from scripts.qq_companion.song_source_prepare import prepare_source
     from services.media_api.songs import SongStore
     from services.media_api.song_source import NetEaseSource, SongSourceError
@@ -27,7 +28,7 @@ async def probe(output):
     opener = build_opener(ProxyHandler({}))
     with opener.open('http://127.0.0.1:8080/v1/models', timeout=3) as response:
         model_id = json.load(response)['data'][0]['id']
-    config = configure(json.loads((ROOT / 'external/AstrBot/data/cmd_config.json').read_text(encoding='utf-8-sig')), model_id, 'elysia')
+    config = configure({}, model_id, 'elysia', prompt_profile=resolve_model().prompt_profile)
     model = next(p for p in config['provider'] if p['id'] == PROVIDER_ID)
     source_config = next(p for p in config['provider_sources'] if p['id'] == model['provider_source_id'])
     provider = ProviderOpenAIOfficial({**source_config, **model, 'timeout': 60}, {})

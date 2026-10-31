@@ -109,3 +109,23 @@ def test_budget_uses_same_phase_thinking_as_provider_request():
         "chat_template_kwargs": {"enable_thinking": True}}, "thinking_phases": {"followup": False}})
     assert RequestBudget(provider, "agent").enable_thinking is True
     assert RequestBudget(provider, "followup").enable_thinking is False
+
+
+def test_token_counter_merges_late_system_with_same_protocol_as_wire(loop, monkeypatch):
+    import io
+    import json
+    from integrations.qq_astrbot.plugin.model_messages import normalize_messages, protocol_prompt
+    config = {"api_base": "http://127.0.0.1:18080/v1", "prompt_profile": "qwen35"}
+    messages = [Message(role="system", content="persona"), Message(role="user", content="input"),
+        Message(role="system", content="latest execution state")]
+    captured = []
+    def post(request, timeout):
+        payload = json.loads(request.data)
+        captured.append(payload)
+        return io.BytesIO(json.dumps({"prompt": [1, 2, 3]}).encode())
+    monkeypatch.setattr("integrations.qq_astrbot.plugin.context_budget.build_opener",
+        lambda *args: SimpleNamespace(open=post))
+    budget = RequestBudget(SimpleNamespace(provider_config=config), "agent")
+    assert loop.run_until_complete(budget.count(messages)) == 3
+    assert captured[0]["messages"] == normalize_messages(messages, protocol=protocol_prompt(config))
+    assert [m["role"] for m in captured[0]["messages"]] == ["system", "user"]

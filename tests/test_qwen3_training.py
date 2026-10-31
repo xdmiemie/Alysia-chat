@@ -69,7 +69,6 @@ def test_auto_resume_starts_fresh_when_no_compatible_checkpoint_exists(tmp_path)
         config_hash="same-config",
         base_model_id="base-v1",
     )
-
     assert (
         resolve_resume_checkpoint(
             run_dir,
@@ -81,6 +80,27 @@ def test_auto_resume_starts_fresh_when_no_compatible_checkpoint_exists(tmp_path)
         )
         is None
     )
+
+
+def test_model_switch_preserves_both_weights_and_selects_prompt_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_registry, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(model_registry, "REGISTRY_ROOT", tmp_path / "registry")
+    monkeypatch.setattr(model_registry, "ACTIVE_MANIFEST", tmp_path / "active.json")
+    files = []
+    for name, profile in (("old", "qwen3"), ("new", "qwen35")):
+        path = tmp_path / (name + ".gguf")
+        path.write_bytes(b"GGUFfixture")
+        files.append(path)
+        model_registry.register_model(character_id="elysia", model_id=name, display_name=name,
+            kind="base", model_format="gguf", required_files=[path], prompt_profile=profile,
+            activate=name == "old")
+    assert model_registry.resolve_model().model_id == "old"
+    for name, profile in (("new", "qwen35"), ("old", "qwen3")):
+        model_registry.activate_model("elysia", name)
+        active = json.loads((tmp_path / "active.json").read_text(encoding="utf-8"))
+        assert active["runtime"]["prompt_profile"] == profile
+        assert model_registry.resolve_model().model_id == name
+        assert all(path.read_bytes() == b"GGUFfixture" for path in files)
 
 
 def test_manual_resume_rejects_checkpoint_from_different_dataset(tmp_path):

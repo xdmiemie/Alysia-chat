@@ -53,6 +53,7 @@ class Qwen3Config:
         return ["--host", self.host, "--port", str(self.port if port is None else port),
                 "--ctx-size", str(self.context_size), "--n-gpu-layers", str(self.gpu_layers),
                 "--cache-type-k", self.cache_type_k, "--cache-type-v", self.cache_type_v,
+                "--fit", "off", "--flash-attn", "on",
                 "--reasoning", "on" if self.enable_thinking else "off",
                 "--reasoning-format", self.reasoning_format,
                 "--reasoning-budget", str(self.reasoning_budget_tokens),

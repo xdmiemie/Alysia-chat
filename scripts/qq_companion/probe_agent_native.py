@@ -21,7 +21,7 @@ OUTPUT = ROOT / "storage/temporary/native-agent-acceptance"
 BASE = "http://127.0.0.1:18080"
 
 
-async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recent_failures=False, latest_failure=False, recovery_only=False, quick=False, invalid_reply=False):
+async def cases(model_id, *, base=BASE, prompt_profile="qwen3", replay=False, controls_only=False, recent_failures=False, latest_failure=False, recovery_only=False, quick=False, invalid_reply=False):
     from astrbot.core.agent.hooks import BaseAgentRunHooks
     from astrbot.core.agent.run_context import ContextWrapper
     from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
@@ -37,7 +37,7 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
     from integrations.qq_astrbot.plugin.request_provider import request_chat
     from scripts.qq_companion.configure_model import configure, PROVIDER_ID
 
-    config = configure(json.loads((ROOT / "external/AstrBot/data/cmd_config.json").read_text(encoding="utf-8-sig")), model_id, "elysia")
+    config = configure({}, model_id, "elysia", prompt_profile=prompt_profile)
     model = next(p for p in config["provider"] if p["id"] == PROVIDER_ID)
     source = next(p for p in config["provider_sources"] if p["id"] == model["provider_source_id"])
     provider = ProviderOpenAIOfficial({**source, **model, "api_base": base + "/v1", "timeout": 90}, {})
@@ -131,6 +131,7 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
             started = time.monotonic()
             event = Event()
             event.set_extra("qq_persona_prompt", persona)
+            event.set_extra("qq_agent_rules_prompt", "\n".join((prompts["reply_output"], prompts["agent_policy"])))
             scope = f"qq:999:dm:{101 + index}"
             version = store.observe(scope, f"probe-{os.getpid()}-{index}")
             run = store.begin(scope, version, f"probe-{os.getpid()}-{index}")
@@ -180,8 +181,7 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
                 async def on_agent_done(self, context, response):
                     candidate = parse_final_reply(response.completion_text or "")
                     if candidate: response.completion_text = candidate["reply"]
-            system = "\n".join((prompts["astrbot_safety"], persona, prompts["qq_context"],
-                                  prompts["reply_output"], prompts["agent_policy"]))
+            system = "\n".join((prompts["astrbot_safety"], persona, prompts["qq_context"]))
             await runner.reset(provider=case_provider, request=ProviderRequest(system_prompt=system,
                 contexts=history, prompt=json.dumps({"session_id": scope, "current_message": {"sender_uin": "101", "text": text},
                     "input_modality": "text", "recent_messages": [],
@@ -216,7 +216,7 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
                     additions.append(chain.get_plain_text())
                 event.send = local_send
                 await followup_owner._maybe_followup(event)
-                assert 1 <= run.followups <= 3 and not called
+                assert run.followups == 1 and not called
                 with store.connection() as db:
                     assert not db.execute("SELECT 1 FROM audit WHERE run_id=? AND kind IN "
                         "('followup_failed','followup_rejected')", (run.run_id,)).fetchone()
@@ -255,8 +255,11 @@ async def cases(model_id, *, base=BASE, replay=False, controls_only=False, recen
 
 
 def main():
+    global OUTPUT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--existing", action="store_true", help="Use the managed model on 8080 under an admission lease")
+    parser.add_argument("--model", help="Registered model to test in isolation; does not activate it")
+    parser.add_argument("--output", type=Path, default=OUTPUT)
     parser.add_argument("--replay", action="store_true", help="Include current conversation and available/unavailable song fixtures")
     parser.add_argument("--controls-only", action="store_true", help="Only test cancel, replace and unrelated chatter")
     parser.add_argument("--recent-failures", action="store_true", help="Replay the two 16-request failures with their real preceding history")
@@ -265,8 +268,14 @@ def main():
     parser.add_argument("--quick", action="store_true", help="Only check direct chat and the native song tool roundtrip")
     parser.add_argument("--invalid-reply", action="store_true", help="Inject one plain-body tool JSON and verify the single regeneration")
     args = parser.parse_args()
+    if args.existing and args.model:
+        parser.error("--model cannot be combined with --existing")
+    from runtime.qwen3.model_registry import resolve_model
+    entry = resolve_model(model_id=args.model)
+    OUTPUT = args.output.resolve()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["ASTRBOT_ROOT"] = str(OUTPUT)
+    os.environ["ASTRBOT_CHAT_MODEL_DEBUG_DIR"] = str(OUTPUT / "model_debug")
     if args.existing:
         from integrations.qq_astrbot.plugin.media_state import MediaState
         state = MediaState(ROOT / "storage/qq_companion")
@@ -278,6 +287,7 @@ def main():
             with opener.open("http://127.0.0.1:8080/v1/models", timeout=3) as response:
                 model_id = json.load(response)["data"][0]["id"]
             asyncio.run(cases(model_id, base="http://127.0.0.1:8080", replay=args.replay,
+                prompt_profile=entry.prompt_profile,
                 controls_only=args.controls_only, recent_failures=args.recent_failures, latest_failure=args.latest_failure,
                 recovery_only=args.recovery_only, quick=args.quick, invalid_reply=args.invalid_reply))
             print("NATIVE_AGENT_MODEL_PASS; existing model preserved; QQ connections: 0", flush=True)
@@ -290,8 +300,7 @@ def main():
     process = None
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["ASTRBOT_ROOT"] = str(OUTPUT)
-    active = json.loads((ROOT / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
-    model = ROOT / active["runtime"]["model_file"]
+    model = entry.model_file
     opener = build_opener(ProxyHandler({}))
     try:
         with socket.socket() as sock:
@@ -299,7 +308,8 @@ def main():
                 raise RuntimeError("Acceptance port is occupied; refusing to attach or stop another service")
         with (OUTPUT / "llama.log").open("wb") as log:
             process = subprocess.Popen([str(ROOT / "tools/llama.cpp/llama-server.exe"), "--model", str(model),
-                "--jinja"] + load_qwen3_config().server_args(port=18080),
+                "--jinja"] + load_qwen3_config().server_args(port=18080)
+                + (["--lora", str(entry.lora_adapter)] if entry.lora_adapter else []),
                 cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW)
             deadline = time.monotonic() + 120
@@ -312,7 +322,7 @@ def main():
                     time.sleep(0.5)
             with opener.open(BASE + "/v1/models", timeout=3) as response:
                 model_id = json.load(response)["data"][0]["id"]
-            asyncio.run(cases(model_id, replay=args.replay, controls_only=args.controls_only,
+            asyncio.run(cases(model_id, prompt_profile=entry.prompt_profile, replay=args.replay, controls_only=args.controls_only,
                 recent_failures=args.recent_failures, latest_failure=args.latest_failure, recovery_only=args.recovery_only,
                 quick=args.quick, invalid_reply=args.invalid_reply))
             print("NATIVE_AGENT_MODEL_PASS; QQ connections: 0", flush=True)

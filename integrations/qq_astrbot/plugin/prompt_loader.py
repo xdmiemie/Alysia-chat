@@ -11,7 +11,7 @@ import yaml
 
 
 REQUIRED_PROMPTS = frozenset({
-    "qq_context", "reply_output",
+    "qq_context", "reply_output", "model_protocol",
     "astrbot_safety", "astrbot_tool_call", "datetime_reminder",
     "echo_description", "echo_value_description",
     "music_result", "music_selection", "music_clarification",
@@ -40,7 +40,7 @@ def prompt_path() -> Path:
     raise PromptError("Cannot find configs/qq_companion/prompts.yaml")
 
 
-def load_prompts(path: Path | None = None) -> dict[str, str]:
+def load_prompts(path: Path | None = None, *, profile: str | None = None) -> dict[str, str]:
     path = path or prompt_path()
     try:
         values = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
@@ -48,6 +48,12 @@ def load_prompts(path: Path | None = None) -> dict[str, str]:
         raise PromptError(f"Cannot read QQ prompts: {path}") from exc
     if not isinstance(values, dict):
         raise PromptError(f"QQ prompts must be a YAML mapping: {path}")
+    if profile:
+        profiles = values.get("model_profiles", {})
+        override = profiles.get(profile) if isinstance(profiles, dict) else None
+        if not isinstance(override, dict) or set(override) != {"model_protocol"}:
+            raise PromptError(f"Unknown or invalid model prompt profile: {profile}")
+        values = {**values, **override}
     invalid = sorted(key for key in REQUIRED_PROMPTS if not isinstance(values.get(key), str) or not values[key].strip())
     if invalid:
         raise PromptError(f"Missing or empty QQ prompt keys in {path}: {', '.join(invalid)}")

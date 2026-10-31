@@ -49,9 +49,9 @@ def test_second_inference_decision_is_nullable_and_one_sentence_only():
     assert parse_followup("你呢？", "睡得很香") == (None, DEFAULT_LEVEL, False)
 
 
-def test_cumulative_typing_targets_for_multiple_messages():
+def test_first_sentence_delay_excludes_later_sentences():
     first, second = split_sentences("吃过啦。你呢？")
     first_target = THINKING_SECONDS[1] + typing_seconds(first)
-    second_target = THINKING_SECONDS[1] + typing_seconds(first + second)
-    assert second_target > first_target
-    assert remaining_seconds(first + second, 1, 100, now=100 + second_target + 1) == 0
+    assert remaining_seconds(first, 1, 100, now=100) == first_target
+    assert remaining_seconds(first, 1, 100, now=100 + first_target + 1) == 0
+    assert typing_seconds(second) > 0

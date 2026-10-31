@@ -13,8 +13,10 @@ message and Agent owner; SnowLuma provides OneBot v11. `plugin/` contains the
 Q1 persistent inbound guard, Q2 `q2_echo` tool, Q3 scoped routing and permissions,
 and paced QQ text replies. Primary replies send at most three messages in a
 group or six in private chat; remaining sentences are combined into the last
-message. After successful primary delivery, private conversations may receive
-up to three tool-free optional follow-ups. Only AstrBot's Runner owns
+message. Each text segment waits for its own typing time after the previous send,
+with the shared thinking delay applied only to the first segment. After successful
+primary delivery, private conversations may receive one tool-free optional follow-up.
+Only AstrBot's Runner owns
 QQ history and calls the local Qwen3 provider. The plugin never invokes
 `AstrbotChatCore.process`.
 
@@ -33,6 +35,12 @@ with comments describing every section. This includes the active AstrBot
 safety/tool/date blocks and the echo tool descriptions. `prompt_loader.py` reads
 that same project file on each request, including from the installed plugin;
 there is no second editable copy. Persona prompts keep their existing location.
+
+Qwen3-14B and Qwen3.5-9B use the same Agent and request code. Model registry
+metadata selects a protocol prompt profile from that YAML. Inference and token
+counting both merge system instructions into one leading message for Qwen3.5
+compatibility. See [model switching](../../docs/qq_companion/operations.md#local-model-selection)
+for the offline activation and GPU acceptance commands.
 
 `reference/` preserves partial song and Feiyu RVC code from the earlier QQ
 adapter. It is not an installable AstrBot plugin. Some imports require modules

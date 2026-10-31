@@ -12,6 +12,9 @@ import time
 from typing import Callable
 
 
+MAX_FOLLOWUPS = 1
+
+
 class Superseded(RuntimeError):
     pass
 
@@ -174,7 +177,7 @@ class AgentStore:
 
     def consume(self, run: AgentRun, kind: str):
         self.work(run)
-        field_name, maximum = {"followups": ("followups", 3), "reply_retries": ("reply_retries", 1),
+        field_name, maximum = {"followups": ("followups", MAX_FOLLOWUPS), "reply_retries": ("reply_retries", 1),
                                "requests": ("requests", run.max_requests),
                                "tool_calls": ("tool_calls", run.max_tools)}[kind]
         if getattr(run, field_name) >= maximum:
@@ -182,6 +185,16 @@ class AgentStore:
         setattr(run, field_name, getattr(run, field_name) + 1)
         with self.connection() as db:
             db.execute(f"UPDATE runs SET {field_name}=? WHERE id=?", (getattr(run, field_name), run.run_id))
+
+    async def wait_delivery(self, run: AgentRun, seconds: float):
+        """Pace ready messages even after the work budget expires; new input still cancels."""
+        self.ensure_current(run)
+        if seconds > 0:
+            try:
+                await asyncio.wait_for(run.cancel.wait(), timeout=seconds)
+            except TimeoutError:
+                pass
+        self.ensure_current(run)
 
     async def wait(self, run: AgentRun, operation, *, timeout: float | None = None):
         """Cancellation wins even when the old result finishes in the same loop turn."""

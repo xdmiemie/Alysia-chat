@@ -84,7 +84,10 @@ def probe() -> str:
     return model_id
 
 
-def configure(astrbot: dict, model_id: str, character_id: str, *, model_config: Qwen3Config | None = None) -> dict:
+def configure(astrbot: dict, model_id: str, character_id: str, *, model_config: Qwen3Config | None = None,
+              prompt_profile: str = "qwen3") -> dict:
+    from integrations.qq_astrbot.plugin.prompt_loader import load_prompts
+    load_prompts(profile=prompt_profile)
     model_config = model_config or load_qwen3_config()
     source_id = PROVIDER_ID + "_source"
     sources = astrbot.get("provider_sources", [])
@@ -96,6 +99,7 @@ def configure(astrbot: dict, model_id: str, character_id: str, *, model_config: 
     providers = [p for p in astrbot.get("provider", []) if p.get("id") != PROVIDER_ID]
     providers.append({"id": PROVIDER_ID, "provider_source_id": source_id, "enable": True,
                       "modalities": ["text", "tool_use"], "model": model_id,
+                      "prompt_profile": prompt_profile,
                       "max_context_tokens": model_config.context_size,
                       "context_margin_tokens": model_config.context_margin_tokens,
                       "thinking_phases": model_config.thinking_phases,
@@ -157,7 +161,8 @@ def main() -> int:
     prompt = (ROOT / "configs/characters" / character_id / "system_prompt.txt").read_text(encoding="utf-8-sig").strip()
     model_id = probe()
     astr_path = ASTRBOT / "data/cmd_config.json"
-    config = configure(read_json(astr_path), model_id, character_id)
+    config = configure(read_json(astr_path), model_id, character_id,
+        prompt_profile=active.get("runtime", {}).get("prompt_profile", "qwen3"))
     if args.apply:
         sync_persona(ASTRBOT / "data/data_v4.db", character_id, prompt)
         save_json(astr_path, config)

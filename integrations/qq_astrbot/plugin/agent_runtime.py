@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from types import MethodType
 
-from astrbot.core.agent.message import Message
+from astrbot.core.agent.message import Message, TextPart, ThinkPart
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.provider.entities import LLMResponse
 
@@ -91,6 +91,7 @@ class NativeAgentLifecycle:
         self.primary_parts = []
         self.final_content = ""
         self.tool_outputs = []
+        self.tool_reasoning = {}
         existing = runner.req.tool_calls_result
         self.initial_tool_results = len(existing if isinstance(existing, list) else [existing] if existing else [])
         self.finished = False
@@ -196,6 +197,24 @@ class NativeAgentLifecycle:
             messages.extend(Message.model_validate(m) for m in chat_history(result.to_openai_messages()))
         return messages
 
+    def restore_tool_reasoning(self):
+        """Current-run scratch context only; never deliver or persist it.
+
+        Thinking-capable templates need reasoning paired with their tool calls
+        on subsequent requests. Keep it outside the response sent to the Runner
+        UI, and reattach only before budgeting/inference. tool_history() and
+        chat_history() still strip it for durable history and follow-ups.
+        """
+        for message in self.runner.run_context.messages:
+            ids = tuple(call.id for call in message.tool_calls or [])
+            reasoning = self.tool_reasoning.get(ids)
+            if message.role != "assistant" or not reasoning:
+                continue
+            content = message.content
+            parts = [TextPart(text=content)] if isinstance(content, str) and content else (
+                [part for part in content if part.type != "think"] if isinstance(content, list) else [])
+            message.content = [ThinkPart(think=reasoning).mark_as_temp(), *parts]
+
     def sent(self, text: str, *, modality: str = "text", model_content: str | None = None,
              primary: bool = False, complete: bool = False):
         if primary:
@@ -284,6 +303,7 @@ class NativeAgentLifecycle:
                     wait=lambda operation: self.store.wait(self.run, operation, timeout=60),
                     consume=consume_memory_request,
                     record=lambda payload: self.store.record(self.run, "memory_context", payload))
+            self.restore_tool_reasoning()
             budget = RequestBudget(self.runner.provider, "agent")
             messages, tokens, dropped = await self.store.wait(self.run,
                 budget.fit(self.runner.run_context.messages, self.runner.req.func_tool), timeout=10)
@@ -302,6 +322,8 @@ class NativeAgentLifecycle:
                     self.runner.run_context.messages = [m for m in self.runner.run_context.messages
                         if m is not self.regeneration_message and m != self.regeneration_message]
                     self.regeneration_message = None
+                if response.tools_call_name and response.reasoning_content:
+                    self.tool_reasoning[tuple(response.tools_call_ids or [])] = response.reasoning_content
                 response.reasoning_content = None
                 finish = None
                 if response.raw_completion and getattr(response.raw_completion, "choices", None):

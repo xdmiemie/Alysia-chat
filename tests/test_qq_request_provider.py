@@ -75,7 +75,8 @@ def test_final_main_and_tool_free_followup_options_reach_wire_without_shared_mut
                 assert body["reasoning_budget_tokens"] == (1024 if enabled else 0)
                 assert "phase" not in body and "thinking_phases" not in body
             main, followup = by_prompt["main tools"], by_prompt["post agent"]
-            assert main["messages"][:2] == systems
+            assert main["messages"][0] == {"role": "system", "content": "\n\n".join(m["content"] for m in systems)}
+            assert sum(m["role"] == "system" for m in main["messages"]) == 1
             assert main["tool_choice"] == "auto" and "response_format" not in main
             assert "response_format" not in by_prompt["direct tools"]
             assert {tool["function"]["name"] for tool in main["tools"]} == {
@@ -113,7 +114,7 @@ def test_background_notifications_and_selection_use_wire_options_and_keep_person
         def respond(request):
             body = json.loads(request.content)
             bodies.append(body)
-            text = {"candidate": 2} if body['messages'][0]['content'] == load_prompts()['music_selection'] else {
+            text = {"candidate": 2} if body['messages'][0]['content'].startswith(load_prompts()['music_selection']) else {
                 "follow_up": "ready", "thinking_level": 1}
             return httpx.Response(200, json={'id': 'test', 'object': 'chat.completion', 'created': 0,
                 'model': 'qwen3', 'choices': [{'index': 0, 'finish_reason': 'stop',
@@ -200,11 +201,14 @@ def test_post_agent_http_request_and_debug_log_keep_complete_system_and_disable_
             body = bodies[0]
             texts = [m["content"] if isinstance(m["content"], str) else
                      "\n".join(part["text"] for part in m["content"]) for m in body["messages"] if m["role"] == "system"]
-            assert texts[:2] == [main_system, rules_system] and "ADDITIONAL SYSTEM RULE" in texts
+            assert len(texts) == 1
+            assert texts[0].startswith(main_system + "\n\n" + rules_system)
+            assert "ADDITIONAL SYSTEM RULE" in texts[0]
             assert "OUTDATED PERSONA" not in "\n".join(texts)
-            states = [text for text in texts if text.startswith(prompts["agent_execution_state"])]
-            assert len(states) == 1 and json.loads(states[0].split("\n")[-1])["registered_song_candidates"] == [1]
-            assert texts[-2:] == [prompts["followup_phase"], prompts["followup_system"]]
+            assert texts[0].count(prompts["agent_execution_state"]) == 1
+            state = texts[0].split(prompts["agent_execution_state"], 1)[1].strip().split("\n")[0]
+            assert json.loads(state)["registered_song_candidates"] == [1]
+            assert texts[0].endswith(prompts["followup_phase"] + "\n\n" + prompts["followup_system"])
             assert "tools" not in body and "tool_choice" not in body
             assert body["response_format"] == FOLLOWUP_FORMAT
             assert body["chat_template_kwargs"]["enable_thinking"] is False

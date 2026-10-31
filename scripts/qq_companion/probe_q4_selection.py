@@ -24,7 +24,8 @@ async def run():
 
     config = json.loads((ROOT / "external/AstrBot/data/cmd_config.json").read_text(encoding="utf-8-sig"))
     model = next(p for p in config["provider"] if p["id"] == "astrbot_chat_qwen3")
-    provider_config = configure({}, model["model"], "elysia")["provider"][0]
+    provider_config = configure({}, model["model"], "elysia",
+        prompt_profile=model.get("prompt_profile", "qwen3"))["provider"][0]
     provider = ProviderOpenAIOfficial(provider_config, config["provider_settings"])
     thinking_sizes = []
 

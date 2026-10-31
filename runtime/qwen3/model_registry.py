@@ -30,6 +30,7 @@ class Qwen3ModelEntry:
     config_hash: str | None = None
     source_run: str | None = None
     export_log: str | None = None
+    prompt_profile: str = "qwen3"
 
     @property
     def model_file(self) -> Path:
@@ -58,6 +59,7 @@ class Qwen3ModelEntry:
             "registry_manifest": _relative_path(character_manifest_path(self.character_id)),
             "runtime": {
                 "model_file": _relative_path(self.model_file),
+                "prompt_profile": self.prompt_profile,
             },
         }
         adapter = self.lora_adapter
@@ -140,6 +142,7 @@ def register_model(
     config_hash: str | None = None,
     source_run: str | None = None,
     export_log: str | None = None,
+    prompt_profile: str | None = None,
     activate: bool = False,
     trained_limit: int = TRAINED_MODEL_LIMIT,
 ) -> Qwen3ModelEntry:
@@ -147,6 +150,10 @@ def register_model(
         raise ValueError("model_format must be 'gguf' or 'lora'")
     if kind not in {"base", "trained"}:
         raise ValueError("kind must be 'base' or 'trained'")
+    if prompt_profile is None:
+        prompt_profile = find_model(character_id, base_model_id).prompt_profile if base_model_id else "qwen3"
+    from integrations.qq_astrbot.plugin.prompt_loader import load_prompts
+    load_prompts(profile=prompt_profile)
 
     resolved_files = tuple(_project_path(path) for path in required_files)
     missing = [path for path in resolved_files if not path.exists()]
@@ -162,6 +169,7 @@ def register_model(
         "format": model_format,
         "required_files": [_relative_path(path) for path in resolved_files],
         "created_at": utc_now(),
+        "prompt_profile": prompt_profile,
     }
     if base_model_id:
         raw_entry["base_model_id"] = base_model_id
@@ -313,6 +321,7 @@ def _entry_from_raw(character_id: str, raw: dict[str, Any]) -> Qwen3ModelEntry:
         config_hash=str(raw["config_hash"]) if raw.get("config_hash") else None,
         source_run=str(raw["source_run"]) if raw.get("source_run") else None,
         export_log=str(raw["export_log"]) if raw.get("export_log") else None,
+        prompt_profile=str(raw.get("prompt_profile") or "qwen3"),
     )
 
 

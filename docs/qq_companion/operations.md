@@ -19,7 +19,7 @@ does not reload the supervisor.
 
 Plugin 0.9.8's current Agent, native tools, interruption guards and acceptance
 are documented in [agent.md](agent.md). The old optional private follow-up prompts
-are restored after primary delivery, with at most three tool-free decisions.
+are restored after primary delivery, with at most one tool-free decision.
 
 ## Install and configure
 
@@ -53,10 +53,12 @@ The ignored `storage/qq_companion/media_token` is generated once. Use its value 
 QQ replies use one native AstrBot tool loop. Native tool calls execute and continue;
 a response without tool calls ends the Agent directly. Main responses carry
 `reply`, integer `thinking_level` (1-5), and boolean `voice` delivery metadata.
-The first system message contains persona/framework and QQ context rules; the
-second contains the unchanged reply_output and agent_policy sections. Dynamic
-execution state remains separate. The second system participates in tool rounds
-and follow-ups, but is removed before saving dialogue to avoid accumulation.
+Internally the Agent keeps persona/framework, reply rules and dynamic execution
+state separate. Before inference and token counting, the same adapter merges all
+system text into one leading system message, preserving dialogue/tool ordering.
+This satisfies Qwen3.5's template and remains compatible with Qwen3. Temporary
+rules participate in tool rounds and follow-ups but are removed before saving
+dialogue to avoid accumulation.
 Content accompanying a native tool call is ignored regardless of its shape; its
 reply/voice fields never trigger parsing, regeneration or delivery. Tool-enabled
 requests discard response_format from both per-request and provider settings.
@@ -68,14 +70,14 @@ Default limits are 16 model requests, 16 tool calls and 180 seconds per run.
 
 After all primary private-message segments are sent, the original optional
 follow-up prompts independently decide whether to add one sentence. Each input
-allows at most three decisions; null, duplicate/invalid output, unexpected tool
-calls, errors, or new user input stop the loop. Every decision disables tools and
-thinking. Confirmed additions enter chat history before the next decision.
+allows at most one decision; null, duplicate/invalid output, unexpected tool
+calls, errors, or new user input stop the follow-up. The decision disables tools and
+thinking. A confirmed addition enters chat history and ends the follow-up.
 Follow-ups inherit all main-Agent system messages and a freshly rebuilt execution
 state. The followup_phase prompt scopes the original follow-up format and tool
 ban without dropping persona, QQ privacy or execution-truth rules.
 Groups do not start private follow-ups. Model requests share the run budget,
-and the durable followups counter prevents resetting the three-call cap.
+and the durable followups counter prevents resetting the one-call cap.
 History preserves original assistant content JSON, native tool_calls and matching
 tool_call_id results. A fully delivered primary reply is saved once with its
 complete original content; partial delivery retains metadata and only delivered
@@ -84,9 +86,12 @@ Post-Agent requests keep the latest eight complete user turns and tool pairs,
 without truncating individual JSON bodies. Group protocol history remains scoped
 to the group's bounded TTL window. Historical calls are data, never re-executed.
 Actual delivery receipts remain in audit; temporary state/instructions are omitted.
-Responses wait for their thinking tier (0.5, 1.5, 2.75, 4.25 or 6 seconds)
-plus typing time (0.4 seconds per CJK character, 0.12 per other character), less
-elapsed time since input. Each textual segment uses cumulative typing time;
+The first text segment waits for its thinking tier (0.5, 1.5, 2.75, 4.25 or 6 seconds)
+plus its own typing time (0.4 seconds per CJK character, 0.12 per other character), less
+elapsed time since input. Each later text segment waits for its own typing time
+after the previous send completes, with no repeated thinking delay or elapsed-time credit.
+Merged final segments use their actual combined length. Ready-message pacing continues
+after the generation budget expires and remains interruptible by new input;
 prepared voice is sent without a simulated typing delay. Text sentence splitting
 caps delivery at three group or six private messages. voice=true sends one recording
 for the complete spoken reply; bounded internal synthesis chunks are joined as WAV
@@ -95,6 +100,118 @@ complete reply's text sentence splitting. Prompt text lives in `configs/qq_compa
 Startup installs every plugin module listed in `configure.py`.
 
 ## Editable QQ prompts
+
+### Local model selection
+
+Both local GGUFs are retained in the character registry:
+
+| Registered ID | Weights | Prompt profile |
+|---|---|---|
+| `qwen3-14b-q4-k-m-base-v1` | Qwen3-14B Q4_K_M | `qwen3` |
+| `qwen3.5-9b-q8-0-base-v1` | Qwen3.5-9B Q8_0 | `qwen35` |
+
+Stop the managed stack before switching. The verified activation command holds
+the GPU broker, probes chat/native tool calling, and rolls back on failure:
+
+```powershell
+runtime_env/python.exe -m scripts.qq_companion.model_activation activate qwen3 elysia qwen3.5-9b-q8-0-base-v1
+```
+
+Replace the final ID with `qwen3-14b-q4-k-m-base-v1` to switch back. Then start
+`scripts/qq_companion/start_all.ps1` normally. Startup selects the active weights
+and their `runtime.prompt_profile`, and regenerates the local AstrBot provider.
+Only one model is loaded at a time. `scripts/qwen3_models.py list --character
+elysia --json` lists both choices; the existing interactive llama launcher also
+shows them. Activation does not hot-swap a running model.
+
+Both models use the same 32768-token context, Q8_0 KV cache, GPU layer setting,
+phase switches and Agent code. Automatic fit is disabled and flash attention
+enabled, so llama.cpp cannot silently reduce the configured context or GPU
+layers. The GGUF's own chat template serializes native tools. Shared business
+prompts follow Qwen3.5's requirements; `model_profiles` in `prompts.yaml` changes
+only `model_protocol`, selected by registry metadata rather than model-name
+branches in the request code.
+Current-run tool reasoning is replayed with its matching calls and counted in
+the context budget, following [Qwen's function-calling requirements](https://docs.qwencloud.com/developer-guides/tool-calling/function-calling#thinking-mode).
+It remains transient: saved history, optional follow-ups and delivered messages
+exclude it. The adapter never promotes reasoning text into visible content.
+
+The Qwen3.5 weight source is [Unsloth's GGUF repository](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF),
+file `Qwen3.5-9B-Q8_0.gguf`, 9,527,502,048 bytes, SHA256
+`809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4`.
+For another checkout, download and verify that file, then register it with
+`scripts/qwen3_models.py register --character elysia --model qwen3.5-9b-q8-0-base-v1
+--file <GGUF-path> --name "Qwen3.5-9B Q8_0 base" --prompt-profile qwen35`.
+
+Reproduce the isolated real-GPU acceptance with:
+
+```powershell
+envs/astrbot/Scripts/python.exe -m scripts.qq_companion.probe_model_switch
+```
+
+It runs 14B → 9B → 14B under the GPU broker, warms real ASR/TTS, checks native
+chat/tools/follow-up, memory/diaries and near-32K input, samples WDDM per-process
+dedicated/shared memory plus nvidia-smi, and restores the original manifests.
+Reports and raw samples go under `storage/temporary/model-switch-*`. QQ is never
+started; Agent song actions are mocked. Normal CPU tokenizer, file mapping and
+host staging allocations are distinct from shared GPU memory counters.
+
+#### 2026-11-01 measured acceptance
+
+On this RTX 5080 (16,303 MiB reported VRAM), the final 14B → 9B → 14B
+run used llama.cpp build 10099 / `1a064ab09`, the shared 32K configuration,
+warmed GPT-SoVITS, and the existing SenseVoice service (configured for CPU).
+No QQ connection was opened; song actions were mocked, speech/ASR were real.
+
+| Measurement | Qwen3-14B Q4_K_M | Qwen3.5-9B Q8_0 |
+|---|---:|---:|
+| Layers offloaded to GPU | 41/41 | 33/33 |
+| Model process dedicated GPU peak (MiB) | 11,363.719 | 9,289.695 |
+| Whole GPU used peak (MiB) | 14,164 | 12,143 |
+| Minimum free VRAM (MiB) | 1,814 | 3,835 |
+| Model process shared GPU peak (MiB) | 134 | 130 |
+| Long-context input tokens | 30,712 | 30,699 |
+| Long-context request seconds | 13.922 | 6.281 |
+
+**GPU acceptance passed.** Both models loaded all transformer layers and KV
+cache on GPU; 9B's recurrent state was also on CUDA0. No OOM occurred. The user's
+criterion allows the pre-existing nonzero shared GPU buffers; these are measured
+for visibility, not treated as a failure. The logs also show CPU-mapped embedding
+weights and CUDA host buffers, as in the existing llama.cpp offload scheme; this
+is not evidence of layers falling back to CPU due to VRAM exhaustion. Measurements
+apply to the tested load, including the coexisting speech services.
+
+308 related automated tests passed. Both models passed chat, one optional
+follow-up, search-to-cover tool roundtrip, cancellation, memory extraction,
+correction, recall, compaction, diaries, long-context inference and coexisting
+speech. Switching back to 14B passed the chat/tool smoke tests. The final run
+was **not an all-green behavioral acceptance**: both models used cancel/start
+instead of replace for changing a song; 14B additionally changed a task in
+response to unrelated VIP-account chatter. All failures remain in the report.
+
+During compatibility work, 9B sometimes put a final JSON in reasoning_content
+with empty content after tools. The shared transient tool-reasoning replay and
+explicit protocol-boundary prompts fixed that in the final run: 9B's tested
+Agent/control cases required no reply regeneration. This is sampled acceptance,
+not a claim that every future model response will be correct.
+
+Raw results: `storage/temporary/model-switch-final-20261101/report.json`,
+per-process samples: `gpu_samples.jsonl` in the same directory, and regression
+results: `storage/temporary/model-switch-unit-final.xml`. Earlier failed probe
+directories are retained for comparison. The original active 14B was restored;
+9B remains registered and its verified GGUF is kept alongside 14B.
+The operator activation entry point also passed its real 9B chat/tool smoke
+check; rollback then restored the original 14B selection.
+
+After acceptance, the operator selected Qwen3.5-9B Q8_0 as the default on
+2026-11-01. The active manifest, registry and AstrBot provider now select 9B
+with the `qwen35` prompt profile. Its activation chat/tool smoke check passed.
+The context audit found no test markers in production databases; all ten
+database files remained unchanged during activation. Test model processes
+exited, releasing their in-memory context. Isolated test artifacts under
+`storage/temporary` are not loaded as production conversation or memory.
+
+### Prompt editing
 
 Plugin 0.9.8 reads the single UTF-8 file
 [`configs/qq_companion/prompts.yaml`](../../configs/qq_companion/prompts.yaml)

@@ -48,7 +48,7 @@ def test_framework_replacement_retains_persona_and_respects_inactive_features():
 def test_bundle_has_no_removed_judge_repair_or_unused_media_template():
     from integrations.qq_astrbot.plugin.prompt_loader import REQUIRED_PROMPTS
     values = yaml.safe_load(prompt_path().read_text(encoding="utf-8-sig"))
-    assert set(values) == REQUIRED_PROMPTS
+    assert set(values) == REQUIRED_PROMPTS | {"model_profiles"}
     assert {"followup_system", "followup_user"} <= set(values)
     assert not {"media_decisions", "agent_completion_check", "agent_unverified_claim",
                 "agent_continue", "agent_repair", "agent_check_failed", "agent_restricted_close"} & set(values)

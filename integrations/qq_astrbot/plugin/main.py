@@ -18,7 +18,7 @@ from astrbot.core.message.components import At, Image, Plain, Record, Reply
 from astrbot.core.message.message_event_result import MessageChain
 
 from .guard import InboundGuard
-from .agent_state import AgentStore, BudgetExhausted, Superseded
+from .agent_state import MAX_FOLLOWUPS, AgentStore, BudgetExhausted, Superseded
 from .agent_tools import AgentTools
 from .media_router import MediaRouter
 from .memory_context import ContextMessage, MemoryContext
@@ -35,6 +35,7 @@ from .reply_pacing import (
     parse_followup,
     remaining_seconds,
     split_sentences,
+    typing_seconds,
 )
 from .reply_content import chat_history, protocol_view, has_control_markup, spoken_text
 from .request_provider import request_chat
@@ -524,13 +525,11 @@ class Q1Guard(star.Star):
             event.get_extra("qq_reply_started_at", time.monotonic()))
         if wait > 0:
             try:
-                await self.agent_store.wait(run, asyncio.sleep(wait))
+                await self.agent_store.wait_delivery(run, wait)
             except Superseded:
                 result.chain = []
                 self._release_lease(event)
                 return
-            except (BudgetExhausted, TimeoutError):
-                pass  # No further generation: the response is ready to send.
         # Critical: the input may have changed during synthesis or typing.
         if not self._event_active(event):
             result.chain = []
@@ -568,19 +567,15 @@ class Q1Guard(star.Star):
         try:
             if chains:
                 remember(chains[0], 0)  # after_message_sent confirms the first successful send.
-            typed = chains[0].get_plain_text() if chains else ""
             for index, chain in enumerate(chains[1:], start=1):
                 if not self._event_active(event):
                     return
-                typed += chain.get_plain_text()
                 if not any(isinstance(part, Record) for part in chain.chain):
-                    wait = remaining_seconds(typed, event.get_extra("qq_thinking_level", 1),
-                        event.get_extra("qq_reply_started_at", time.monotonic()))
+                    # Thinking is shared with the first segment. Each later segment
+                    # starts its own typing delay only after the previous send finishes.
+                    wait = typing_seconds(chain.get_plain_text())
                     if wait > 0:
-                        try:
-                            await self.agent_store.wait(run, asyncio.sleep(wait))
-                        except (BudgetExhausted, TimeoutError):
-                            pass
+                        await self.agent_store.wait_delivery(run, wait)
                 if not self._event_active(event):
                     return
                 await event.send(chain)
@@ -601,7 +596,7 @@ class Q1Guard(star.Star):
             self._release_lease(event)
 
     async def _maybe_followup(self, event):
-        """After the Agent and primary delivery, optionally send up to three text additions."""
+        """After the Agent and primary delivery, optionally send one text addition."""
         run = event.get_extra("qq_agent_run")
         lifecycle = event.get_extra("qq_agent_lifecycle")
         if (event.get_group_id() or not run or run.closing or not lifecycle
@@ -611,7 +606,7 @@ class Q1Guard(star.Star):
         provider = lifecycle.runner.provider
         previous = event.get_extra("qq_primary_reply", "")
         try:
-            while run.followups < 3:
+            while run.followups < MAX_FOLLOWUPS:
                 prompts = load_prompts()
                 dialogue = protocol_view(lifecycle.initial_messages + lifecycle.tool_history() + lifecycle.sent_messages)
                 if not dialogue:

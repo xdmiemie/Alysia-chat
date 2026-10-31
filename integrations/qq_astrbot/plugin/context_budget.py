@@ -9,6 +9,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from astrbot.core.agent.context.round_utils import split_into_rounds
 from .request_provider import request_config
+from .model_messages import normalize_messages, protocol_prompt
 
 OUTPUT_TOKENS = 1536
 MARGIN_TOKENS = 256
@@ -65,6 +66,7 @@ def tool_result_view(result, run=None):
 class RequestBudget:
     def __init__(self, provider, phase=None):
         config = request_config(provider, phase)
+        self.protocol = protocol_prompt(config)
         self.window = int(config.get("max_context_tokens") or 0)
         self.output_tokens = int((config.get("custom_extra_body") or {}).get("max_tokens") or OUTPUT_TOKENS)
         self.margin_tokens = int(config.get("context_margin_tokens", MARGIN_TOKENS))
@@ -81,7 +83,7 @@ class RequestBudget:
     async def count(self, messages, tools=None):
         if not self.base:
             raise ContextCapacityError("local_token_counter_unavailable")
-        payload = {"messages": [m.model_dump() if hasattr(m, "model_dump") else m for m in messages],
+        payload = {"messages": normalize_messages(messages, protocol=self.protocol),
                    "chat_template_kwargs": {"enable_thinking": self.enable_thinking}}
         if tools:
             payload["tools"] = tools.openai_schema()

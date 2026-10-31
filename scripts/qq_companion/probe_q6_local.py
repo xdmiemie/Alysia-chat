@@ -21,10 +21,11 @@ async def main():
     from integrations.qq_astrbot.plugin.qzone_config import DEFAULTS
     from integrations.qq_astrbot.plugin.qzone_runtime import DiaryPublisher
     from scripts.qq_companion.configure_model import configure, PROVIDER_ID
+    from runtime.qwen3.model_registry import resolve_model
 
     async with httpx.AsyncClient(trust_env=False, timeout=5) as http:
         model_id = (await http.get("http://127.0.0.1:8080/v1/models")).json()["data"][0]["id"]
-    config = configure(json.loads((ROOT / "external/AstrBot/data/cmd_config.json").read_text(encoding="utf-8-sig")), model_id, "elysia")
+    config = configure({}, model_id, "elysia", prompt_profile=resolve_model().prompt_profile)
     model = next(p for p in config["provider"] if p["id"] == PROVIDER_ID)
     source = next(p for p in config["provider_sources"] if p["id"] == model["provider_source_id"])
     provider = ProviderOpenAIOfficial({**source, **model, "timeout": 90}, {})

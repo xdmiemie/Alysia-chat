@@ -34,11 +34,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     ensure_parser = subparsers.add_parser("ensure-default")
     ensure_parser.add_argument("--json", action="store_true")
+
+    register_parser = subparsers.add_parser("register", help="Register an existing GGUF without changing the active model")
+    register_parser.add_argument("--character", required=True)
+    register_parser.add_argument("--model", required=True)
+    register_parser.add_argument("--file", required=True)
+    register_parser.add_argument("--name", required=True)
+    register_parser.add_argument("--prompt-profile", required=True)
+    register_parser.add_argument("--json", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "register":
+        entry = model_registry.register_model(character_id=args.character, model_id=args.model,
+            display_name=args.name, kind="base", model_format="gguf", required_files=[args.file],
+            prompt_profile=args.prompt_profile)
+        _print_entry(entry, as_json=args.json)
+        return 0
     if args.command == "ensure-default":
         entry = model_registry.ensure_default_elysia_base()
         _print_entry(entry, as_json=args.json)
@@ -87,6 +101,7 @@ def _list_payload(character_id: str | None) -> dict[str, object]:
                         "display_name": model.display_name,
                         "kind": model.kind,
                         "format": model.model_format,
+                        "prompt_profile": model.prompt_profile,
                         "active": model.model_id == active,
                     }
                     for model in model_registry.list_models(character)

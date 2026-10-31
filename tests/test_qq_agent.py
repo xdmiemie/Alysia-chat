@@ -342,7 +342,7 @@ def test_separate_system_rules_survive_tool_rounds_and_followup_without_entering
     loop.run_until_complete(check())
 
 
-def test_post_agent_followups_are_sent_after_primary_and_stop_at_three(loop, tmp_path, monkeypatch):
+def test_post_agent_followup_is_sent_after_primary_and_stops_at_one(loop, tmp_path, monkeypatch):
     monkeypatch.setattr("integrations.qq_astrbot.plugin.main.remaining_seconds", lambda *a, **kw: 0)
     async def check():
         value = await make_run(tmp_path, [candidate("primary")])
@@ -352,18 +352,18 @@ def test_post_agent_followups_are_sent_after_primary_and_stop_at_three(loop, tmp
             assert value.event.sent[0].get_plain_text() == "primary"
         value.provider.on_followup = verify_order
         await deliver_primary(value)
-        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary", "one?", "two?", "three?"]
-        assert value.provider.main_calls == 1 and value.provider.followup_calls == value.run.followups == 3
-        assert value.run.requests == 4 and value.run.tool_calls == value.counts["search"] == 0
-        assert assistant_texts(value.runner.run_context.messages) == [
-            "primary", "one?", "two?", "three?"]
-        # Each subsequent decision sees the prior successfully sent addition.
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary", "one?"]
+        assert value.provider.main_calls == 1 and value.provider.followup_calls == value.run.followups == 1
+        assert value.run.requests == 2 and value.run.tool_calls == value.counts["search"] == 0
+        assert assistant_texts(value.runner.run_context.messages) == ["primary", "one?"]
         requests = value.provider.requests[1:]
-        assert "one?" in str(requests[1]["contexts"]) and "two?" in str(requests[2]["contexts"])
         assert all(request["func_tool"] is None for request in requests)
         assert all(request["chat_template_kwargs"]["enable_thinking"] is False for request in requests)
         await value.owner._maybe_followup(value.event)
-        assert value.provider.followup_calls == 3 and value.counts["commits"] == 1
+        # The durable cap also protects against a repeated hook with reset event flags.
+        value.event.set_extra("qq_followup_finished", False)
+        await value.owner._maybe_followup(value.event)
+        assert value.provider.followup_calls == 1 and value.counts["commits"] == 1
     loop.run_until_complete(check())
 
 
@@ -378,7 +378,7 @@ def test_followups_inherit_complete_system_and_refresh_state_without_stale_perso
         value = await make_run(tmp_path, [tool_call(), candidate("primary")],
             system_prompt=primary_system, contexts=[extra_system])
         value.event.set_extra("qq_persona_prompt", "OUTDATED PERSONA SNAPSHOT")
-        value.provider.followup_outputs = [followup("one?"), followup("two?"), followup(None)]
+        value.provider.followup_outputs = [followup("one?")]
         assert await execute(value) == ["primary"]
         # A later state update must be visible even though the Agent has ended.
         value.run.remember_song({"song_id": 2, "title": "second song"})
@@ -386,18 +386,14 @@ def test_followups_inherit_complete_system_and_refresh_state_without_stale_perso
             rows = [message.model_dump() for message in request["contexts"] if message.role == "system"]
             return [row["content"] if isinstance(row["content"], str) else
                     "\n".join(part["text"] for part in row["content"]) for row in rows]
-        async def next_state():
-            if value.provider.followup_calls == 1:
-                value.run.remember_song({"song_id": 3, "title": "third song"})
-        value.provider.on_followup = next_state
         chain = MessageEventResult().message("primary")
         value.event.set_extra("qq_reply_ready", True)
         value.event.set_extra("qq_delivery_chains", [chain])
         await value.event.send(chain)
         await value.owner.finish_paced_reply(value.event)
         requests = value.provider.requests[2:]
-        assert len(requests) == value.run.followups == 3
-        for index, request in enumerate(requests):
+        assert len(requests) == value.run.followups == 1
+        for request in requests:
             texts = system_texts(request)
             assert primary_system in texts and "OTHER SYSTEM RULE" in texts
             assert "OUTDATED PERSONA SNAPSHOT" not in "\n".join(texts)
@@ -406,10 +402,10 @@ def test_followups_inherit_complete_system_and_refresh_state_without_stale_perso
             assert len(states) == 1
             state = json.loads(states[0].split("\n")[-1])
             assert state["source_lookup_attempts"] == 1
-            assert state["registered_song_candidates"] == ([1, 2] if index == 0 else [1, 2, 3])
+            assert state["registered_song_candidates"] == [1, 2]
             assert request["func_tool"] is None and request["response_format"] == FOLLOWUP_FORMAT
         assert value.run.tool_calls == value.counts["search"] == 1
-        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary", "one?", "two?"]
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary", "one?"]
         assert prompts["followup_phase"] not in repr(value.runner.run_context.messages)
         assert prompts["agent_execution_state"] not in repr(value.runner.run_context.messages)
     loop.run_until_complete(check())
@@ -417,9 +413,9 @@ def test_followups_inherit_complete_system_and_refresh_state_without_stale_perso
 
 @pytest.mark.parametrize("responses,expected,calls", [
     ([followup(None)], [], 1),
-    ([followup("one?"), followup(None)], ["one?"], 2),
+    ([followup("one?"), followup(None)], ["one?"], 1),
     ([followup("primary")], [], 1),
-    ([followup("one?"), followup("one?")], ["one?"], 2),
+    ([followup("one?"), followup("one?")], ["one?"], 1),
     ([tool_call()], [], 1),
     ([LLMResponse("assistant", completion_text="not JSON")], [], 1),
 ])
@@ -488,6 +484,24 @@ def test_native_tool_roundtrip_then_direct_final_reply(loop, tmp_path):
         lifecycle = value.event.get_extra("qq_agent_lifecycle")
         lifecycle.sent("found it")
         assert json.loads(value.runner.run_context.messages[-1].content)['reply'] == "found it"
+    loop.run_until_complete(check())
+
+
+def test_tool_reasoning_is_replayed_only_within_current_run_and_not_sent_or_saved(loop, tmp_path):
+    async def check():
+        from integrations.qq_astrbot.plugin.model_messages import normalize_messages
+        response = tool_call(prose="tool-stage content")
+        response.reasoning_content = "PRIVATE TOOL REASONING"
+        value = await make_run(tmp_path, [response, candidate("primary")])
+        await deliver_primary(value)
+        wire = normalize_messages(value.provider.contexts[1])
+        tool_message = next(m for m in wire if m.get("tool_calls"))
+        assert tool_message["reasoning_content"] == "PRIVATE TOOL REASONING"
+        assert response.reasoning_content is None
+        assert "PRIVATE TOOL REASONING" not in repr(value.runner.run_context.messages)
+        assert "PRIVATE TOOL REASONING" not in repr(value.event.sent)
+        followup = next(r for r in value.provider.requests if r.get("response_format") == FOLLOWUP_FORMAT)
+        assert "PRIVATE TOOL REASONING" not in repr(followup)
     loop.run_until_complete(check())
 
 
@@ -591,10 +605,10 @@ def test_run_counters_survive_reopening_and_duplicates_have_uncertain_receipt(tm
     assert same.followups == 1
     assert reopened.reserve_action(same, "music", {"song_id": 1})[1]["status"] == "uncertain"
     reopened.consume(same, "reply_retries")
-    reopened.consume(same, "followups")
-    reopened.consume(same, "followups")
+    with pytest.raises(BudgetExhausted, match="followups"):
+        reopened.consume(same, "followups")
     again = AgentStore(store.path).begin(run.scope, version, "m1")
-    assert again.followups == 3
+    assert again.followups == 1
     assert again.reply_retries == 1
     with pytest.raises(BudgetExhausted):
         reopened.consume(again, "followups")
@@ -651,6 +665,119 @@ def test_new_input_interrupts_typing_delay_and_releases_lease(loop, tmp_path):
         value.store.observe(value.run.scope, "m2")
         await asyncio.wait_for(task, timeout=0.5)
         assert value.event.result.chain == [] and value.counts["released"] >= 1
+    loop.run_until_complete(check())
+
+
+@pytest.mark.parametrize("elapsed,level", [(0.1, 1), (0.1, 5), (30.0, 5)])
+@pytest.mark.parametrize("group,segments", [
+    (False, ["好。", "第二句比较长！", "OK?"]),
+    (True, ["好。", "第二句比较长！", "OK?第四句。"]),
+    (False, ["一。", "二。", "三。", "四。", "五。", "六。第七句。"]),
+])
+def test_split_reply_waits_for_each_segment_after_previous_send(
+        loop, tmp_path, monkeypatch, elapsed, level, group, segments):
+    import time
+    from integrations.qq_astrbot.plugin import main, reply_pacing
+    from integrations.qq_astrbot.plugin.reply_pacing import THINKING_SECONDS, typing_seconds
+
+    async def check():
+        reply = "".join(segments)
+        value = await make_run(tmp_path, [candidate(reply)])
+        await execute(value)
+        value.event.set_extra("qq_thinking_level", level)
+        value.event.set_extra("qq_reply_started_at", 100.0)
+        value.event.set_extra("qq_followup_finished", True)
+        if group:
+            value.event.get_group_id = lambda: "201"
+            value.owner.router = SimpleNamespace(context=SimpleNamespace(
+                add=lambda *args: None, replace_text=lambda *args: None))
+        clock = [100.0 + elapsed]
+        fake_time = SimpleNamespace(monotonic=lambda: clock[0], time=time.time)
+        monkeypatch.setattr(main, "time", fake_time)
+        monkeypatch.setattr(reply_pacing, "time", fake_time)
+        timeline = []
+
+        async def wait_delivery(run, seconds):
+            value.store.ensure_current(run)
+            timeline.append(("wait", seconds))
+            clock[0] += seconds
+
+        async def send(chain):
+            timeline.append(("send", chain.get_plain_text(), clock[0]))
+            clock[0] += 8.0  # Transport latency must not consume the next sentence's delay.
+            value.event.sent.append(chain)
+
+        monkeypatch.setattr(value.store, "wait_delivery", wait_delivery)
+        value.event.send = send
+        value.event.result = MessageEventResult().message(reply).set_result_content_type(ResultContentType.LLM_RESULT)
+        await value.owner.delay_paced_reply(value.event)
+        assert value.event.result.get_plain_text() == segments[0]
+        await value.event.send(value.event.result)
+        await value.owner.finish_paced_reply(value.event)
+
+        expected = []
+        current = 100.0 + elapsed
+        for index, segment in enumerate(segments):
+            seconds = typing_seconds(segment)
+            if index == 0:
+                seconds = max(0.0, THINKING_SECONDS[level] + seconds - elapsed)
+            if seconds > 0:
+                expected.append(("wait", seconds))
+                current += seconds
+            expected.append(("send", segment, current))
+            current += 8.0
+        assert len(timeline) == len(expected)
+        for actual, target in zip(timeline, expected):
+            assert actual[:-1] == target[:-1]
+            assert actual[-1] == pytest.approx(target[-1])
+        assert assistant_texts(value.runner.run_context.messages) == [reply]
+        assert value.provider.followup_calls == 0 and value.counts["released"] == 1
+
+    loop.run_until_complete(check())
+
+
+def test_new_input_interrupts_second_segment_and_keeps_only_sent_history(loop, tmp_path):
+    async def check():
+        value = await make_run(tmp_path, [candidate("第一句。第二句话比较长。第三句。")])
+        await execute(value)
+        value.event.result = MessageEventResult().message("ready").set_result_content_type(ResultContentType.LLM_RESULT)
+        await value.owner.delay_paced_reply(value.event)
+        await value.event.send(value.event.result)
+        entered = asyncio.Event()
+        original_wait = value.store.wait_delivery
+
+        async def wait_delivery(run, seconds):
+            entered.set()
+            await original_wait(run, seconds)
+
+        value.store.wait_delivery = wait_delivery
+        task = asyncio.create_task(value.owner.finish_paced_reply(value.event))
+        await entered.wait()
+        value.store.observe(value.run.scope, "m2")
+        await asyncio.wait_for(task, timeout=0.5)
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["第一句。"]
+        assert assistant_texts(value.runner.run_context.messages) == ["第一句。"]
+        assert value.provider.followup_calls == value.counts["commits"] == 0
+        assert value.counts["released"] == 1
+
+    loop.run_until_complete(check())
+
+
+def test_delivery_delay_survives_expired_generation_budget(loop, tmp_path):
+    async def check():
+        store = AgentStore(tmp_path / "agent.db")
+        version = store.observe("qq:999:dm:101", "m1")
+        run = store.begin("qq:999:dm:101", version, "m1")
+        run.started -= run.max_seconds + 1
+        task = asyncio.create_task(store.wait_delivery(run, 60))
+        await asyncio.sleep(0)
+        assert not task.done()
+        with pytest.raises(BudgetExhausted):
+            store.consume(run, "requests")
+        store.observe(run.scope, "m2")
+        with pytest.raises(Superseded):
+            await asyncio.wait_for(task, timeout=0.5)
+
     loop.run_until_complete(check())
 
 
