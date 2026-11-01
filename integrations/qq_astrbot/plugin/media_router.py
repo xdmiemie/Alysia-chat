@@ -172,6 +172,14 @@ class MediaRouter:
                 return []
         return chains
 
+    async def reply_chains(self, text: str, *, voice: bool, group: bool):
+        if voice:
+            chains = await self.voice_chains(text, "neutral", group=group)
+            if chains:
+                return chains, self.speech_texts(text, group=group)
+        from .reply_pacing import text_reply_chains
+        return text_reply_chains(text, group=group)
+
     async def sticker(self, event, tag):
         if tag is None:
             return

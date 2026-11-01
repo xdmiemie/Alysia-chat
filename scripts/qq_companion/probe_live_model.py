@@ -26,6 +26,10 @@ def run_active_probe() -> str:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     config = replace(load_qwen3_config(), enable_thinking=False)
     command = [str(executable), "--model", str(model)] + config.server_args()
+    if projector := active["runtime"].get("mmproj_file"):
+        command.extend(["--mmproj", str(ROOT / projector)])
+        if not config.mmproj_offload:
+            command.append("--no-mmproj-offload")
     if adapter:
         adapter_path = ROOT / adapter
         if adapter_path.suffix.lower() != ".gguf" or not adapter_path.is_file():

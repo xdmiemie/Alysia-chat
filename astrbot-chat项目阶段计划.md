@@ -1,25 +1,30 @@
 # astrbot-chat：基于 Stage 10 核心的 AstrBot + SnowLuma QQ AI 与抖音学习计划
 
-> 计划版本：1.2（2026-10-28，修订：项目命名、Qwen3-14B、Bailu 语音、Feiyu RVC 与目录）  
+> 计划版本：1.3（2026-11-01，修订：Qwen3.5 原生多模态，取消识图模型切换）\
 > 上游来源：<https://github.com/xdmiemie/Alysia-chat>；本地项目和分支名：`astrbot-chat`  
 > Stage 10 基线：`aca495e801f061210ce4961da8df2f63ab3f3c44`；当前分支：`astrbot-chat`  
 > 目标平台：Windows 11（本项目模型运行及训练）、SnowLuma Windows 版 + NTQQ、AstrBot 独立 Python 3.12 环境；运行在同一台电脑；后续可以将 AstrBot 改为 Docker/WSL。  
-> 现有硬件基线：Ryzen 7 9800X3D / RTX 5080 16GB / 32GB RAM；视觉识别允许较长等待时间，优先保证单卡独占推理稳定性。  
+> 现有硬件基线：Ryzen 7 9800X3D / RTX 5080 16GB / 32GB RAM；聊天与识图共用常驻 Qwen3.5，优先保证显存余量和请求队列稳定性。\
 > 范围：QQ 私聊/群聊、文字/语音/媒体理解、点歌/翻唱、每日角色日记、条件启用 QQ 空间、辅助性的抖音浏览—理解—记忆—定向分享。**不做无人监督支付、批量营销或验证码绕过。**
 
-## 版本 1.2 变更摘要
+## 版本 1.3 变更摘要（当前执行方案）
 
-- 对话主模型改为本地 `Qwen3-14B-Q4_K_M.gguf`；旧 8B LoRA 与 14B 基座不兼容，当前运行清单只激活 14B 基座。保留 LoRA 训练与导出代码，后续用 14B 重新微调。
+- 对话、QQ 图片、静态/GIF 表情包和视频关键帧统一使用本地 `Qwen3.5-9B-Q8_0.gguf`，复用 `llama-server:8080`。一次请求可同时包含文字和图片，不要求先将图片描述成文字再交给聊天模型。
+- 取消识图专用 Qwen3-VL、`8081` 模型服务、视觉模型装卸状态机及其 Broker 独占验收；Q7 改为接通主模型的原生多模态输入。`vision_api:8766` 仅作为可选的素材预处理/结构化分析封装，不加载另一份模型。
+- 保留图片校验、缩放、GIF/视频抽帧、共享请求队列、超时与显存观测；QQ 前台请求优先于后台视频片段。翻唱和离线训练已有的资源互斥独立保留，不再作为每次识图的前置步骤。
+- **当前实证边界（2026-11-01）**：Q7 已接入并校验配套 `mmproj-F16.gguf`，复用活动 `qwen3.5-9b-q8-0-base-v1` 的常驻8080服务；图片20、表情20、GIF10、视频20及30轮图文交替真实推理通过。真实QQ收发仅限好友 `1301049831`，最终结果与限制见 `docs/qq_companion/acceptance.md`。
+
+## 版本 1.2 变更摘要（历史记录，模型选型已由 1.3 替代）
+
+- 当时对话主模型改为本地 `Qwen3-14B-Q4_K_M.gguf`。保留旧模型和 LoRA 训练、导出代码；旧 8B/14B LoRA 不可直接套用 Qwen3.5-9B，后续训练需匹配新基座并单独验收。
 - elysia 的 GPT-SoVITS 指定 `model_store/registry/gpt_sovits/elysia/bailu-v1/`，使用 `Bailu-e10.ckpt`、`Bailu_e10_s820.pth` 和该目录的四种参考音频。`gentle` 映射 neutral，`serious` 映射 sad。
 - 翻唱指定 `model_store/registry/rvc/feiyu/v1/` 的 `FeiyuVoice-RVC-v1.pth` 与同名 `.index`；推理环境和 Applio 源码在 `envs/song/`、`external/Applio/`，不提交模型权重。
 - 移除 fish 角色与旧 TTS 模型的活动目录；旧 TTS 权重本机移到 `model_store/rollback/`。QQ 的历史 Stage 14A 部分代码归档于 `integrations/qq_astrbot/reference/`，供后续 AstrBot 插件迁移使用。
 
-## 版本 1.1 变更摘要（保留）
+## 版本 1.1 变更摘要（历史记录，视觉方案已由 1.3 替代）
 
-- 明确同一个 Qwen3-VL-4B 视觉进程承担普通 QQ 图片、静态表情包、GIF 抽帧、抖音视频 FFmpeg 抽帧的识别。
-- 明确识图推理**宁可耗时较久，也必须先停掉本项目其他所有 GPU 模型**，经过显存检查后独占运行，结束后恢复原聊天/语音服务；训练不可在无检查点时强制终止。
-- 增加 Q2 提前接入 GPUResourceBroker、Q7 正式独占 Gate、Q10 压力测试与故障恢复验收；抖音视频分批抽帧避免频繁模型热切换。
-- 根据 Ryzen 7 9800X3D、RTX 5080 16GB、32GB RAM，主选官方 Qwen3-VL-4B-Instruct-GGUF Q4_K_M + mmproj，保留 BF16 作为经实测才启用的备选。
+- 当时采用独立 Qwen3-VL-4B 视觉进程，识图前卸载聊天/语音等 GPU 模型，结束后恢复。该方案及专门为其设计的 GPUResourceBroker 视觉切换要求已取消，不作为当前开发或验收依据。
+- 继续保留媒体统一处理、视频分段抽帧、资源压力测试和训练检查点保护。
 
 ## 0. 结论、能力边界与总难度
 
@@ -30,9 +35,9 @@
 - **“学习”第一版专指经过过滤、归纳、检索的持久化记忆（RAG），不自动修改 Qwen3 模型权重。** 现有 Qwen3 / GPT-SoVITS 训练模块作为人工发起、离线评估、可回滚的独立工作流继续保留。
 - **QQ 空间按 Q6 最新用户规则分能力启用**：账号/Cookie/自己列表/发布/详情/权限/删除通过后可启用自身发布；好友阅读、评论、点赞分别保留未验收 Gate。2026-10-30 已完成自身十条发布及删除实测，好友互动待测试；不擅自切 NapCat。
 - 语音回复用现有 GPT-SoVITS；**唱歌/AI 翻唱另外需要人声分离 + RVC/SVC/SoulX-SVCVC + 歌曲许可与模型权重**，GPT-SoVITS 的 TTS 不能直接替代歌唱模型。
-- **视觉能力唯一入口**：QQ 图片、静态/GIF 表情包、抖音短视频关键帧**都调用同一个 `Qwen3-VL-4B-Instruct` 模型与 Vision API**；视频先经 FFmpeg 抽为若干时间标记图片，不引入另一套视频理解大模型。视频音轨另用已有 SenseVoice，二者分时运行。
-- **单卡硬隔离**：每次进入视觉推理模式前，必须排空在途 GPU 任务并**停止/卸载本项目控制的文本 Qwen3、GPT-SoVITS、GPU SenseVoice、RVC/SVC 等全部 GPU 推理进程**，核实释放显存后才加载 Qwen3-VL；在视觉识别期间 QQ 消息只能入队或返回无需 GPU 的固定确认文案。视觉任务完成后彻底卸载 VLM，再自动恢复原模型。不得依赖“显存刚好够就并发运行”的做法。
-- 抖音自动浏览采用**有界任务**：由本机登录的浏览器运行，每天至多一个定时任务，单次至多 15 条/20 分钟；先 CPU 下载/抽帧并完成 ASR，再统一切换独占视觉模式批处理，不为每条视频反复启停模型；出现登录失效、验证码、封禁提示即停机并请求人工处理；不实现规避平台风控、指纹伪装或批量抓取。
+- **视觉能力唯一入口**：QQ 图片、静态/GIF 表情包、抖音短视频关键帧都直接送入**同一个常驻 `Qwen3.5-9B` 的多模态接口**；图片与用户文字、角色指令和授权上下文一起参与推理。视频先经 FFmpeg 抽为带时间戳的图片，音轨另用已有 SenseVoice 转写。
+- **取消识图模型调度**：识图不停止聊天 LLM、不加载独立 VLM、不在完成后重载 LLM；文字与图片请求共用 `8080` 服务和请求额度。请求排队、像素/帧数/上下文限制与显存监测仍需实现；这不表示可无限并发，翻唱/训练原有资源策略仍有效。
+- 抖音自动浏览采用**有界任务**：由本机登录的浏览器运行，每天至多一个定时任务，单次至多 15 条/20 分钟；CPU 下载/抽帧、可选 ASR 后按片段低优先级调用常驻 Qwen3.5，片段之间让出前台聊天请求；出现登录失效、验证码、封禁提示即停机并请求人工处理；不实现规避平台风控、指纹伪装或批量抓取。
 
 ### 0.2 能力来源真实性清单
 
@@ -43,13 +48,13 @@
 | 文本生成 / Agent / Tool Calling | AstrBot 内置 Runner + llama.cpp 本地模型 | 已有机制；须验证 Qwen3 工具调用格式 | 中 |
 | 语音识别、角色语音 | ??? SenseVoice + GPT-SoVITS | Stage 0–10 已有模型代码；需 HTTP 化 | 中 |
 | 点歌、AI 翻唱 | `matsuko_cover` 等 + 独立 RVC/SVC 服务 | 有插件；仍需搭建转换后端 | 中高 |
-| **表情包、普通图片、视频关键帧识别（共用模型）** | FFmpeg/Pillow + **同一个 Qwen3-VL-4B 视觉 worker** | 统一排队、统一显存独占、统一输出结构 | 高 |
+| **表情包、普通图片、视频关键帧识别（共用主模型）** | FFmpeg/Pillow + **常驻 Qwen3.5-9B 多模态接口** | Q7 已实现；真实模型与容量验收通过，QQ闭环结果见验收记录 | 中 |
 | 表情包发送 | QQ 图片接口 + 自维护的素材库 | 可直接做 | 小 |
 | 每晚日记 | 新定时器、记忆摘要、日记表 | **不是 AstrBot 自动内置的“每天自己写日记”功能** | 中 |
 | QQ 空间发说说、评论、点赞 | Zhalslar Qzone 插件 | 接口层可能兼容，需先验收；未通过则不做 | 条件项 |
 | 抖音链接解析、取元数据/视频文件 | `astrbot_plugin_multi_parser` 参考其解析实现 | 已有解析器；独立服务需适配 | 中 |
 | 真正自己刷抖音推荐流 | Playwright 浏览器任务（自研） | 需要登录环境及流程控制；非解析器功能 | 高 |
-| 视频理解、记录、生成检索记忆 | FFmpeg 抽帧 +（先执行并卸载的）SenseVoice + 独占 Qwen3-VL + SQLite/FTS5 | 需要自研；不并行装载其他 GPU 模型 | 高 |
+| 视频理解、记录、生成检索记忆 | FFmpeg 抽帧 + 可选 SenseVoice 转写 + 常驻 Qwen3.5 + SQLite/FTS5 | 需要自研；按片段限制资源，不切换识图模型 | 高 |
 | 觉得有趣并给指定 QQ 好友分享 | 兴趣评分 + allowlist + SnowLuma/AstrBot 发送 | 需要自研 | 中 |
 
 建议总体难度 **7.5/10**；若不要求自动刷抖音、只接收链接分析，可降为约 **5.5/10**。难度评分是工程预估，不是实测工期。
@@ -58,7 +63,7 @@
 
 ### 1.1 astrbot-chat 当前实际情况
 
-以下为 Stage 10 基线调查记录；当前模型与目录以本计划 1.2 修订及本地清单为准：
+以下为 Stage 10 基线调查记录；当前模型与目录以本计划 1.3 修订及本地清单为准：
 
 - README 宣称 **Stage 0–10 完成**；原阶段文件中的 **Stage 10 = `AstrbotChatCore` 统一接口**。
 - 项目现有 `runtime/core/service.py` 的 `AstrbotChatCore.process(UnifiedMessage)` 在一条调用内部依次完成 ASR、通过 `ChatSessionManager` 调 Qwen3、可选 TTS；`runtime/core/models.py` 中有 `UnifiedMessage`/`AstrbotChatReply`。
@@ -123,7 +128,7 @@
                           ↓             ↓             │
                    视频浏览/分析服务  llama-server:8080
                           ↓                          │
-          SenseVoice（先运行）→ 独占 Qwen3-VL         │
+          可选 SenseVoice 转写 → Qwen3.5:8080         │
                           ↓                          │
                  SQLite 记忆 / 日记                    │
                                                      │
@@ -138,12 +143,12 @@
 另一路主动工作流：
   定时器 → 抖音独立浏览器（Playwright，用户登录）
         → 视频解析/许可范围内获取媒体 → FFmpeg 抽帧/音轨
-        → SenseVoice 先转写并释放显存 → 独占 Qwen3-VL 分析关键帧 → 结构化审核/过滤
+        → 可选 SenseVoice 转写 → 常驻 Qwen3.5 分析关键帧 + 文字 → 结构化审核/过滤
         → SQLite 记忆 → Agent 日记/日常聊天检索
         → 评分与允许列表 → AstrBot 发 QQ 原始链接
 ```
 
-**防止“双 Agent”**：微信分支 Stage 10 的 `AstrbotChatCore.process` 会自行调用 LLM；在 QQ 分支中，不能让 AstrBot 的 Agent 先生成回答再把回答当用户输入交给 `AstrbotChatCore.process`，否则将再次生成回复。应拆出 `ASRService`、`TTSService` 和只读 `CharacterRegistry` 供 QQ 插件调用，`AstrbotChatCore` 保留用于本地旧入口的兼容；AstrBot 通过 `llama-server /v1/chat/completions` 直接调用本地 Qwen3，**聊天历史只由 AstrBot 写入**。
+**防止“双 Agent”**：微信分支 Stage 10 的 `AstrbotChatCore.process` 会自行调用 LLM；在 QQ 分支中，不能让 AstrBot 的 Agent 先生成回答再把回答当用户输入交给 `AstrbotChatCore.process`，否则将再次生成回复。应拆出 `ASRService`、`TTSService` 和只读 `CharacterRegistry` 供 QQ 插件调用，`AstrbotChatCore` 保留用于本地旧入口的兼容；AstrBot 通过 `llama-server /v1/chat/completions` 直接调用本地 Qwen3.5，**聊天历史只由 AstrBot 写入**。
 
 ## 3. 具体软件/模型/获取地址与对接方式
 
@@ -155,14 +160,12 @@
 | AstrBot OneBot 指南 | <https://docs.astrbot.app/en/platform/aiocqhttp.html> | 使用逆向 WS 服务端适配器 | 确认消息协议/端口/Token |
 | SnowLuma 连机器人 | <https://snowluma.github.io/en/docs/guide/connect-bot> | 同机用 `ws://127.0.0.1:6199/ws` | `wsClients` 指向 AstrBot |
 | llama.cpp | <https://github.com/ggml-org/llama.cpp> | 继续复用项目本地 llama-server | OpenAI 兼容 `http://127.0.0.1:8080/v1` |
-| Qwen3-14B | <https://huggingface.co/Qwen/Qwen3-14B-GGUF> | 本地 `Qwen3-14B-Q4_K_M.gguf`；当前使用基座，后续单独微调 14B | AstrBot 对话模型 |
+| **Qwen3.5-9B（聊天与识图共用）** | <https://huggingface.co/Qwen/Qwen3.5-9B> | 当前 `Qwen3.5-9B-Q8_0.gguf`；原生支持图文输入，GGUF 部署需补齐匹配的视觉组件 | AstrBot 对话与媒体理解统一模型，端口 8080 |
 | SenseVoice | <https://github.com/FunAudioLLM/SenseVoice> | 复用现有本地模型 | ??? Media API `/v1/audio/transcriptions` |
 | GPT-SoVITS | <https://github.com/RVC-Boss/GPT-SoVITS> | elysia `bailu-v1`，本地权重 + 9880 上游及 5002 wrapper | API `/v1/audio/speech` |
 | FFmpeg | <https://ffmpeg.org/download.html> | 复用 `tools/ffmpeg` | 音频转码/视频取帧 |
-| **Qwen3-VL-4B-Instruct-GGUF（首选）** | <https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF> | Q4_K_M 文本权重 + 对应 `mmproj` 视觉编码器；只能在 GPU 独占模式加载 | **同一模型处理 QQ 图片、表情包、GIF 抽帧、抖音视频关键帧** |
-| Qwen3-VL-4B-Instruct（高精度备选） | <https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct> / <https://github.com/QwenLM/Qwen3-VL> | BF16 原版；仅 Q7 显存/画质基准通过后切换，不默认为常驻 | 视觉质量对照实验 |
-| llama.cpp 多模态推理 | <https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md> | `libmtmd`、`llama-server` + `mmproj`；另启视觉专属端口 8081 | OpenAI Compatible 多图输入；对当前 build 做接口回归 |
-| Transformers | <https://github.com/huggingface/transformers> | **与 astrbot-chat 主运行环境隔离**，专用 vision venv/WSL 服务 | 视觉推理服务实现 |
+| llama.cpp 多模态推理 | <https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md> | 复用主 `llama-server:8080`，启动时加载主 GGUF 和匹配的 `mmproj`；锁定支持 Qwen3.5 视觉的构建 | OpenAI Compatible 图文/多图输入，不另启视觉 LLM 端口 |
+| Qwen3.5 视觉组件（待接入） | <https://huggingface.co/Qwen/Qwen3.5-9B> / <https://huggingface.co/docs/transformers/en/model_doc/qwen3_5> | 从对应 GGUF 发布源取得，或由同一基座经验证转换；登记来源、版本、哈希与兼容性 | 视觉编码器/投影组件属于同一多模态模型，不是第二个聊天模型 |
 | Playwright | <https://playwright.dev/python/> / <https://github.com/microsoft/playwright-python> | 专门的浏览器进程、持久化 profile | 抖音推荐流点击/观看/提取链接 |
 | 抖音媒体解析 | <https://github.com/Qfxaile/astrbot_plugin_multi_parser> | 参考其解析能力；支持时可作为消息插件 | 分享链接元数据、媒体文件 |
 | 备用视频总结参考 | <https://github.com/tamakooooo/Video_analyzer> | 可研究视频总结/下载，但不代替主动浏览 | 优先复用已有代码而非重写全部 |
@@ -218,15 +221,15 @@ astrbot-chat/
 │   │   ├── characters.py
 │   │   └── jobs.py
 │   ├── vision_api/
-│   │   ├── app.py               # 唯一图像识别 API，覆盖表情/图片/视频帧
-│   │   ├── model_worker.py      # llama.cpp 专用 vision 进程与 mmproj
+│   │   ├── app.py               # 可选轻量媒体分析 API，不加载模型
+│   │   ├── model_client.py      # 调用常驻 Qwen3.5:8080，保留图文 content
 │   │   ├── preprocess.py        # 静态图/GIF/视频按时间戳抽帧
 │   │   └── schemas.py           # analyze_image/analyze_video 的结果契约
 │   ├── gpu_broker/
-│   │   ├── broker.py            # 单一 GPU owner 状态机/跨进程锁
+│   │   ├── broker.py            # 沿用翻唱/离线训练互斥，不承接识图模型切换
 │   │   ├── process_registry.py  # 只管理本项目启动的 GPU 进程
-│   │   ├── vram_probe.py        # nvidia-smi/NVML 验证显存及进程释放
-│   │   └── recovery.py          # 模型切换失败回滚/恢复
+│   │   ├── vram_probe.py        # nvidia-smi/NVML 记录显存余量与峰值
+│   │   └── recovery.py          # 既有翻唱/训练任务失败恢复
 │   └── douyin_worker/
 │       ├── browser_session.py
 │       ├── feed_driver.py
@@ -283,6 +286,8 @@ AstrBot、SnowLuma、Applio 第三方仓库按已验证版本安装到 `external
 
 ### 4.3 配置和端口约定
 
+以下为概念配置示例；Q7实际入口为 `configs/runtime/qwen3.yaml`、`configs/qq_companion/vision.yaml`、活动模型清单与分能力 `vision_gates.json`，示例字段名不作为运行配置契约。
+
 ```yaml
 qq_companion:
   character_id: elysia
@@ -298,8 +303,10 @@ qq_companion:
     openai_api_base: "http://127.0.0.1:8080/v1"
     model_id: "<以 llama-server /v1/models 实际返回值为准>"
     active_manifest: "model_store/active/qwen3.json"
-    base_model_id: "qwen3-14b-q4-k-m-base-v1"
-    gguf_path: "model_store/registry/qwen3/elysia/qwen3-14b-q4-k-m-base-v1/Qwen3-14B-Q4_K_M.gguf"
+    base_model_id: "qwen3.5-9b-q8-0-base-v1"
+    gguf_path: "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf"
+    mmproj_path: "<待登记的匹配 Qwen3.5-9B 视觉组件本地路径>"
+    multimodal_enabled: false      # Q7 实测通过后启用，不能只凭模型名称打开
   media_api:
     base_url: "http://127.0.0.1:8765"
     token_env: "ASTRBOT_CHAT_MEDIA_API_TOKEN"
@@ -315,25 +322,21 @@ qq_companion:
     rvc_index: "model_store/registry/rvc/feiyu/v1/FeiyuVoice-RVC-v1.index"
     applio_repo: "external/Applio"
   vision_api:
-    base_url: "http://127.0.0.1:8766"
+    base_url: "http://127.0.0.1:8766"  # 可选预处理/结构化封装，无独立模型
     enabled: false
-    model_repo: "Qwen/Qwen3-VL-4B-Instruct-GGUF"
-    quantization: "Q4_K_M"
-    server_port: 8081
+    backend_api_base: "http://127.0.0.1:8080/v1"
+    use_main_qwen: true
     single_model_for_images_gifs_video_frames: true
     ffmpeg_video_frame_interval_seconds: 2
-    max_frames_per_video: 12         # 单次视觉推理保守上限；长视频分批
-    max_image_long_edge: 1024       # 防止原图高分辨率引发视觉 token 暴涨
-  gpu_broker:
-    exclusive_vision: true
-    gpu_id: 0
-    managed_model_processes_must_stop: true
-    drain_inflight_before_switch: true
-    min_free_vram_mib_before_vision: 12288
-    min_headroom_during_vision_mib: 2048
-    on_busy: "queue"               # 排队，不硬抢占正在执行的聊天/训练
-    on_vision_failure: "restore_chat"
-    allow_parallel_chat_during_vision: false
+    segment_seconds: 24             # 时间轴每段约24秒，末段按实际剩余时长
+    max_frames_per_segment: 12      # 每2秒1帧；60秒视频分为12、12、6帧
+    max_image_long_edge: 1024
+  inference_queue:
+    max_inflight_requests: 1         # 文字与图片共享；后台调用也必须计入
+    foreground_before_background: true
+    yield_between_video_segments: true
+    on_busy: "queue"
+
   qzone:
     enabled: false           # Gate 未通过前不得启用
   douyin:
@@ -350,77 +353,80 @@ qq_companion:
     max_per_person_per_day: 1
 ```
 
-## 4.4 **强制设计约束：统一视觉模型 + GPU 独占状态机（本次修订，P0）**
+## 4.4 **强制设计约束：主 Qwen3.5 原生图文推理，不切换识图模型（P0）**
 
-### 4.4.1 统一视觉模型的覆盖面
+### 4.4.1 识图原理与一次请求的输入
 
-- `POST /v1/vision/analyze_image`：**普通图片和静态表情包统一走 Qwen3-VL-4B**，回答场景、人物/主体、文字 OCR、情绪或网络梗（不确定时注明）。图片输入先用 Pillow 校验格式、缩放/旋转并转换 RGB。
-- `POST /v1/vision/analyze_gif`：GIF/动图不直接交给文本 Qwen；先抽取最多 4–8 张时间分布均匀、去重后的 PNG（短 GIF 默认 4 张），带时间戳组成一个多图任务，再调用同一个 `analyze_frames` 实现。APNG/短动画按同样思路处理。
-- `POST /v1/vision/analyze_video`：使用 FFmpeg **先按时间抽出图片**，默认 `fps=1/2`、**单段最多 12 张**，长视频拆为若干独立片段；调用与表情包完全相同的 Qwen3-VL 模型进程，只是多图提示词不同。**不引入独立视频生成/理解大模型**。按需追加切镜头、关键动作处的代表帧，不每秒逐帧送入。
-- `Qwen3-VL` 仅做视觉任务（可附带已得到的 ASR 转写文字），不是聊天主模型。聊天使用 Qwen3-14B；**视觉阶段绝不能让两个模型同时驻留 GPU**。结构化 JSON 作为结果存回本地缓存/记忆；无须为最后摘要并行启动第二个 Qwen3。
+Qwen3.5 是带视觉编码器的原生多模态模型。图片经解码、缩放和分块后，由视觉编码器提取特征，再通过投影/合并组件形成语言主干可使用的视觉表示；文字则由 tokenizer 编码。视觉表示与文字表示一起进入模型上下文，模型据此生成回答。**内部视觉编码不等于先生成一段图片描述文字**；OCR、描述、推理都可以是本次生成的结果。依据：<https://huggingface.co/Qwen/Qwen3.5-9B>、<https://huggingface.co/docs/transformers/en/model_doc/qwen3_5>。
 
-### 4.4.2 GPU 模型切换状态机：实现时不得省略
+一次 `POST http://127.0.0.1:8080/v1/chat/completions` 可同时传入角色指令、授权聊天历史，以及用户消息中的文字和一张/多张图片。兼容接口的用户消息示意（占位内容需替换为真实图片数据）：
 
-状态：`CHAT_READY → DRAINING → UNLOADING → VRAM_CHECK → VISION_READY → VISION_RUNNING → VISION_UNLOADING → RESTORING → CHAT_READY`；失败进入 `RECOVERING`，需要清理视觉进程并尽可能恢复聊天服务。
-
-1. **提交任务**：QQ 图片/表情/GIF 或抖音视频加入持久队列，携带 `request_id`、素材哈希、来源权限和截止时间。可先回复无需 AI 的固定提示，如“图片收到了，正在识别”；不得宣称已识别完成。
-2. **排空/冻结**：`GPUResourceBroker` 取得**跨进程独占锁**，禁止新任务进入 Qwen3、SenseVoice、GPT-SoVITS、RVC/SVC、训练 GPU 入口。等待当前任务正常完成；已开始的训练若不能在安全检查点暂停，则视觉任务延后，不直接杀训练进程。
-3. **停止并卸载**：调用现有 astrbot-chat 启停脚本或 `ProcessRegistry` 的受控句柄，依次停止本项目管理的 Qwen3 `llama-server:8080`、GPT-SoVITS wrapper/模型服务、GPU ASR worker、翻唱 worker 和任何其他托管 GPU 进程。**不能仅关闭 API 监听、仅调用 `torch.cuda.empty_cache()` 或只做 HTTP 暂停而仍让权重驻留显存**。不要擅自终止游戏、桌面渲染、驱动或其他非项目进程。
-4. **核对显存**：用 `nvidia-smi` 或 NVML（如 `pynvml`）确认所有**受管理的 GPU 模型进程已经退出**；同时测可用显存。建议初始门槛 `free_vram >= 12288 MiB`，并要求视觉期间预留 `>= 2048 MiB` 安全余量；它们是可调整的工程默认值，不是 Qwen3-VL 官方最低配置。若未达门槛，继续排队/报警，绝不并发硬启动视觉模型。
-5. **独占启动 VLM**：启动一份 `Qwen3-VL-4B-Instruct-GGUF:Q4_K_M`，通过已验证的 llama.cpp `libmtmd` 加载正确 `mmproj`，绑定 `127.0.0.1:8081`；请求路径采用已验证的 OpenAI 兼容多图 `POST /v1/chat/completions`。视觉模型服务和 QQ 模型服务配置、日志、端口完全隔离。
-6. **执行视觉任务**：一次加载可连续处理多条已排队图片、表情、视频片段，`vision_concurrency=1`，每批图片按帧数/像素/上下文封顶。Qwen3 文本聊天请求期间不进行 GPU 推理，消息保存在 AstrBot 队列中；超时可发送固定文字提示而非违规唤醒聊天模型。
-7. **卸载并恢复**：完成/失败/取消后，先正常停止 VLM 进程，验证显存释放，再恢复已登记的 Qwen3、GPT-SoVITS、SenseVoice 等原服务；依次检查 `/health` 与一次测试请求。**未完成恢复不能释放互斥锁**。服务恢复后，继续队列里的 QQ 文本/语音消息，带原始会话 ID，避免回复发错群或错人。
-8. **异常回滚**：VLM OOM、启动失败、图片损坏、进程崩溃时，清理模型子进程、缓存及孤儿进程，审计错误并优先恢复正常 QQ 服务；识图任务可重试一次或标记失败。**不能因为识图失败而长期让 QQ AI 离线**。独占期间 SnowLuma/AstrBot 消息连接仍保持工作，它们不应被停止。
-
-严格禁止的实现：`Qwen3-14B` 和 `Qwen3-VL` 同时占用 GPU；`Vision API` 独自启动视觉模型却绕过 Broker；用 GPU 流程直接杀死正在训练且未保存检查点的进程；视觉任务正常结束却不重启原模型。
-
-### 4.4.3 视频音频分析的先后顺序
-
-**允许先处理音频，但不得和视觉模型并行：**
-
-```text
-[GPU 聊天服务可运行阶段]
-下载视频 / CPU FFmpeg 抽帧 / CPU 分离音轨
-       ↓
-音轨 → SenseVoice 转写 → 保存 transcript → 释放/停止 SenseVoice GPU 实例
-       ↓
-[GPUResourceBroker 获取独占锁并停止所有其他 GPU 模型]
-       ↓
-Qwen3-VL 一次载入：逐段分析带时间戳的关键帧 + 可选 transcript
-       ↓
-写出视觉 JSON / 视频摘要 / 表情包标签
-       ↓
-停止 Qwen3-VL，确认显存释放，重启原 Qwen3 / GPT-SoVITS / ASR
-       ↓
-后台记忆筛选、QQ 消息恢复发送、日记检索
+```json
+{
+  "role": "user",
+  "content": [
+    {"type": "text", "text": "这张表情包是什么意思？结合我们刚才的话回答。"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,<真实图片的base64>"}}
+  ]
+}
 ```
 
-- 如果 FFmpeg 可在 CPU 完成抽帧，**应显式使用 CPU 路线**，不将 GPU 解码与 VLM 资源争用混入首版。
-- `ASR` 若配置 CPU 推理，可与 FFmpeg 同步运行；默认使用已有 ASR 环境，调度上仍保证所有 GPU ASR 在加载 VLM 前释放。
-- 对自主刷抖音任务，**先连续收集少量合法视频并抽帧，再启停模型一次完成视觉批量分析**，避免每刷到一条就切换两套模型。
+- `image_url`/base64 是图片的传输格式；服务端解码为像素，再编码为视觉特征，不把 base64 当普通文字送入 tokenizer。
+- 普通 QQ 图片问答直接保留原图、用户文字和上下文参与同一轮回复生成，不额外固定插入“先描述图片、再调用一次 LLM 回答”的链路。原有 Agent 工具循环需要的后续调用照常执行。
+- 视频分段、缓存分析和长期记忆可另存结构化摘要；这是应用层处理，不是识图必须经过的中间步骤。聊天历史仍由 AstrBot 唯一管理，素材缓存不另建会话历史。
+- `mmproj` 在 llama.cpp GGUF 部署中承载配套视觉编码/投影组件，与主 GGUF 同属一套多模态模型；它需要在主服务启动时接入，不是在每张图到来时切换另一套 LLM。启动方式依据：<https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md>。
+
+### 4.4.2 请求流程与服务生命周期
+
+```text
+QQ 图片 + 用户文字 + 授权上下文
+       ↓
+素材校验 / CPU 缩放、抽帧 / 请求预算检查
+       ↓
+共享请求队列 → 常驻 Qwen3.5:8080（主 GGUF + 匹配 mmproj）
+       ↓
+直接生成角色回复，或按媒体分析任务生成结构化结果
+       ↓
+AstrBot 按原会话发送 / 后台任务存储记忆
+```
+
+1. 任务携带 `request_id`、素材哈希、来源/会话、权限和截止时间，先完成下载、大小、格式检查。
+2. 图片与文字使用同一服务和同一请求额度，首版总并发设为 1；前台 QQ 请求优先，后台视频在片段之间让出队列。串行请求不涉及模型卸载或切换。
+3. QQ 前台与后台分析必须共用入口限流，不能只对 `vision_api` 限流而让 AstrBot 直连请求绕开额度；Q7 须以实际请求日志验证统一生效。
+4. 正常识图全程保持主服务和视觉组件常驻，不停止 GPT-SoVITS/ASR，不启动第二份模型；是否允许其他音频 GPU 任务并发，沿用已有容量/互斥策略并实测，不因改用多模态就放开限制。
+5. 图片无效、超时、超预算时只结束对应任务；可缩小图片或减少帧数后有限重试。若主服务因 OOM/崩溃不可用，按现有服务故障恢复处理，并保留队列和会话身份。异常恢复不作为正常识图的装卸流程。
+6. 不再实现 `acquire_vision_exclusive()` / `release_vision_exclusive()`、停止主 LLM 后加载专用视觉模型、以及每次识图结束重启主 LLM。翻唱和离线训练已有互斥机制单独保留，训练不得被无检查点强杀。
+
+### 4.4.3 图片、表情和视频的统一处理
+
+- 静态图片/表情：Pillow 校验格式、EXIF 旋转、转 RGB、等比例缩放，图片与用户问题一起送入 Qwen3.5；网络梗或小字无法确认时明确表达不确定性。
+- GIF/APNG：先抽取带时间戳的代表帧，默认 4 张、最多 8 张并去重；作为多图输入同一个模型，不能只读第一帧却声称理解整段动画。
+- 视频：CPU FFmpeg 默认每 2 秒一帧、每段预处理最多 12 张，30–180 秒内容分段覆盖完整时间轴。实际单次图片预算须同时满足显存和上下文限制，必要时缩小批次，不保证 12 帧都能单批运行。
+- 音轨：可选 SenseVoice 转写并附上时间戳，与图片和问题在同次请求中提交。CPU ASR 可与抽帧并行；GPU ASR 沿用既有资源限制，不新增“为识图卸载全部模型”的要求。
+- 后台视频分析只生成结构化结果/候选记忆，不占用其他用户的聊天历史；缓存按素材哈希、预处理参数、模型及提示词版本区分，避免复用不匹配结果。
 
 ### 4.4.4 推理规格与交付约束
 
-| 项目 | 首版硬性规格 | 可调整边界 |
+| 项目 | 首版规格 | 可调整边界 |
 |---|---|---|
-| 模型 | **单份 Qwen3-VL-4B-Instruct-GGUF，Q4_K_M + `mmproj`** | BF16 或 8B 量化仅经实测后尝试 |
-| QQ 静态图/表情 | 单图缩放到长边不超过 1024 像素；识别内容/OCR/情绪 | 对小字、复杂梗图按需放大单独复核 |
-| GIF/动图 | 默认采样 4 张、最多 8 张，识别动作及表情含义 | 帧间去重和时间戳 |
-| 短视频 | **每 2 秒一帧**，单次推理最多 12 张，长视频按片段多次处理 | 允许关键帧抽取代替固定间隔 |
-| 显存调度 | 独占状态机；0 个本项目其他 GPU 模型同时存活 | 显存门槛和超时需实际调参 |
-| 并发度 | `vision_concurrency=1` | 禁止一个视觉 worker 产生多个 GPU 并发任务 |
-| 响应要求 | **后台异步，允许长时间识别**；不承诺实时语音/视频回复 | 排队期间普通 QQ 文本和语音按策略延迟，不硬拼并发 |
-| 输出 | JSON，至少 `media_id,source_type,summary,objects,actions,ocr_text,emotion,timestamps,confidence` | 缺省字段显式为 null/空数组 |
+| 模型 | **活动 Qwen3.5-9B-Q8_0 + 匹配的视觉组件，单个主 llama-server:8080** | 组件来源、构建和兼容性须实际验证 |
+| QQ 静态图/表情 | 长边不超过 1024px；原图与文字直接推理 | 小字可用局部裁剪复核，计入图片预算 |
+| GIF/动图 | 默认 4 张、最多 8 张，保留时序与去重 | 按实测减少单批图片数 |
+| 短视频 | 每 2 秒一帧、每段最多 12 张预处理图片 | 超预算进一步拆批，逐段覆盖全部内容 |
+| 模型生命周期 | 正常图文请求共用常驻模型，不执行识图装卸 | 故障恢复沿用主服务机制 |
+| 请求并发 | 文字/图片共享 `max_inflight_requests=1` | 仅压力测试通过后调大，不自动推定可并发 |
+| 上下文 | 以当前 `configs/runtime/qwen3.yaml` 为准，目前 32768 | 文字、工具、视觉 token、输出和余量共同计入 |
+| 响应 | 单图走正常 QQ 回复；视频后台分段处理 | 在队列/请求截止时间内等待，不承诺实时视频 |
+| 分析输出 | JSON 至少含 `media_id,source_type,summary,objects,actions,ocr_text,emotion,timestamps,confidence,uncertainty` | 与普通角色回复分契约；缺省字段为 null/空数组 |
 
 ### 4.4.5 9800X3D + RTX 5080 16GB + 32GB RAM 的容量评估
 
-- **确认足够运行推荐的 Qwen3-VL-4B 单模型推理**，尤其优先 GGUF Q4_K_M。RTX 5080 的 16GB GDDR7、CUDA 12.0 能力来自 NVIDIA 官方规格：<https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/>。
-- Qwen 官方提供 4B 模型 GGUF `Q4_K_M` 权重与独立视觉 `mmproj`：<https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF>；支持通过 llama.cpp 多图推理：<https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md>。
-- **资源预估而非实测**：4B GGUF Q4 加上视觉编码器、上下文/图像缓存常见工作量可按约 **5–9GB** 做第一轮容量规划；4B BF16 全 GPU 推理可按约 **10–14GB** 规划，遇到多帧/高分辨率还可能超过；8B Q4 可列为后续质量对照，但**不作为首版必选或容量保证**。测试实际情况以 NVML 采集的峰值为准。
-- 9800X3D 足以承担下载、文件校验、CPU FFmpeg 抽帧、浏览器自动化和调度；32GB RAM 对这个**模型互斥、分时加载**方案总体可行，但 Windows + 浏览器 + 多进程缓存仍需至少预留若干 GB 空闲内存，并记录 RAM/分页峰值。
-- 高分辨率图片和一次送入过多视频帧会导致视觉 token 数、KV Cache 和内存急增，因此必须先缩放/限制多图批大小；即使 16GB VRAM 在理论上足够，也不能跳过压力测试。
+- 当前活动模型是 9B Q8_0，旧 4B Q4 视觉方案的 5–9GB 估算和“启动前空闲 12288MiB”门槛已失效。主模型常驻时，应测量增加视觉组件后的基线及每次图文推理的增量峰值。
+- 峰值由主权重、视觉编码器、32K 上下文缓存、图像分辨率/数量和其他服务占用共同决定；Q7按限定预算实测GPU总占用峰值13322MiB、最低空闲2656MiB，不代表任意多图输入都足够。
+- 先限制像素、帧数、上下文和并发，测量安全余量；若 Q8_0 加视觉组件仍无法满足预算，记录阻塞及可复现数据，再评估组件 CPU offload、上下文或量化调整，不静默更换当前主模型，也不回退到识图模型热切换。
+- 9800X3D 承担 CPU 抽帧/缩图/浏览器工作；32GB RAM 还需记录 Windows、浏览器、模型和缓存的峰值与分页情况。
 
-**设备级验收 Gate**：单图 20 次、静态表情 20 次、GIF 10 次、每个 6/12/24 帧档的视频各 5 次；`nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv` 和 `--query-gpu=memory.used,memory.free --format=csv`（Windows 设备的进程内存字段可能受 WDDM 限制，此时以项目 ProcessRegistry + 总显存增量交叉验证）记录启动/峰值/卸载/恢复状态；**任何视觉任务运行期间不得存在本项目其他 GPU 推理模型进程**；切换 30 次无 OOM，异常断电/崩溃模拟后可恢复 Qwen3 与语音服务。
+**设备级验收 Gate**：单图 20 次、表情 20 次、GIF 10 次、6/12 帧及累计 24 帧分段视频测试；另做 30 轮文字↔图片交替请求，核对主模型 PID 不变且无重复加载。通过 `nvidia-smi`/NVML 记录常驻基线、视觉增量峰值、延迟和请求等待时间；Windows WDDM 下按项目进程登记与总显存交叉验证。正常请求无 OOM，失败后文本/语音链路仍可使用，具体 Gate 见 Q7.4。
 
 ---
 
@@ -510,7 +516,7 @@ Date:   Mon Oct 26 09:35:51 2026 +0800
 ### 7.3 训练封装
 
 - 保留原 Qwen3 LoRA、GPT-SoVITS S1/S2 训练脚本与独立依赖安装；新建统一 `TrainingJobManager` 只管理**白名单预设命令**、进度、检查点、模型激活和回滚，不开放“在 QQ 中任意传命令训练”。
-- 不允许训练、QQ 生成与视觉识别同时抢 RTX 5080 16GB：任何由项目调度器启动的 GPU 训练都必须占有 Broker，**仅在训练到达安全检查点并暂停/退出后才能切到独占视觉模式**；视觉任务可以等待，不强杀训练进程。活跃聊天和训练调度由代码策略决定，训练需要明确操作员授权。
+- GPU 离线训练继续与在线推理受控互斥，训练需要明确操作员授权并保护安全检查点；图文请求同属主 Qwen3.5 在线推理，不为识图另建模型切换状态机。训练占用资源时请求按现有策略等待或报告不可用，不强杀训练进程。
 - 完成后只替换 `model_store/active` 对应 manifest，执行固定测试并通过后恢复服务；失败保持旧版本。
 
 **验收**：QQ 文本连 AstrBot 到 Qwen3；同一段文本只发生 1 次 LLM 回复推理；ASR/TTS 10 条成功；现有 Stage 5/6 与 Qwen3/GPT-SoVITS 训练 smoke test 不回退；断开 TTS 时可以退回纯文本。
@@ -560,15 +566,15 @@ Date:   Mon Oct 26 09:35:51 2026 +0800
 - 搜歌暂时性故障有限重试：同一任务最多尝试 3 次（首次 + 2 次），间隔 1、2 秒；仅超时、连接/响应中断及 429/500/502/503/504 类临时错误重试。明确无匹配、无可用音源、认证/权限、跳转、证书及格式错误直接返回；持久化次数与安全错误码，重启不重置预算，不因此重复合成或发送。
 - 翻唱路线：`AstrBot 歌曲意图/检索 → 人声分离 → external/Applio → model_store/registry/rvc/feiyu/v1/FeiyuVoice-RVC-v1.pth + FeiyuVoice-RVC-v1.index → 伴奏混音`。本机已有该 FeiyuVoice 包和独立 `envs/song`，但迁入 AstrBot 后仍需真实 QQ 端到端验收。`GPT-SoVITS bailu-v1` 只做角色说话音色。
 - RVC 权重的来源、哈希与许可记录见 `docs/qq_companion/stage14a.md`。若目标环境没有权重或音源许可，只交付“点歌 + 发链接 + 原唱播放/转发（有权限时）”，翻唱验收不通过。
-- GPU 策略：翻唱排队，单次同时一个任务；翻唱和视觉推理**都必须向 GPUResourceBroker 申请独占所有权**，两者不并发；翻唱不能在视觉识别过程中偷偷启动 RVC。缓存大音频设清理周期。
+- GPU 策略：翻唱继续沿用已交付的排队、互斥及必要的主模型卸载/恢复流程，单次同时一个任务。识图属于主 Qwen3.5 在线推理，翻唱占用资源期间同文字请求一起等待；不额外增加视觉模型切换。缓存大音频设清理周期。
 - 注意要做消息触发入口，写好提示词，让大模型提取唱歌意图，结构化输出唱歌意图结果，触发程序翻唱，AI先回复等等之类的话再去翻唱，翻唱完发给用户
 - 全过程不能破坏项目的AI的拟人特性，用户视角的流程为 用户发起有唱歌意图的对话-AI回复等等、等我一会之类的话-AI后台进行翻唱-翻唱完成直接发送结果-根据AI特性AI继续发消息类似唱得怎么样、唱得不好不要笑我之类的这个由大模型决定。
 
 ### 9.3 表情包
 
-- **识别**：普通 QQ 图片、静态表情包、GIF/动图抽样帧都送到 **Q7 相同的唯一 Qwen3-VL 模型实例**；输出“内容/情绪/画面文字/动作/不确定性”。调用前**必须完整执行 §4.4 的 GPU 独占状态机**，停止其他本项目 GPU 模型，允许异步等待较长时间；不能直接用还在运行的文本 Qwen3 或额外建一个视觉模型进程。
+- **识别**：普通 QQ 图片、静态表情包、GIF/动图抽样帧直接送到 **Q7 接通的常驻 Qwen3.5 多模态接口**，与用户文字和授权会话上下文一起推理。结构化分析按需输出内容/情绪/画面文字/动作/不确定性；执行 §4.4 的素材和请求预算检查，不停止主 LLM、不加载另一份视觉模型。
 - **发送**：首版建立本地授权表情素材库 `storage/.../stickers/`，按 `tags` 选 PNG/JPEG/GIF 作为普通 QQ 图片发送；文字表情包可用 Pillow 增添文字，并设置大小/裁剪检查。**不以 QQ 原生收藏表情为依赖**。
-- 图片理解依赖 Stage Q7 的统一视觉服务；**Q4 先交付已有表情图片发送，待 Q7 视觉独占 Gate 通过后，QQ 图片/表情识别自动解锁**；若视觉服务忙，保留任务、给出固定收到提示，待模型恢复正常后再按原会话回复。
+- 图片理解依赖 Stage Q7 的原生多模态接入；**Q4 已有表情图片发送继续可用，待 Q7 图文输入与容量 Gate 通过后启用图片/表情识别**。服务繁忙时进入共享请求队列，始终保留原会话和发送顺序。
 
 **验收**：输入语音/输出语音各 20 次；TTS 长段退回与错误兜底；点歌 10 次、错误歌曲 5 次；翻唱只有完整配置并成功实际合成 3 首完整测试歌曲才算交付，片段测试不替代整首验收；图片表情发送 20 次。按本次用户要求，涉及 QQ 发送的测试使用本地事件及模拟传输完成，不连接 QQ；本地通过不得记为真实 QQ 播放已验证。
 
@@ -632,43 +638,35 @@ curl -sS -X POST http://127.0.0.1:3000/get_cookies \
 
 **验收**：本次自身十条发布/查询/权限/删除已验证，测试内容不写上下文或记忆；好友阅读/评论/点赞各五次真实可见验收延后。连续七天实际运行待验；本地七天模拟仅验证配额和幂等。Cookie异常立即停止模块。
 
-## 12. Stage Q7 — **统一图片/表情包/视频关键帧视觉理解服务 + GPU 独占 Gate**（P1）
+## 12. Stage Q7 — **主 Qwen3.5 原生图片/表情包/视频关键帧理解**（P1）
 
-**目标**：使用**同一个 Qwen3-VL-4B-Instruct 视觉进程**识别 QQ 图片、静态/GIF 表情包和抖音短视频（先 FFmpeg 抽帧）。对图像的分析**宁可耗时，也不能与 Qwen3、GPT-SoVITS、SenseVoice GPU、RVC 等本项目模型并发运行**。
+**用户已定规则（2026-11-01）**：Q7 真实 QQ 收发测试仅使用好友 `1301049831`，允许收发测试素材，不扩大发送范围。图片、静态表情、GIF/动图和视频分别验收、分别启用；未通过的能力保持关闭，不阻塞已通过能力。视频每2秒抽1帧，每段约24秒且最多12帧；60秒视频覆盖0–24、24–48、48–60秒，分别12、12、6帧。每段预处理帧数与实际推理批次分开，超预算可进一步拆批，但不能遗漏时间区间。
 
-**模型与推理引擎最终首选**：
+**目标**：为已经激活的 `Qwen3.5-9B-Q8_0` 接通视觉组件、同次图文输入及 QQ 媒体透传；聊天与识图共享常驻 `llama-server:8080`。取消原独立视觉模型、专用 8081 端口和 GPU 视觉独占切换开发任务。
 
-- 模型：<https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF>，`Q4_K_M` + 官方该模型配套的 `mmproj`（不要错配其他视觉编码器文件）。
-- 引擎：<https://github.com/ggml-org/llama.cpp>，`libmtmd` 多图能力；用当前可验证版本的 `llama-server` 启动**专用端口 8081**。官方文档 <https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md>。
-- **仅在 Broker 已确认其他受管 GPU 模型进程退出、可用显存达标后，才允许启动**下面的命令（仅是启动示例，实际锁定 Git 版本并验证当前 CLI 选项）：
+**实现记录（2026-11-01）**：插件 `0.12.0` 接入配套视觉组件、原Agent图文输入、跨进程前台优先队列、结构化媒体分析、完整视频分段/ASR/缓存/恢复及可选8766接口。原创测试集图片20/20、静态表情20/20、GIF10/10、视频20/20通过，30轮图文交替保持同一主模型PID；语音服务常驻时无正常请求OOM。QQ闭环、故障证据、资源数值及适用边界见 `docs/qq_companion/acceptance.md` 和 `docs/qq_companion/q7.md`。
 
-```powershell
-# 该命令由 GPUResourceBroker 启动，不允许人工与 Qwen3 文本服务同时执行
-llama-server -hf Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 8081
-```
+### Q7.1 主模型多模态部署与 QQ 图片透传
 
-模型仓库自带视觉 projector 相关文件；`-hf` 自动选择支持的模型组件时仍需以实际构建与日志确认 `mmproj` 已正确加载。离线手动部署时使用对应的 `-m` 和 `--mmproj` 路径，不错配视觉编码器。
-- 精度备选：<https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct> BF16，需额外的隔离 Transformers 环境；首版**不同时部署第二个视觉推理模型**。
-- 视觉入口：新建 `services/vision_api/{app.py,model_worker.py,preprocess.py,schemas.py}`，只接受通过权限/下载/大小校验的本地素材 ID，不允许 QQ 用户传入任意本地系统路径。
+1. 核对当前 llama.cpp 构建对 Qwen3.5-9B 图文推理的实际支持，锁定可验证版本；以模型卡和多模态文档为准：<https://huggingface.co/Qwen/Qwen3.5-9B>、<https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md>。
+2. 取得与当前基座匹配的视觉编码器/投影 GGUF，登记下载/转换来源、哈希、版本与兼容性；扩展模型 registry/active manifest、运行配置、启动脚本和 Doctor，将该文件作为视觉能力必需组件验证。主模型量化与视觉组件精度无需同名，但基座/架构必须兼容并实测。
+3. 主 `llama-server:8080` 启动时一起加载主 GGUF 和 `--mmproj <已验证组件路径>`，后续文字/图片请求均复用该进程。部署接入可能需要一次正常服务重启，之后不随图片任务启停模型；不另启视觉 LLM 服务或 vision Transformers 环境。
+4. 先用一张有明确内容的真实测试图和文字问题验证 API 回答、服务日志和视觉组件加载，再验证多图；仅 `/health` 或 `/v1/models` 成功不能证明具备识图能力。
+5. 检查 AstrBot Provider 的图片能力设置、OneBot 图片下载/引用和请求构造，确保 `content` 中的文字与 `image_url` 图片块完整到达后端。普通图片问答直接在原 Agent 中生成回复，不能先把图片块丢掉只发送文件名或 `[图片]`。
+6. 打通 QQ 前台、可选 `vision_api`、视频后台，以及记忆提取/压缩、日记、Qzone 文案和歌曲通知等全部主模型调用的共享请求限流与预算检查；首版同时只执行一条主模型请求。图片 token 应按实际后端计数/已验证保守预算处理，不能用 base64 字符长度代替视觉 token。
 
-### Q7.1 先实现 GPUResourceBroker（必须先于视觉推理上线）
+### Q7.2 统一媒体预处理与分析契约
 
-1. 记录由本项目启动的模型进程、PID、健康检查 URL、启动/停止命令、活跃任务数；采用跨进程锁持久化状态，崩溃后可从日志重建。SnowLuma 与 AstrBot **继续常驻**，不能跟着关机。
-2. 实现 `acquire_vision_exclusive()` / `release_vision_exclusive()`；冻结 GPU 新任务、排空在途 QQ 文本/语音/唱歌操作；终止当前已空闲的推理服务并核查显存释放。训练作业无法安全暂停时，视觉任务进入等待。
-3. 使用 `nvidia-smi` 或 NVML 核查**本项目已无其他 GPU 模型进程运行**、`memory.free >= 12288 MiB`（初始值）；监测并记录视觉推理过程中剩余显存至少预留 `2048 MiB`，达不到则缩小图像/帧数或停止本次视觉任务。
-4. 启动 Qwen3-VL 唯一模型实例，检测多图 API 健康；任务完成/失败后**关闭并完全卸载模型进程**，恢复 Qwen3（8080）、GPT-SoVITS（9880 / wrapper 5002）、GPU SenseVoice 服务和其他之前实际运行的受管服务。
-5. 自动恢复失败时切到 `RECOVERING`，发出无需 GPU 的故障提示、记录审计和安全人工恢复指令。严禁在恢复失败时再启动另一个 VLM 进程。
+以下 `vision_api:8766` 接口为本项目待实现的可选封装，只处理素材、调用共享主模型和校验结果，不拥有模型进程。普通 QQ 图文问答可直接走 AstrBot Provider；仅需要缓存、结构化标签、视频摘要时使用分析接口，避免每张图都固定多做一次描述推理。
 
-### Q7.2 统一图片/表情包接口
-
-| 新建 API | 输入 | 预处理 | 输出 | 服务端实现 |
+| 新建 API | 输入 | 预处理 | 输出 | 模型调用 |
 |---|---|---|---|---|
-| `POST /v1/vision/analyze_image` | QQ 图片 ID/缓存路径 | Pillow 校验、旋转、最长边 1024px | 主题、对象、OCR、情绪、简述 | `analyze_frames([image])` |
-| `POST /v1/vision/analyze_sticker` | 静态表情包 | 与普通图相同，加入网络梗/表情风格指令 | 含义、氛围、文字、含糊度 | `analyze_frames([image])` |
-| `POST /v1/vision/analyze_gif` | QQ GIF/动画 | 抽样 4–8 帧、时间戳、差分去重 | 动作变化、表情含义 | `analyze_frames(frames)` |
-| `POST /v1/vision/analyze_video` | 已批准的视频素材 | FFmpeg 先按 2 秒/帧抽图、单片段 ≤12 帧 | 时间线、场景、动作、OCR、摘要 | **仍然调用同一个** `analyze_frames(frames)` |
+| `POST /v1/vision/analyze_image` | 已批准素材 ID + 问题 | Pillow 校验、旋转、最长边 1024px | 主题、对象、OCR、情绪、简述 | 主 Qwen3.5，文字 + 单图 |
+| `POST /v1/vision/analyze_sticker` | 静态表情包 ID + 问题 | 同普通图，加入表情含义指令 | 含义、氛围、文字、不确定性 | 同一主模型 |
+| `POST /v1/vision/analyze_gif` | 动画素材 ID | 默认 4 帧、最多 8 帧，时间戳与去重 | 动作变化、表情含义 | 同一主模型，预算内多图 |
+| `POST /v1/vision/analyze_video` | 已批准视频 ID | 每 2 秒/帧、每段预处理 ≤12 帧 | 时间线、动作、OCR、摘要 | 同一主模型，分段排队 |
 
-API 是**本项目待实现的约定**，不是 AstrBot 原有接口。所有调用首先入任务队列，由 Broker 统一切换至独占视觉模式。输出统一 Schema：
+素材 ID 由服务端解析为授权缓存路径，禁止 QQ 用户指定任意系统路径；图片由本地封装编码为 data URL，或使用经过域名/重定向校验的可达地址。统一结构化输出如下，必须做 Schema 校验；`confidence` 是模型自评，不视为统计校准概率。
 
 ```json
 {
@@ -685,33 +683,33 @@ API 是**本项目待实现的约定**，不是 AstrBot 原有接口。所有调
 }
 ```
 
-### Q7.3 抖音视频先抽帧、后调用同一图像模型
+### Q7.3 抖音视频抽帧后直接调用主模型
 
-1. 用户发来抖音链接 → `multi_parser` 提供规范化链接/作者/简介/可用媒体；失败可只提供链接和 metadata，不伪造已看过视频。
-2. 只下载有权限且技术可行的媒体，限制 180 秒/100MB、严格检查域名/重定向/私有 IP/文件类型；缓存是临时文件，默认 24 小时删除。
-3. **CPU 预处理**：使用 FFmpeg 按每 2 秒一张图抽帧，单段最多 12 张；一段不足 24 秒可以一次进 VLM，30–180 秒的视频切分多个片段逐次处理。每帧记录视频时间戳；必要时追加不同于固定间隔的关键帧、动态自适应采样。
-4. 把音轨独立转换为 16kHz WAV → **先使用 SenseVoice 转写**并保存文本；若走 GPU ASR，随后**必须停止/卸载 ASR**才能进入视觉阶段。也可以使用 CPU ASR 减少 GPU 切换。
-5. Broker 获取独占权 → 停掉 Qwen3/GPT-SoVITS/ASR/RVC 等 GPU 模型 → 载入 Qwen3-VL → 把每个片段的 **时间戳 + 图片 + 可选文字转写** 送入多图接口。汇总同一视频片段结果由 VLM 自己完成（不同时再起 Qwen3 文本模型）。
-6. 存储统一 `media_analysis` JSON 与检索记忆；用户聊天需要使用这些记忆时，VLM 必须已经卸载，Qwen3 已恢复；检索最多 3 条相关视频记忆，避免污染角色长期人格。
+1. 用户发来抖音链接 → 解析规范化链接/作者/简介/可用媒体；失败只保留链接和元数据，不伪造已看过视频。
+2. 只下载有权限且技术可行的媒体，限制 180 秒/100MB，校验域名/重定向/私有 IP/文件类型；临时缓存默认 24 小时删除。
+3. CPU FFmpeg 按完整时间轴分段抽帧，默认每 2 秒一张、每段预处理最多 12 张，保留绝对时间戳。实际单次输入受像素、视觉 token 和显存预算约束，可进一步拆批。
+4. 有需要时把音轨转成 16kHz WAV，使用 SenseVoice 取得带时间信息的转写；无音轨或 ASR 失败时注明仅分析画面。ASR 继续使用已有资源策略，不因后续识图停掉主 LLM。
+5. 每个片段将 **图片 + 时间戳 + 可选转写 + 分析要求** 在同次请求提交给主 Qwen3.5；后台低优先级逐段执行，片段之间处理前台 QQ 请求。跨段汇总仍调用同一个主模型，不切换或重载模型。
+6. 存储 `media_analysis` JSON 和经筛选的记忆；聊天按授权检索最多 3 条相关视频记忆。后台分析不写入用户聊天历史，不覆盖角色人格。
 
-**CPU FFmpeg 示例**：
+**CPU FFmpeg 示例（单片段）**：
 
 ```bash
-# 提取本视频片段的 12 张等间隔关键帧；长视频逐段运行此命令
 ffmpeg -i input.mp4 -vf fps=1/2 -frames:v 12 frames/%04d.jpg
-# 抽帧后用 Pillow 将每张图等比例缩放到最长边 <=1024 像素
+# 抽帧后用 Pillow 等比例缩放到最长边 <=1024 像素
 ffmpeg -i input.mp4 -vn -ac 1 -ar 16000 audio.wav
 ```
 
-> 注：`-frames:v 12` 是**单段推理的保守帧数**。要覆盖 180 秒视频，必须以 FFmpeg `-ss` / `-t` 对原视频按时间轴分段，再逐段抽帧和分析，不能只分析前 24 秒冒充“看完视频”。本例仅示意**一个片段**；正式程序负责时间戳、分段和 Pillow 缩图，并在目标 Windows 环境执行集成测试。
+> `-frames:v 12` 只覆盖示例片段，正式实现须用 `-ss` / `-t` 按时间轴遍历全部片段，并记录未覆盖/未识别的区间；不能以视频前 24 秒的结果冒充看完整段。
 
-### Q7.4 实验与验收（硬 Gate）
+### Q7.4 实验与验收（图文输入与容量 Gate）
 
-- 测试静态图片 20、表情包 20、GIF 10、授权视频 20；其中视频至少覆盖有声/无声/有字幕/快速动作，分别测试单段 6、12 帧及多段 24 帧累计情况。检查是否遗漏后半段内容、是否出现时序颠倒。
-- 30 次 `CHAT_READY → VISION_RUNNING → CHAT_READY` 循环，模型正常退出；**视觉运行时本项目其他 GPU 模型进程数为 0**；一次只加载一份 Qwen3-VL；`nvidia-smi`/NVML 记录加载、推理峰值、卸载、恢复后的显存。
-- 视觉过程中接收 QQ 文本/语音消息必须保留正确的会话与发送顺序，允许延迟或固定“正在识别”提示，不能偷跑 Qwen3 GPU 回复；识图完成后必须恢复完整聊天/语音能力。
-- 模拟 VLM 启动失败、OOM、视频损坏、重复入队、训练仍在运行、进程崩溃 6 类故障；要求绝不误杀正在训练而未存检查点的进程，不因识图失败长期影响正常 QQ。
-- **如无法确保显存独占与自动恢复，Q7 不准启用**，Q4 的表情识别及 Q8 的视频理解暂不可用；基础 QQ、文字、语音仍继续工作。
+- **输入真实性**：同一请求同时含文字与真实图片，模型可按文字问题辨别画面；覆盖换图同问、同图换问、多图比较及无图纯文字，日志证明图片块已传到后端，不以文件名或固定描述替代。
+- **单实例与生命周期**：30 轮文字↔图片交替请求，主服务 PID 不变、主权重与视觉组件只在服务启动时加载；无识图触发的主模型停止/恢复，无独立视觉 LLM 进程。
+- **质量与覆盖**：静态图片 20、表情 20、GIF 10、授权视频 20，覆盖有声/无声/字幕/快速动作；测试单段 6、12 帧和累计 24 帧分段输入，记录实际可用批次大小、时序、遗漏及不确定性。
+- **资源与前台可用性**：记录 Q8_0 加视觉组件的常驻/峰值显存、RAM、视觉 token、首 token 延迟及排队时间；验证文字/图片合计并发上限、前台优先和后台分段让出，不串用户或群聊；正常负载无 OOM，不套用旧“启动前空闲 12GB”的门槛。
+- **故障与回归**：覆盖缺失/错配视觉组件、损坏图片/视频、超预算、请求超时、重复入队、主服务故障及训练/翻唱占用资源；有限重试、队列可恢复、保护训练检查点。图片不可用时明确告知，普通文本、工具调用、语音和已完成阶段功能不回退。
+- **启用条件**：按图片、静态表情、GIF/动图、视频分别保存质量、容量和故障回归证据，通过对应 Gate 即可启用对应能力；普通图片通过不代表视频通过。Q8 仍须自身浏览器阶段验收，不随 Q7 视频 Gate 自动打开。未通过的能力保持关闭，不能仅按模型名称宣告识图已交付。
 
 ## 13. Stage Q8 — 自主刷抖音的受控浏览器 Worker（P2；最高风险模块）
 
@@ -730,8 +728,8 @@ python -m playwright install chromium
 
 1. **人工基线**：Windows 可视化浏览器登录普通抖音网页版，手工确认账号同意做有限度自动浏览；禁止使用别人的 Cookie。
 2. **单会话驱动**：Playwright 启动持久化上下文 `launch_persistent_context`；默认非 headless 以方便调试。浏览推荐流页面，优先读取可见的当前视频分享链接、标题及元素可访问性标签；站点更新时用小型页面适配器升级。
-3. **有界步骤**：对当前推荐项执行“读取 URL → 可访问性检测 → CPU 下载/抽帧/缓存 → 正常滑到下一条”；**先收集一批，再统一通过 Q7 的 GPU 独占模式分析，禁止每看一条就切换 Qwen3 与 Qwen3-VL**。严格限制视频数 15、总时长 20 分钟、单次操作超时，遇到重复视频跳过。
-4. **任务调度**：每天最多运行 1 次，默认人工触发直到稳定，随后可由 APScheduler 按固定窗口执行。优先完成已开始的 QQ 语音/聊天任务，随后按 Broker 独占协议进入视觉批处理；视觉期间 QQ 新消息排队，直到 VLM 完全卸载、原模型恢复后处理；**绝不在视觉独占期间并发加载其他 GPU 模型**。
+3. **有界步骤**：对当前推荐项执行“读取 URL → 可访问性检测 → CPU 下载/抽帧/缓存 → 正常滑到下一条”；**通过 Q7 共用常驻 Qwen3.5 按片段低优先级分析，前台请求可在片段之间优先执行，不启停识图模型**。严格限制视频数 15、总时长 20 分钟、单次操作超时，遇到重复视频跳过。
+4. **任务调度**：每天最多运行 1 次，默认人工触发直到稳定，随后可由 APScheduler 按固定窗口执行。文字、图片和视频分析共用主模型请求额度，QQ 前台优先于下一段后台视频；按截止时间和预算排队，不为整批视频长期阻塞聊天，不执行视觉模型卸载/恢复。
 5. **异常处理**：登录失效、验证码、反爬提示、权限失败、频繁解析错误时立即停止，存储错误码并通知管理员，绝不自动尝试绕过验证码/伪造设备指纹/暴力重试。
 6. **低价值过滤**：广告、重复内容、垃圾内容、明显虚假医疗/金融信息、低置信识别均不进入可回忆记忆；内容来源与链接保留。
 7. **收益反馈**：比较“有刷抖音前/后”的问答测试，确保更懂群友常分享的话题；同时评估角色风格是否偏移、是否出现无依据的记忆。
@@ -758,13 +756,12 @@ python -m playwright install chromium
 
 ## 15. Stage Q10 — 统一队列、观测、权限与安全测试（P0 横切，最终发布 Gate）
 
-**资源调度（必须沿用 Q7 已交付的 GPU 独占 Broker，而非到 Q10 才做）**：
+**请求队列与资源观测（Q7 接入，Q10 压力验证）**：
 
-- `GPUResourceBroker` 是 Q2 阶段提前搭建、Q7 视觉功能启用前完成的**唯一单 GPU 资源所有者**，托管 `llm_live`、`asr`、`tts`、`vision_batch`、`cover`、`training` 队列及全局互斥；不能只把它作为监控看板。
-- **视觉类是硬独占任务**：QQ 普通图片、表情包/GIF、抖音视频抽帧**同一份 Qwen3-VL-4B**；进入视觉前必须等待当前重任务结束、停止**本项目所有其他 GPU 模型进程并确认显存释放**；执行期间它们不能重新启动；视觉退出后按登记顺序自动恢复原 Qwen3、GPT-SoVITS、ASR 服务。
-- 训练若已经开始且不能安全暂停，**延迟视觉任务**，绝不暴力杀训练；视觉进行中到达的文字/语音 QQ 任务只排队或发送不依赖 GPU 的固定提示。用户已明确容忍视觉较长耗时，优先保证显存独占和任务结果一致性。
-- 初始 `free_vram>=12288MiB`、`vision_headroom>=2048MiB`，图片最大长边 1024px、单次视觉帧数≤12、并发数=1，所有阈值都以 RTX 5080 Windows 上实测调优；若无法满足，不要偷偷启用 CPU+GPU 混合并发或重新启动 Qwen3 占显存。
-- 连续 30 次切换无 OOM、无 GPU 多模型同时驻留、无 orphan process、无 QQ 会话串话；记录模型加载/卸载时间、峰值显存、消息等待时间以及 VLM 失败后的恢复能力。
+- 文字/图片/GIF/视频片段统一调用常驻 Qwen3.5:8080，首版共享并发上限为 1；前台优先、后台分段让出、去重、取消、超时和会话身份在所有入口一致生效。不再新增 `vision_batch` 独占 GPU owner 或识图模型切换状态机。
+- GPUResourceBroker/进程管理仅沿用既有翻唱与离线训练职责；翻唱需要卸载/恢复主模型时，图文在线请求一起等待。不能由本次计划推定已允许训练、翻唱与在线推理并发，训练不能无检查点强杀。
+- 记录主 GGUF + 视觉组件常驻基线、各类请求峰值、视觉 token、排队时间与失败码。图片长边 1024px、每段预处理帧数≤12、请求并发=1 均为初始上限，按 16GB 显存和 32K 上下文实测收紧。
+- 30 轮文字/图片交替无 OOM、无模型重复加载、无 QQ 会话串话；视频后台运行时前台能在片段之间得到服务。分别验证错误图片的任务隔离和主服务真实崩溃时的恢复，不用每次模型装卸代替故障处理。
 
 **安全防护**：
 
@@ -788,7 +785,7 @@ python -m playwright install chromium
 - [ ] ??? SenseVoice 与 GPT-SoVITS 通过独立媒体 API 完成语音输入/回复。
 - [ ] 点歌搜索与链接分享可用；AI 翻唱未配置时明确显示不可用，而非默默用 TTS 假装唱歌。
 - [ ] 定时日记每日恰好一条，公开/私人内容严格隔离，记忆检索有来源。
-- [ ] **同一实例 Qwen3-VL** 成功识别 QQ 普通图片、静态/GIF 表情包和视频抽帧；SenseVoice 音轨转写在 VLM 加载之前完成；GPU 视觉独占与原模型自动恢复 Gate 通过。
+- [ ] **同一常驻 Qwen3.5 实例** 完成 QQ 普通图片、静态/GIF 表情包和视频抽帧理解；文字与图片同次请求、多图预算和时序覆盖验证通过；30 轮图文交替不触发模型装卸，容量 Gate 通过。
 - [ ] SnowLuma 非官方 QQ 风控和数据使用风险在界面/README 说明清楚。
 - [ ] Qzone 必须有分能力 Gate 报告，只启用已验证能力；自身通过不代表好友互动通过。
 
@@ -797,7 +794,7 @@ python -m playwright install chromium
 - [ ] 自主浏览任务仅在允许状态下运行，有限次数与时长，失败立即停机。
 - [ ] 每条视频的结构化记忆可追溯、纠错、删除，不对外界资料盲目信任。
 - [ ] 定向分享仅对已同意的 QQ 好友，低频、去重、可关闭。
-- [ ] QQ 表情图片发送可用；识图可以异步耗时；视觉期间不启动 Qwen3/GPT-SoVITS/其他 GPU 模型；识别失败可以退回固定提示并恢复服务。
+- [ ] QQ 表情图片发送可用；后台视频分段让出前台请求；识图失败隔离到任务，主模型无需正常装卸，文本/语音及会话发送顺序回归通过。
 - [ ] 真实翻唱只有具备合法音源与音色权重、独立 RVC/SVC 后端后才宣告通过。
 
 ## 17. 阶段优先顺序、难度与依赖关系
@@ -806,13 +803,13 @@ python -m playwright install chromium
 |---|---|---:|---|---|---|
 | Q0 | Stage10 冻结、隔离、权限/许可 | 3 | 必须 | 无 | 可回归、可回滚 |
 | Q1 | SnowLuma + AstrBot QQ | 4 | 必须 | Q0 | 私聊/群聊收发 |
-| Q2 | 模型 API、Agent 单主控 + GPU Broker 最小管理层 | 7 | 必须 | Q0、Q1 | Qwen/ASR/TTS 通；模型可受控停启 |
+| Q2 | 模型 API、Agent 单主控与既有模型进程管理 | 7 | 必须 | Q0、Q1 | Qwen/ASR/TTS 通；沿用翻唱/训练资源管理 |
 | Q3 | 多人群聊与权限 | 6 | 必须 | Q1、Q2 | 不串话/不越权 |
-| Q4 | 语音、点歌、翻唱、表情发送 | 7 | 主功能 | Q2、Q3 | 语音闭环；图片表情识别待 Q7 独占 Gate 解锁 |
+| Q4 | 语音、点歌、翻唱、表情发送 | 7 | 主功能 | Q2、Q3 | 语音闭环；图片表情识别待 Q7 图文输入与容量 Gate 解锁 |
 | Q5 | 记忆、每日私密日记 | 6 | 必须 | Q2、Q3 | 持久日记与检索 |
 | Q6A | SnowLuma + Qzone 实测 Gate | 6 | 条件检测 | Q1 | 兼容性实证 |
 | Q6B | QQ 空间发帖/评论/点赞 | 7 | 只启用 Q6A 已验证能力 | Q5、Q6A | 自身已测；好友互动待实测 |
-| Q7 | **共享 Qwen3-VL 图像/表情/GIF/视频抽帧理解 + GPU 独占** | 8 | 重要增强 | Q2、Q4（接入表情识别） | 统一图片 JSON；30 次卸载恢复无并发/无 OOM |
+| Q7 | **主 Qwen3.5 原生图像/表情/GIF/视频抽帧理解** | 6 | 重要增强 | Q2、Q4（接入表情识别） | 同次图文输入；30 轮交替无模型装卸/无 OOM |
 | Q8 | 自主浏览抖音推荐流 | 9 | 辅助高风险 | Q7 | 15 条有界试运行 |
 | Q9 | 兴趣评分与 QQ 分享 | 6 | 辅助增强 | Q3、Q5、Q7、Q8 | 白名单内低频分享 |
 | Q10 | 稳定性、GPU、安全审计 | 8 | 横切必需 | 全部 | 回归/故障注入 |
@@ -824,7 +821,7 @@ python -m playwright install chromium
 Q0 → Q1 → Q2 → Q3 ─┬→ Q4（语音、歌曲、表情）
                     ├→ Q5（日记/记忆）──→ Q6B（仅 Q6A 通过）
                     ├→ Q6A（空间兼容性实验）
-                    └→ Q7（视频理解）→ Q8（刷抖音）→ Q9（定向分享）
+                    └→ Q7（主模型图文/视频理解）→ Q8（刷抖音）→ Q9（定向分享）
           全程贯穿 Q10 → Q11
 ```
 
@@ -832,14 +829,14 @@ Q0 → Q1 → Q2 → Q3 ─┬→ Q4（语音、歌曲、表情）
 
 - **MVP-A：QQ 角色聊天**：Q0–Q3；私聊、群聊、@、文本 + Agent 工具。
 - **MVP-B：QQ 角色生活**：在 A 基础上 Q4/Q5，日记、语音、点歌；空间按 Q6A 条件决策。
-- **MVP-C：统一视觉陪伴**：Q7 之后 QQ 图片和表情包使用同一 Qwen3-VL，并通过 FFmpeg 抽帧理解视频；**必须先让独占 GPU 的模型切换/自动恢复通过 Gate**；Q8–Q9 最后打开自主刷抖音与分享。
+- **MVP-C：统一视觉陪伴**：Q7 接通主 Qwen3.5 的图片/表情输入，并通过 FFmpeg 抽帧理解视频；**视觉组件、图文透传、共享队列和容量 Gate 通过后启用，无识图模型切换**；Q8–Q9 最后打开自主刷抖音与分享。
 
 ## 18. 未能被文档替代的实测事实（需由开发阶段确认）
 
 1. **Stage10 具体 Git SHA**：公开阶段说明与 `main` 不能唯一确定提交点；须由本地 Git 历史/差异核验后记录。
 2. **Qzone × SnowLuma 实机范围**：Cookie、自己列表/详情、十条发布/权限/删除已通过；好友阅读/评论/点赞未测，不宣称完整兼容，保持对应Gate关闭。
 3. **当前 Qwen3 GGUF 的 Function Calling 兼容**：须以现有 `llama-server` 版本和 chat template 实际进行工具调用测试。
-4. **当前 16GB GPU 下的 Qwen3-VL 独占运行**：推荐 GGUF Q4_K_M + mmproj；预计够用，但模型权重大小不等于峰值显存；必须实测 6/12/24 帧、GIF/表情包、模型切换 30 次与文本/语音恢复情况。**不允许同时驻留文本 Qwen3 等 GPU 模型。**
+4. **当前 16GB GPU 下的 Qwen3.5-9B-Q8_0 多模态容量**：Q7已完成匹配组件和固定构建的限定预算实测；保持长边1024、每请求最多4帧、主存prompt cache 512MiB及共享单并发。修改模型、组件、视觉提示词或预算后旧证据失效，须重验；容量不足先收紧预算。
 5. **抖音推荐流浏览的合法、稳定、可操作性**：项目不能保证站点登录/反自动化策略恒定允许；不可实施规避策略。若不具备稳定访问条件，只交付“分享链接分析 → 记忆”功能。
 6. **歌声权重、音乐音源与播放**：本机 FeiyuVoice-RVC-v1 权重及索引已通过 Q4 三首整首合成和哈希验证；按用户确认的范围使用 weapi 正常提供的完整可用音源，拒绝试听及获取失败，不实施绕过。迁入 AstrBot 的本地模拟发送已验收，真实 QQ 客户端播放按本次用户要求未测试。
 
@@ -848,17 +845,18 @@ Q0 → Q1 → Q2 → Q3 ─┬→ Q4（语音、歌曲、表情）
 ```
 start_all.ps1
   1) Doctor: Git base/config/FFmpeg/Ports/Python/Models/Account
-  2) Start GPUResourceBroker (模型进程登记/全局锁) → ??? llama-server 8080
+  2) 初始化既有模型进程管理/翻唱训练互斥 → Qwen3.5 llama-server 8080
+     Q7 启用后，同次启动加载主 GGUF 与匹配 mmproj，检查真实图文输入能力
   3) Start ??? GPT-SoVITS 9880 & wrapper 5002
   4) Start media_api 8765
-  5) [按需] Start vision_api 8766
+  5) [按需] Start 轻量 vision_api 8766（共用 8080，不启动独立视觉模型）
   6) Start AstrBot 独立环境 6185 + OneBot 6199
   7) 检查 SnowLuma 本机进程与反向 WS 已连接（不自动强制登录 QQ）
   8) 启动 Scheduler：日记；Qzone/Douyin 默认需 Gate 打开
   9) 打印服务健康状态与功能降级说明
 
 stop_all.ps1
-  1) 冻结新 QQ GPU 请求/定时任务，等待 GPU Broker 清空视觉或其他独占任务
+  1) 冻结新图文请求/定时任务，停止后台视频入队，等待在途请求及既有翻唱任务
   2) 等待队列按上限排空
   3) flush SQLite / journal / audit
   4) 结束视频/翻唱 worker
@@ -878,7 +876,8 @@ stop_all.ps1
 - SnowLuma `get_cookies`：<https://snowluma.github.io/en/docs/api/extended/get_cookies>
 - Zhalslar QQ 空间插件源码：<https://github.com/Zhalslar/astrbot_plugin_qzone>
 - 抖音等视频分享解析：<https://github.com/Qfxaile/astrbot_plugin_multi_parser>
-- Qwen3-VL（共用识图模型）：<https://github.com/QwenLM/Qwen3-VL>、<https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF>、<https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct>、<https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md>
+- Qwen3.5（聊天与识图共用）：<https://huggingface.co/Qwen/Qwen3.5-9B>、<https://huggingface.co/docs/transformers/en/model_doc/qwen3_5>
+- llama.cpp 图文部署与 mmproj：<https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md>
 - AI 翻唱插件：<https://github.com/sdfsfsk/matsuko_cover>
 - 浏览器 Playwright：<https://playwright.dev/python/>
 - FFmpeg：<https://ffmpeg.org/>
@@ -886,4 +885,4 @@ stop_all.ps1
 
 ---
 
-**文档状态**：以各阶段记录和 `docs/qq_companion/acceptance.md` 实证为准。Q4本机真实模型、整首翻唱与GPU恢复通过，QQ客户端播放未测；Q5本地验收完成；Q6开发及自身十条发布/权限/删除实测完成，好友互动和七天实际运行待验；Q7等视觉Gate与GPU峰值仍未验证。
+**文档状态**：以各阶段记录和 `docs/qq_companion/acceptance.md` 实证为准。Q4本机真实模型、整首翻唱与GPU恢复通过，QQ客户端播放未测；Q5本地验收完成；Q6开发及自身十条发布/权限/删除实测完成，好友互动和七天实际运行待验；2026-11-01 Q7主模型多模态实现及限定预算真实推理通过，QQ闭环结果单独记入验收记录；Q8/Q9保持后续阶段。

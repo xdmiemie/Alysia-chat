@@ -367,6 +367,25 @@ def test_post_agent_followup_is_sent_after_primary_and_stops_at_one(loop, tmp_pa
     loop.run_until_complete(check())
 
 
+def test_followup_pause_sends_full_sentence_and_history_matches_delivery_not_unused_tail(loop, tmp_path, monkeypatch):
+    monkeypatch.setattr("integrations.qq_astrbot.plugin.main.remaining_seconds", lambda *a, **kw: 0)
+    async def check():
+        value = await make_run(tmp_path, [candidate("primary")])
+        visible = "嗯…老大你发的是啥图呀？"
+        raw = followup(visible + "这是未发送的第二句话。")
+        value.provider.followup_outputs = [raw]
+        await deliver_primary(value)
+        assert [chain.get_plain_text() for chain in value.event.sent] == ["primary", visible]
+        assert assistant_texts(value.runner.run_context.messages) == ["primary", visible]
+        saved = json.loads(value.runner.run_context.messages[-1].content)
+        assert saved == {"follow_up": visible, "thinking_level": 1}
+        with value.store.connection() as db:
+            generated = json.loads(db.execute("SELECT payload FROM audit WHERE kind='followup_generated'").fetchone()[0])
+        assert generated["text"] == raw.completion_text
+        assert value.run.followups == 1
+    loop.run_until_complete(check())
+
+
 def test_followups_inherit_complete_system_and_refresh_state_without_stale_persona_snapshot(
         loop, tmp_path, monkeypatch):
     monkeypatch.setattr("integrations.qq_astrbot.plugin.main.remaining_seconds", lambda *args: 0)

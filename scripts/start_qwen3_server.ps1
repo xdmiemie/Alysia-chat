@@ -84,6 +84,15 @@ if (-not (Test-Path -LiteralPath $LlamaExecutable)) {
 $LlamaBinDir = Split-Path $LlamaExecutable -Parent
 $env:Path = "$LlamaBinDir;$env:Path"
 $ServerArgs = @("--model", $ModelPath) + @($RuntimeConfig.server_args)
+if ($Resolved.runtime.mmproj_file) {
+    $MmprojPath = Join-Path $ProjectRoot $Resolved.runtime.mmproj_file
+    if (-not (Test-Path -LiteralPath $MmprojPath)) { throw "Registered Qwen visual component is missing: $MmprojPath" }
+    if (-not $Resolved.runtime.mmproj_sha256 -or (Get-FileHash -LiteralPath $MmprojPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Resolved.runtime.mmproj_sha256) {
+        throw "Qwen visual component checksum mismatch. Run the Q7 installer/Doctor."
+    }
+    $ServerArgs += @("--mmproj", $MmprojPath)
+    if (-not $RuntimeConfig.mmproj_offload) { $ServerArgs += "--no-mmproj-offload" }
+}
 if ($LoraAdapter) {
     $ServerArgs += @("--lora", $LoraAdapter)
 }

@@ -18,6 +18,7 @@ def isolated_broker_state(tmp_path, monkeypatch):
     # Unit tests must never contend with the operator's running model stack.
     from scripts.qq_companion import gpu_broker
     monkeypatch.setattr(gpu_broker, "STATE", tmp_path / "broker")
+    monkeypatch.setenv("ASTRBOT_CHAT_STATE_DIR", str(tmp_path / "qq-state"))
 
 def route(app, path):
     return next(item.endpoint for item in app.routes if item.path == path)

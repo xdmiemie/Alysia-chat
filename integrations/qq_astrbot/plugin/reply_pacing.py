@@ -39,9 +39,10 @@ def parse_reply(raw: str) -> tuple[str, int, bool]:
     return reply, level, True
 
 
-def split_sentences(text: str) -> list[str]:
+def split_sentences(text: str, *, split_pauses: bool = True) -> list[str]:
     """Keep ending punctuation with each sentence; line breaks also separate."""
     parts: list[str] = []
+    endings = SENTENCE_END if split_pauses else frozenset("。！？!?.")
     start = 0
     index = 0
     while index < len(text):
@@ -55,7 +56,9 @@ def split_sentences(text: str) -> list[str]:
             continue
         decimal_point = (char == "." and index > 0 and index + 1 < len(text)
                          and text[index - 1].isdigit() and text[index + 1].isdigit())
-        if char in SENTENCE_END and not decimal_point:
+        ellipsis = (not split_pauses and char == "." and
+                    (index > 0 and text[index - 1] == "." or index + 1 < len(text) and text[index + 1] == "."))
+        if char in endings and not decimal_point and not ellipsis:
             index += 1
             while index < len(text) and text[index] in SENTENCE_END | SENTENCE_CLOSERS:
                 index += 1
@@ -69,6 +72,17 @@ def split_sentences(text: str) -> list[str]:
     if tail:
         parts.append(tail)
     return parts
+
+
+def text_reply_chains(text: str, *, group: bool):
+    """Shared foreground/background sentence grouping, retaining all content."""
+    from astrbot.core.message.components import Plain
+    from astrbot.core.message.message_event_result import MessageChain
+    sentences = split_sentences(text)
+    limit = 3 if group else 6
+    if len(sentences) > limit:
+        sentences = sentences[:limit - 1] + ["".join(sentences[limit - 1:])]
+    return [MessageChain(chain=[Plain(sentence)]) for sentence in sentences], sentences
 
 
 def parse_followup(raw: str, previous_reply: str) -> tuple[str | None, int, bool]:
@@ -86,11 +100,12 @@ def parse_followup(raw: str, previous_reply: str) -> tuple[str | None, int, bool
         return None, level, valid_level
     if not isinstance(text, str):
         return None, DEFAULT_LEVEL, False
-    sentences = split_sentences(text)
+    # Pauses can open a complete sentence; never deliver just its leading pause.
+    sentences = split_sentences(" ".join(text.splitlines()), split_pauses=False)
     if not sentences:
         return None, level, valid_level
     followup = sentences[0]
-    if len(followup) > 80 or followup in split_sentences(previous_reply):
+    if len(followup) > 80 or followup in split_sentences(" ".join(previous_reply.splitlines()), split_pauses=False):
         return None, level, valid_level
     return followup, level, valid_level
 

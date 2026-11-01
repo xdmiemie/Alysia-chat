@@ -20,7 +20,9 @@ PLUGIN_FILES = ("main.py", "guard.py", "reply_pacing.py", "message_router.py",
                 "media_state.py", "media_decision.py", "media_router.py", "agent_state.py",
                 "agent_runtime.py", "agent_tools.py", "reply_content.py", "request_provider.py", "model_debug.py", "context_budget.py", "song_tasks.py",
                 "memory_repository.py", "persistent_memory.py", "diary_jobs.py",
-                "qzone_client.py", "qzone_config.py", "qzone_store.py", "qzone_runtime.py", "_conf_schema.json", "metadata.yaml")
+                "qzone_client.py", "qzone_config.py", "qzone_store.py", "qzone_runtime.py",
+                "inference_queue.py", "vision_config.py", "vision_media.py", "vision_store.py", "vision_analysis.py",
+                "vision_client.py", "vision_runtime.py", "douyin_media.py", "_conf_schema.json", "metadata.yaml")
 
 
 def read_json(path: Path) -> dict:

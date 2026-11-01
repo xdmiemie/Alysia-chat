@@ -83,7 +83,18 @@ class RequestBudget:
     async def count(self, messages, tools=None):
         if not self.base:
             raise ContextCapacityError("local_token_counter_unavailable")
-        payload = {"messages": normalize_messages(messages, protocol=self.protocol),
+        normalized = normalize_messages(messages, protocol=self.protocol)
+        image_count = 0
+        for message in normalized:
+            content = message.get("content")
+            if isinstance(content, list):
+                image_count += sum(p.get("type") == "image_url" for p in content if isinstance(p, dict))
+                # /tokenize does not encode pixels. Count text with the real
+                # tokenizer and reserve a validated upper bound per image.
+                message["content"] = [p for p in content if not isinstance(p, dict) or p.get("type") != "image_url"]
+                if not message["content"]:
+                    message["content"] = " "
+        payload = {"messages": normalized,
                    "chat_template_kwargs": {"enable_thinking": self.enable_thinking}}
         if tools:
             payload["tools"] = tools.openai_schema()
@@ -104,7 +115,11 @@ class RequestBudget:
             return len(post("/tokenize", {"content": rendered, "add_special": False,
                                           "parse_special": True})["tokens"])
         try:
-            return await asyncio.to_thread(tokenize)
+            text_tokens = await asyncio.to_thread(tokenize)
+            if image_count:
+                from .vision_config import load_vision_config
+                return text_tokens + image_count * load_vision_config()["visual_tokens_per_image"]
+            return text_tokens
         except Exception as exc:
             raise ContextCapacityError("local_token_counter_failed") from exc
 

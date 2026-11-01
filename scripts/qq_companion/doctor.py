@@ -39,6 +39,27 @@ def main() -> int:
     all_ok &= check("SnowLuma QQ hook auto-load", runtime.get("hookAutoLoad") is True,
                     "normal startup must attach to the logged-in NTQQ process")
     all_ok &= check("FFmpeg", (ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe").exists())
+    active_path = ROOT / "model_store/active/qwen3.json"
+    if active_path.exists():
+        active = json.loads(active_path.read_text(encoding="utf-8-sig"))
+        visual = active.get("runtime", {}).get("mmproj_file")
+        if visual:
+            import hashlib
+            path = (ROOT / visual).resolve()
+            digest = hashlib.sha256()
+            if path.is_file():
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+                        digest.update(chunk)
+            all_ok &= check("Qwen visual component checksum", path.is_file() and
+                digest.hexdigest() == active["runtime"].get("mmproj_sha256"))
+        else:
+            check("Qwen visual component", False, "text remains available; run install_q7_vision.py for Q7")
+        sys.path.insert(0, str(ROOT))
+        from integrations.qq_astrbot.plugin.vision_config import VisionGates
+        gates = VisionGates()
+        for kind in ("image", "sticker", "gif", "video"):
+            check("Q7 " + kind, gates.enabled(kind), "independent evidence gate")
     selected = os.environ.get("QQ_COMPANION_SNOWLUMA_CONFIG")
     configs = [Path(selected).resolve()] if selected else list((SNOWLUMA / "config").glob("onebot_*.json"))
     if selected and (configs[0].parent != (SNOWLUMA / "config").resolve() or not configs[0].name.startswith("onebot_")):

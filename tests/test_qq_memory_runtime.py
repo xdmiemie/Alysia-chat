@@ -41,6 +41,13 @@ class Provider:
     async def text_chat(self, **kwargs):
         self.calls.append(kwargs)
         assert kwargs.get("func_tool") is None
+        if kwargs.get("response_format", {}).get("json_schema", {}).get("schema", {}).get("required") == ["decisions"]:
+            payload = json.loads(kwargs["contexts"][-1].content)
+            known = {r["fact_key"] for r in payload["known_facts"]}
+            value = {"decisions": [{"index": i, "supported": True, "durable": True,
+                "existing_key": f["key"] if f["key"] in known else None}
+                for i, f in enumerate(payload["candidates"])]}
+            return LLMResponse("assistant", completion_text=json.dumps(value, ensure_ascii=False))
         if self.outputs:
             value = self.outputs.pop(0)
             if isinstance(value, BaseException):
@@ -67,7 +74,8 @@ def request(scope="qq:999:dm:101", text="喜欢什么音乐"):
 
 
 def facts(summary="101喜欢周杰伦", **changes):
-    return {"facts": [{"key": "music_preference", "kind": "preference", "summary": summary, "tags": ["音乐"],
+    return {"facts": [{"key": "music_preference", "kind": "preference", "summary": summary,
+        "evidence": "喜欢音乐", "tags": ["音乐"],
         "salience": 0.9, "confidence": 0.95, "sensitive": False, "shared_topic": "music", **changes}]}
 
 
@@ -75,11 +83,11 @@ def test_automatic_extraction_sensitive_no_consent_and_readonly_provider(loop, t
     async def check():
         service = PersistentMemory(tmp_path, timezone_name="Asia/Hong_Kong")
         service.repository.enqueue("qq:999:dm:101", "101", "m1", "我的健康隐私", now=1000)
-        provider = Provider(facts("101的健康隐私", sensitive=True, shared_topic=None))
+        provider = Provider(facts("101的健康隐私", evidence="我的健康隐私", sensitive=True, shared_topic=None))
         assert await service.extract_one(provider)
         assert "健康隐私" in str(service.repository.retrieve("qq:999:dm:101", "隐私"))
         assert service.repository.retrieve("qq:999:group:201", "隐私") == []
-        assert len(provider.calls) == 1 and provider.calls[0]["func_tool"] is None
+        assert len(provider.calls) == 2 and all(c["func_tool"] is None for c in provider.calls)
     loop.run_until_complete(check())
 
 
@@ -125,13 +133,14 @@ def test_overflow_compresses_once_reuses_cache_and_keeps_original_facts(loop, tm
 def test_failed_compaction_keeps_whole_facts_and_forged_tools_are_never_executed(loop, tmp_path):
     async def check():
         service = PersistentMemory(tmp_path, timezone_name="UTC")
+        summaries = {f"偏好{i}" * 100 for i in range(8)}
         for i in range(8):
-            remember(service.repository, ref=f"m{i}", key=f"k{i}", summary="偏好" * 100, sensitive=True, now=1000 + i)
+            remember(service.repository, ref=f"m{i}", key=f"k{i}", summary=f"偏好{i}" * 100, sensitive=True, now=1000 + i)
         provider = Provider(LLMResponse("tool", tools_call_name=["weapi"], tools_call_args=[{}]))
         prepared = await service.prepare(request(), provider, "qq:999:dm:101")
         data = json.loads(text_payload(prepared[-1])[0])["relevant_memories"]
         assert data and all(row["source_type"] != "compressed_memory" for row in data)
-        assert all(row["summary"] == "偏好" * 100 for row in data)
+        assert all(row["summary"] in summaries for row in data)
         assert len(provider.calls) == 1
     loop.run_until_complete(check())
 

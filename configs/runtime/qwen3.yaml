@@ -5,6 +5,12 @@ model_manifest: model_store/active/qwen3.json
 # Shared by llama.cpp, AstrBot provider generation, and local model probes.
 context_size: 32768
 gpu_layers: 99
+mmproj_offload: true
+# Qwen3.5 visual detail floor and the per-image bound used by Q7 budgeting.
+image_min_tokens: 1024
+image_max_tokens: 4096
+# The backend defaults to 8 GiB of host prompt cache; bound it on this 32 GiB PC.
+prompt_cache_mib: 512
 # Server arguments also disable automatic fit and enable flash attention:
 # keep the configured GPU placement/context instead of silently downsizing.
 cache_type_k: q8_0

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from integrations.qq_astrbot.plugin.reply_pacing import (
     DEFAULT_LEVEL,
     THINKING_SECONDS,
@@ -47,6 +51,17 @@ def test_second_inference_decision_is_nullable_and_one_sentence_only():
         "你呢，睡得好吗？", 2, True)
     assert parse_followup('{"follow_up":"睡得很香","thinking_level":2}', "睡得很香") == (None, 2, True)
     assert parse_followup("你呢？", "睡得很香") == (None, DEFAULT_LEVEL, False)
+
+
+@pytest.mark.parametrize("prefix", ["嗯…", "嗯...", "嘿嘿~", "唔……\n"])
+def test_followup_pause_keeps_the_complete_question_and_checks_the_complete_length(prefix):
+    text = prefix + "老大你发的是啥图呀？"
+    raw = json.dumps({"follow_up": text + "还有第二句话。", "thinking_level": 2})
+    expected = " ".join(text.splitlines())
+    assert parse_followup(raw, "已经回答。") == (expected, 2, True)
+    assert parse_followup(raw, expected) == (None, 2, True)
+    long = json.dumps({"follow_up": prefix + "x" * 81, "thinking_level": 2})
+    assert parse_followup(long, "") == (None, 2, True)
 
 
 def test_first_sentence_delay_excludes_later_sentences():

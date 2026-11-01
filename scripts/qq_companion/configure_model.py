@@ -97,8 +97,11 @@ def configure(astrbot: dict, model_id: str, character_id: str, *, model_config: 
               "timeout": 150, "proxy": "", "custom_headers": {}}
     astrbot["provider_sources"] = [s for s in sources if s.get("id") != source_id] + [source]
     providers = [p for p in astrbot.get("provider", []) if p.get("id") != PROVIDER_ID]
+    from integrations.qq_astrbot.plugin.vision_config import VisionGates
+    gates = VisionGates()
+    images_enabled = any(gates.enabled(kind) for kind in ("image", "sticker", "gif"))
     providers.append({"id": PROVIDER_ID, "provider_source_id": source_id, "enable": True,
-                      "modalities": ["text", "tool_use"], "model": model_id,
+                      "modalities": ["text", "tool_use"] + (["image"] if images_enabled else []), "model": model_id,
                       "prompt_profile": prompt_profile,
                       "max_context_tokens": model_config.context_size,
                       "context_margin_tokens": model_config.context_margin_tokens,

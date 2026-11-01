@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import psutil
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "external/AstrBot")]
@@ -63,6 +64,8 @@ class Monitor:
                         creationflags=subprocess.CREATE_NO_WINDOW).strip().splitlines()[0]
                     total, used, free = [int(value.strip()) for value in gpu.split(",")]
                     row = {"time": time.time(), "phase": self.phase, "model_pid": self.model_pid,
+                        "ram_used_bytes": psutil.virtual_memory().used,
+                        "model_rss_bytes": psutil.Process(self.model_pid).memory_info().rss if self.model_pid and psutil.pid_exists(self.model_pid) else None,
                         "gpu_total_mib": total, "gpu_used_mib": used, "gpu_free_mib": free,
                         "owned_processes": owned, "model": readings.get(self.model_pid)}
                     self.samples.append(row)
@@ -80,6 +83,8 @@ class Monitor:
         if self.errors or not samples:
             raise RuntimeError(f"Missing GPU memory telemetry: {self.errors}")
         return {"samples": len(samples), "peak_gpu_used_mib": max(r["gpu_used_mib"] for r in samples),
+            "peak_ram_used_mib": round(max(r["ram_used_bytes"] for r in samples) / 2**20, 3),
+            "peak_model_rss_mib": round(max(r["model_rss_bytes"] or 0 for r in samples) / 2**20, 3),
             "min_gpu_free_mib": min(r["gpu_free_mib"] for r in samples),
             "peak_model_dedicated_mib": round(max(r["model"]["dedicated_bytes"] for r in samples) / 2**20, 3),
             "peak_model_shared_mib": round(max(r["model"]["shared_bytes"] for r in samples) / 2**20, 3),
@@ -216,6 +221,10 @@ def run(args):
                 "--jinja", "--slots", "--verbosity", "5"] + load_qwen3_config().server_args(port=18080)
             if entry.lora_adapter:
                 argv += ["--lora", str(entry.lora_adapter)]
+            if entry.mmproj_file:
+                argv += ["--mmproj", str(entry.mmproj_file)]
+                if not load_qwen3_config().mmproj_offload:
+                    argv.append("--no-mmproj-offload")
             model = start(prefix, argv)
             monitor.model_pid = model.process.pid
             row = {"model_id": model_id, "prompt_profile": entry.prompt_profile, "pid": model.process.pid,

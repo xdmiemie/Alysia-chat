@@ -11,7 +11,7 @@ from copy import copy, deepcopy
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 
 from .model_debug import debug_client
-from .model_messages import normalize_messages, protocol_prompt
+from .model_messages import normalize_messages, protocol_prompt, separate_image_parts
 
 
 REQUEST_OPTIONS = frozenset({"response_format", "max_tokens", "temperature", "top_p",
@@ -19,7 +19,7 @@ REQUEST_OPTIONS = frozenset({"response_format", "max_tokens", "temperature", "to
 
 
 PHASE_DEFAULTS = {"agent": True, "selection": True, "followup": False,
-                  "music_result": False, "compression": False, "memory": False}
+                  "music_result": False, "compression": False, "memory": False, "vision": False}
 
 
 def request_config(provider, phase=None):
@@ -57,6 +57,11 @@ async def request_chat(provider, *, phase=None, **kwargs):
     kwargs["contexts"] = normalize_messages(kwargs.get("contexts") or [],
         system_prompt=kwargs.pop("system_prompt", None), protocol=protocol_prompt(config))
     view = copy(provider)
+    async def assemble_context(*args, **options):
+        record = await provider.assemble_context(*args, **options)
+        record["content"] = separate_image_parts(record.get("content"))
+        return record
+    view.assemble_context = assemble_context
     extra = config["custom_extra_body"]
     for name in REQUEST_OPTIONS:
         if name not in kwargs:
@@ -68,6 +73,19 @@ async def request_chat(provider, *, phase=None, **kwargs):
     view.provider_config = {**config, "custom_extra_body": extra}
     view.client = debug_client(provider.client, phase=phase,
         provider_id=config.get("id"), session_id=kwargs.get("session_id"))
+    if config.get("id") == "astrbot_chat_qwen3" or config.get("inference_queue"):
+        from .inference_queue import InferenceQueue
+        priority = kwargs.pop("queue_priority", 10 if phase in {"memory", "vision"} else 0)
+        request_id = kwargs.pop("request_id", None)
+        timeout = kwargs.pop("queue_timeout", 180)
+        images = len(kwargs.get("image_urls") or [])
+        for message in kwargs.get("contexts") or []:
+            content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+            if isinstance(content, list):
+                images += sum(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
+        async with InferenceQueue().admission(request_id=request_id, priority=priority, phase=phase or "agent",
+                scope=kwargs.get("session_id") or "", timeout=timeout, images=images):
+            return await view.text_chat(**kwargs)
     return await view.text_chat(**kwargs)
 
 

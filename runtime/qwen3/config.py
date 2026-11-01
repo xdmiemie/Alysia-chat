@@ -18,6 +18,10 @@ class Qwen3Config:
     gpu_layers: int = 99
     cache_type_k: str = "q8_0"
     cache_type_v: str = "q8_0"
+    mmproj_offload: bool = True
+    image_min_tokens: int = 1024
+    image_max_tokens: int = 4096
+    prompt_cache_mib: int = 512
     enable_thinking: bool = True
     thinking_agent: bool = True
     thinking_selection: bool = True
@@ -41,6 +45,10 @@ class Qwen3Config:
     examples_path: Path = Path("configs/characters/elysia/examples.jsonl")
 
     def __post_init__(self):
+        if not 1 <= self.image_min_tokens <= self.image_max_tokens <= 4096:
+            raise ValueError("invalid visual token bounds")
+        if not 0 <= self.prompt_cache_mib <= 2048:
+            raise ValueError("invalid host prompt cache bound")
         if self.max_tokens <= 0 or self.context_margin_tokens < 0 or self.context_size <= self.max_tokens + self.context_margin_tokens:
             raise ValueError("context_size must leave space for input, output and context margin")
         if not 0 <= self.reasoning_budget_tokens <= self.max_tokens:
@@ -53,7 +61,9 @@ class Qwen3Config:
         return ["--host", self.host, "--port", str(self.port if port is None else port),
                 "--ctx-size", str(self.context_size), "--n-gpu-layers", str(self.gpu_layers),
                 "--cache-type-k", self.cache_type_k, "--cache-type-v", self.cache_type_v,
-                "--fit", "off", "--flash-attn", "on",
+                "--fit", "off", "--flash-attn", "on", "--parallel", "1",
+                "--image-min-tokens", str(self.image_min_tokens), "--image-max-tokens", str(self.image_max_tokens),
+                "--cache-ram", str(self.prompt_cache_mib),
                 "--reasoning", "on" if self.enable_thinking else "off",
                 "--reasoning-format", self.reasoning_format,
                 "--reasoning-budget", str(self.reasoning_budget_tokens),
@@ -86,6 +96,10 @@ def load_qwen3_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Qwen3Config:
         gpu_layers=int(raw.get("gpu_layers", Qwen3Config.gpu_layers)),
         cache_type_k=str(raw.get("cache_type_k", Qwen3Config.cache_type_k)),
         cache_type_v=str(raw.get("cache_type_v", Qwen3Config.cache_type_v)),
+        mmproj_offload=bool(raw.get("mmproj_offload", Qwen3Config.mmproj_offload)),
+        image_min_tokens=int(raw.get("image_min_tokens", Qwen3Config.image_min_tokens)),
+        image_max_tokens=int(raw.get("image_max_tokens", Qwen3Config.image_max_tokens)),
+        prompt_cache_mib=int(raw.get("prompt_cache_mib", Qwen3Config.prompt_cache_mib)),
         enable_thinking=bool(raw.get("enable_thinking", Qwen3Config.enable_thinking)),
         **{"thinking_" + phase: bool(raw.get("thinking_" + phase, getattr(Qwen3Config, "thinking_" + phase)))
            for phase in ("agent", "selection", "followup", "music_result", "compression")},

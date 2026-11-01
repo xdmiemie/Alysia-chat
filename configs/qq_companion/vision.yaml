@@ -1,0 +1,32 @@
+# Q7: one resident Qwen3.5 + mmproj; each capability also needs local evidence.
+enabled: true
+max_image_long_edge: 1024
+max_image_pixels: 20000000
+max_image_bytes: 20971520
+max_video_bytes: 104857600
+max_video_seconds: 180
+frame_interval_seconds: 2
+segment_seconds: 24
+max_frames_per_segment: 12
+# Inference batches may be smaller than the 12 preprocessed frames per segment.
+max_frames_per_request: 4
+visual_tokens_per_image: 4096
+gif_frames: 4
+gif_max_frames: 8
+media_question_window_seconds: 60
+cache_ttl_seconds: 86400
+request_timeout_seconds: 90
+queue_timeout_seconds: 180
+video_job_timeout_seconds: 1200
+max_attempts: 3
+asr_enabled: true
+allowed_media_domains:
+  - qq.com
+  - multimedia.nt.qq.com.cn
+  - qpic.cn
+  - gtimg.cn
+  - douyinvod.com
+  - byteimg.com
+  - douyin.com
+  - iesdouyin.com
+  - douyinpic.com

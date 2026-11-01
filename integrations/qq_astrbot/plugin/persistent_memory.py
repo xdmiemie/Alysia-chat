@@ -19,13 +19,21 @@ FACT_SCHEMA = {"type": "object", "properties": {"facts": {"type": "array", "maxI
         "key": {"type": "string", "maxLength": 80},
         "kind": {"type": "string", "enum": ["preference", "fact", "event"]},
         "summary": {"type": "string", "maxLength": 400},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 600},
         "tags": {"type": "array", "items": {"type": "string", "maxLength": 32}, "maxItems": 8},
         "salience": {"type": "number", "minimum": 0, "maximum": 1},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "sensitive": {"type": "boolean"},
         "shared_topic": {"type": ["string", "null"], "enum": [*TOPICS, None]},
-    }, "required": ["key", "kind", "summary", "tags", "salience", "confidence", "sensitive", "shared_topic"],
+    }, "required": ["key", "kind", "summary", "evidence", "tags", "salience", "confidence", "sensitive", "shared_topic"],
         "additionalProperties": False}}}, "required": ["facts"], "additionalProperties": False}
+VERIFY_SCHEMA = {"type": "object", "properties": {"decisions": {"type": "array", "maxItems": 8,
+    "items": {"type": "object", "properties": {
+        "index": {"type": "integer", "minimum": 0, "maximum": 7},
+        "supported": {"type": "boolean"}, "durable": {"type": "boolean"},
+        "existing_key": {"type": ["string", "null"]},
+    }, "required": ["index", "supported", "durable", "existing_key"], "additionalProperties": False}}},
+    "required": ["decisions"], "additionalProperties": False}
 COMPACT_SCHEMA = {"type": "object", "properties": {"summary": {"type": "string"}},
                   "required": ["summary"], "additionalProperties": False}
 DIARY_SCHEMA = {"type": "object", "properties": {"draft": {"type": "string", "minLength": 200, "maxLength": 400}},
@@ -195,8 +203,35 @@ class PersistentMemory:
                 "known_facts": self.repository.known(source["owner_key"], source["sender_key"], self.character)}
             value = await self._utility(provider, load_prompts()["memory_extract"], payload, FACT_SCHEMA)
             facts = [f for f in value["facts"] if f["confidence"] >= 0.65 and f["summary"].strip()
+                     and f["evidence"].strip() and f["evidence"].strip() in text
                      and re.fullmatch(r"[\w.-]{1,80}", f["key"]) and data_safe(f["summary"])
                      and all(data_safe(tag) for tag in f["tags"])]
+            if facts:
+                # A second, independent task checks meaning and permanence. An
+                # exact quote alone cannot detect a reversed subject or invented cause.
+                review = await self._utility(provider, load_prompts()["memory_verify"],
+                    {**payload, "candidates": facts}, VERIFY_SCHEMA)
+                decisions = review["decisions"]
+                if (len(decisions) != len(facts)
+                        or {d["index"] for d in decisions} != set(range(len(facts)))):
+                    raise ValueError("memory_incomplete_verification")
+                known_keys = {r["fact_key"] for r in payload["known_facts"]}
+                accepted = []
+                for decision in decisions:
+                    if not decision["supported"] or not decision["durable"]:
+                        continue
+                    fact = dict(facts[decision["index"]])
+                    existing = decision["existing_key"]
+                    if existing is not None:
+                        if existing not in known_keys or ":" in existing:
+                            raise ValueError("memory_invalid_existing_key")
+                        fact["key"] = existing
+                    elif fact["key"] in known_keys:
+                        # Do not overwrite an unrelated known property just
+                        # because extraction reused its name.
+                        continue
+                    accepted.append(fact)
+                facts = accepted
             topics = json.loads(load_prompts()["memory_shared_topics"])
             self.repository.save_extraction(source, facts, topics)
             return True

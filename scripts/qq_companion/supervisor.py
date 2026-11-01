@@ -191,7 +191,7 @@ def preflight(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> Non
         if port_open(port):
             raise RuntimeError(f"Port {port} is already occupied; stop the existing service first")
     if not no_models:
-        for port in (8080, 5001, 8765):
+        for port in (8080, 5001, 8765) + ((8766,) if os.environ.get("QQ_COMPANION_VISION_API") == "1" else ()):
             if port_open(port):
                 raise RuntimeError(f"Port {port} is already occupied; model/media service would not be owned by this supervisor")
         manifest = json.loads((ROOT / "model_store" / "active" / "qwen3.json").read_text(encoding="utf-8"))
@@ -203,11 +203,20 @@ def preflight(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> Non
                 raise RuntimeError(f"Port {port} is already occupied")
 
 
-def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
+def run(no_models: bool, with_tts: bool, *, local_q4: bool = False, q7_acceptance: bool = False) -> None:
     global STATE, REGISTRY, STOP_FLAG, LOGS
     if local_q4:
         STATE = ROOT / "storage/temporary/q4-stack-acceptance"
         REGISTRY, STOP_FLAG, LOGS = STATE / "supervisor.json", STATE / "stop.requested", STATE / "logs"
+    if q7_acceptance:
+        import shutil
+        STATE = ROOT / "storage/temporary/q7-live-acceptance"
+        REGISTRY, STOP_FLAG, LOGS = STATE / "supervisor.json", STATE / "stop.requested", STATE / "logs"
+        STATE.mkdir(parents=True, exist_ok=True)
+        gates = ROOT / "storage/qq_companion/vision_gates.json"
+        if gates.exists():
+            shutil.copy2(gates, STATE / gates.name)
+        os.environ["QQ_COMPANION_TEST_PEER"] = "1301049831"
     preflight(no_models, with_tts, local_q4=local_q4)
     configure_args = [str(MODEL_PYTHON), str(ROOT / "scripts" / "qq_companion" / "configure.py"), "--apply"]
     snow_config = os.environ.get("QQ_COMPANION_SNOWLUMA_CONFIG")
@@ -315,6 +324,13 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
             media_env["ASTRBOT_CHAT_STATE_DIR"] = str(STATE)
             start_service("media_api", [str(MODEL_PYTHON), "-m", "uvicorn", "services.media_api.app:app",
                                         "--host", "127.0.0.1", "--port", "8765"], ROOT, 8765, 30, media_env)
+            if os.environ.get("QQ_COMPANION_VISION_API") == "1":
+                vision_token = STATE / "vision_token"
+                if not vision_token.exists():
+                    vision_token.write_text(secrets.token_urlsafe(32), encoding="ascii")
+                vision_env = {**media_env, "QQ_COMPANION_VISION_TOKEN": vision_token.read_text(encoding="ascii").strip()}
+                start_service("vision_api", [str(ASTRBOT_PYTHON), "-m", "uvicorn", "services.vision_api.app:app",
+                    "--host", "127.0.0.1", "--port", "8766"], ROOT, 8766, 30, vision_env)
             from scripts.qq_companion.cover_dispatcher import CoverDispatcher
             from services.media_api.songs import cleanup
             from scripts.qq_companion.init_stickers import initialize
@@ -382,7 +398,7 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> None:
                 if not psutil.pid_exists(entry["pid"]):
                     stop_entry(entry)  # Also closes any surviving grandchildren.
                     name = entry["name"]
-                    optional = name in ("gpt_sovits", "tts_wrapper", "sensevoice", "media_api")
+                    optional = name in ("gpt_sovits", "tts_wrapper", "sensevoice", "media_api", "vision_api")
                     if name not in ("astrbot", "snowluma") and not optional:
                         raise RuntimeError(f"Managed service {name} exited; see ignored logs")
                     now = time.monotonic()
@@ -435,8 +451,13 @@ def main() -> int:
     parser.add_argument("--with-tts", action="store_true", help="Also start existing GPT-SoVITS and wrapper")
     parser.add_argument("--without-tts", action="store_true", help="Explicit text-only degradation; Q4 normally starts TTS")
     parser.add_argument("--local-q4-acceptance", action="store_true", help="Model/media acceptance only; never starts QQ components")
+    parser.add_argument("--q7-acceptance", action="store_true", help="Isolated media test state; only friend 1301049831, no diary/Qzone")
     args = parser.parse_args()
     if args.stop:
+        if args.q7_acceptance:
+            global STATE, REGISTRY, STOP_FLAG, LOGS
+            STATE = ROOT / "storage/temporary/q7-live-acceptance"
+            REGISTRY, STOP_FLAG, LOGS = STATE / "supervisor.json", STATE / "stop.requested", STATE / "logs"
         ignore_interrupts()
         stop_recorded()
         return 0
@@ -448,7 +469,10 @@ def main() -> int:
         if args.local_q4_acceptance and (args.no_models or args.without_tts):
             parser.error("Local Q4 acceptance requires model and TTS services")
         with shutdown_signals():
-            run(args.no_models, not args.no_models and not args.without_tts, local_q4=args.local_q4_acceptance)
+            if args.q7_acceptance and args.local_q4_acceptance:
+                parser.error("Q7 and local Q4 acceptance modes cannot be combined")
+            run(args.no_models, not args.no_models and not args.without_tts,
+                local_q4=args.local_q4_acceptance, q7_acceptance=args.q7_acceptance)
     except KeyboardInterrupt:
         pass
     except RuntimeError as exc:

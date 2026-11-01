@@ -6,6 +6,20 @@ from copy import deepcopy
 from .prompt_loader import load_prompts
 
 
+def separate_image_parts(content):
+    """Prevent llama.cpp from treating adjacent images as merged video frames."""
+    if not isinstance(content, list):
+        return content
+    parts, index = [], 0
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            if parts and isinstance(parts[-1], dict) and parts[-1].get("type") == "image_url":
+                parts.append({"type": "text", "text": '{"image_index":' + str(index) + '}'})
+            index += 1
+        parts.append(part)
+    return parts
+
+
 def protocol_prompt(config):
     profile = config.get("prompt_profile")
     return load_prompts(profile=profile)["model_protocol"] if profile else ""
@@ -22,6 +36,8 @@ def normalize_messages(messages, *, system_prompt=None, protocol=""):
     dialogue = []
     for original in messages:
         message = deepcopy(original.model_dump() if hasattr(original, "model_dump") else original)
+        if "content" in message:
+            message["content"] = separate_image_parts(message["content"])
         if message.get("role") == "assistant" and isinstance(message.get("content"), list):
             parts = message["content"]
             thoughts = [part.get("think", "") for part in parts if part.get("type") == "think"]

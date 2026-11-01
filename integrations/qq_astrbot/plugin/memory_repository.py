@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+import unicodedata
 
 
 def identity(*parts) -> str:
@@ -28,6 +29,12 @@ def shared_owner(bot: str, character: str) -> str:
     if not re.fullmatch(r"[0-9]{1,20}", bot):
         raise ValueError("Invalid bot identity")
     return f"qq:{bot}:shared:{character}"
+
+
+def summary_identity(text: str) -> str:
+    """Ignore typography, retaining words, negation, numbers and word boundaries."""
+    text = unicodedata.normalize("NFKC", text).casefold()
+    return " ".join(text.split()).rstrip("。.!！?？")
 
 
 def search_terms(text: str) -> list[str]:
@@ -73,6 +80,11 @@ class MemoryRepository:
                 CREATE TABLE IF NOT EXISTS memory_links (
                   child_id TEXT NOT NULL, parent_id TEXT NOT NULL, PRIMARY KEY(child_id,parent_id)
                 );
+                CREATE TABLE IF NOT EXISTS memory_evidence (
+                  memory_id TEXT NOT NULL, source_ref TEXT NOT NULL, evidence TEXT NOT NULL,
+                  created_at REAL NOT NULL, PRIMARY KEY(memory_id,source_ref)
+                );
+                CREATE INDEX IF NOT EXISTS memory_evidence_time ON memory_evidence(memory_id,created_at);
                 CREATE TABLE IF NOT EXISTS memory_inbox (
                   id TEXT PRIMARY KEY, character_id TEXT NOT NULL, owner_key TEXT NOT NULL,
                   sender_key TEXT NOT NULL, source_ref TEXT NOT NULL, payload TEXT NOT NULL,
@@ -177,22 +189,42 @@ class MemoryRepository:
         owner, char = source["owner_key"], source["character_id"]
         bot = owner_bot(owner)
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             for fact in facts:
                 fact_key = fact["key"] + (":" + source["source_ref"] if fact["kind"] == "event" else "")
                 key = identity(char, owner, source["sender_key"], fact_key)
+                if fact["kind"] != "event":
+                    existing = db.execute("SELECT id,fact_key,summary FROM memory_items WHERE character_id=? "
+                        "AND owner_key=? AND subject_key=? AND source_type='qq_message' AND deleted_at IS NULL "
+                        "AND instr(fact_key,':')=0 ORDER BY created_at,id",
+                        (char, owner, source["sender_key"])).fetchall()
+                    duplicate = next((r for r in existing
+                        if summary_identity(r["summary"]) == summary_identity(fact["summary"])), None)
+                    if duplicate:
+                        key, fact_key = duplicate["id"], duplicate["fact_key"]
                 self._put(db, key=key, character=char, scope="group" if ":group:" in owner else "user",
                     owner=owner, subject=source["sender_key"], fact_key=fact_key, source_type="qq_message",
                     source_ref=source["source_ref"], summary=fact["summary"], tags=fact["tags"],
                     salience=fact["salience"], confidence=fact["confidence"], sensitive=fact["sensitive"],
                     now=source["created_at"])
+                db.execute("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?)",
+                    (key, source["source_ref"], fact.get("evidence", ""), source["created_at"]))
                 topic = fact.get("shared_topic")
                 if topic in topics and not fact["sensitive"]:
-                    shared_key = identity(char, bot, "topic", topic, int(source["created_at"] // 86400))
+                    # One generic topic, with separate dated observations for
+                    # diaries, rather than identical active copies every day.
+                    prior = db.execute("SELECT id FROM memory_items WHERE character_id=? AND owner_key=? "
+                        "AND scope='persona' AND source_type='processed_summary' AND fact_key=? "
+                        "AND deleted_at IS NULL ORDER BY created_at,id LIMIT 1",
+                        (char, shared_owner(bot, char), topic)).fetchone()
+                    shared_key = prior["id"] if prior else identity(char, bot, "topic", topic)
                     self._put(db, key=shared_key, character=char, scope="persona", owner=shared_owner(bot, char),
                         subject="character", fact_key=topic, source_type="processed_summary", source_ref=None,
                         summary=topics[topic], tags=[topic], salience=0.5, confidence=1,
                         visibility="shared", now=source["created_at"])
                     db.execute("INSERT OR IGNORE INTO memory_links VALUES(?,?)", (shared_key, key))
+                    db.execute("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?)",
+                        (shared_key, identity(owner, source["source_ref"]), "", source["created_at"]))
             # Source text is a durable processing queue, not a second chat history.
             db.execute("UPDATE memory_inbox SET status='done',payload='{}',lease_until=0,error=NULL WHERE id=?", (source["id"],))
 
@@ -225,14 +257,59 @@ class MemoryRepository:
         matched = {r["id"] for r in hits}
         ranked = sorted(rows.values(), key=lambda row: (
             row["id"] in matched, row["salience"] * row["confidence"], row["updated_at"]), reverse=True)
-        video_count, result = 0, []
+        video_count, result, seen = 0, [], set()
         for row in ranked:
+            signature = (row["owner_key"], row["subject_key"], row["scope"], row["source_type"],
+                         row["visibility"], summary_identity(row["summary"]))
+            # Distinct events and diaries retain their dates and identities.
+            deduplicate = row["source_type"] == "processed_summary" or (
+                row["source_type"] == "qq_message" and ":" not in row["fact_key"])
+            if deduplicate and signature in seen:
+                continue
+            if deduplicate:
+                seen.add(signature)
             if row["source_type"] == "douyin":
                 video_count += 1
                 if video_count > 3:
                     continue
             result.append(row)
         return result[:limit]
+
+    def deduplicate(self, *, character="elysia", now=None):
+        """Archive exact duplicate active facts; retain originals and dated evidence."""
+        now = time.time() if now is None else now
+        merged = []
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT * FROM memory_items WHERE character_id=? AND deleted_at IS NULL "
+                "AND (source_type='processed_summary' OR (source_type='qq_message' AND instr(fact_key,':')=0)) "
+                "ORDER BY created_at,id", (character,)).fetchall()
+            seen = {}
+            for row in rows:
+                db.execute("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?)",
+                    (row["id"], row["source_ref"] or 'legacy:' + row["id"], "", row["updated_at"]))
+                if row["created_at"] != row["updated_at"]:
+                    db.execute("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?)",
+                        (row["id"], 'legacy-created:' + row["id"], "", row["created_at"]))
+                signature = (row["owner_key"], row["subject_key"], row["scope"], row["source_type"],
+                             row["visibility"], summary_identity(row["summary"]))
+                keep = seen.setdefault(signature, row["id"])
+                if keep == row["id"]:
+                    continue
+                db.execute("INSERT INTO memory_revisions(memory_id,payload,created_at) VALUES(?,?,?)",
+                    (row["id"], json.dumps({"reason": "duplicate", "canonical_id": keep,
+                        "original": dict(row)}, ensure_ascii=False), now))
+                db.execute("INSERT OR IGNORE INTO memory_evidence SELECT ?,source_ref,evidence,created_at "
+                    "FROM memory_evidence WHERE memory_id=?", (keep, row["id"]))
+                db.execute("INSERT OR IGNORE INTO memory_links SELECT ?,parent_id FROM memory_links WHERE child_id=?",
+                    (keep, row["id"]))
+                db.execute("INSERT OR IGNORE INTO memory_links SELECT child_id,? FROM memory_links WHERE parent_id=?",
+                    (keep, row["id"]))
+                db.execute("UPDATE memory_items SET sensitive=max(sensitive,?),updated_at=max(updated_at,?) WHERE id=?",
+                    (row["sensitive"], row["updated_at"], keep))
+                db.execute("UPDATE memory_items SET deleted_at=? WHERE id=?", (now, row["id"]))
+                merged.append({"archived_id": row["id"], "canonical_id": keep})
+        return merged
 
     def compacted(self, owner, character, rows, budget):
         key = identity(owner, character, [(r["id"], r["summary"], r["updated_at"]) for r in rows], budget)
@@ -257,8 +334,10 @@ class MemoryRepository:
             if shared:
                 rows = db.execute("SELECT * FROM memory_items WHERE owner_key=? AND character_id=? "
                     "AND visibility='shared' AND source_type!='diary' AND deleted_at IS NULL "
-                    "AND updated_at>=? AND updated_at<? ORDER BY salience DESC,updated_at DESC LIMIT 8",
-                    (owner, character, start, end))
+                    "AND ((updated_at>=? AND updated_at<?) OR EXISTS (SELECT 1 FROM memory_evidence e "
+                    "WHERE e.memory_id=memory_items.id AND e.created_at>=? AND e.created_at<?)) "
+                    "ORDER BY salience DESC,updated_at DESC LIMIT 8",
+                    (owner, character, start, end, start, end))
             else:
                 # Bot prefix has a colon boundary; it cannot match another bot.
                 rows = db.execute("SELECT * FROM memory_items WHERE owner_key LIKE ? AND character_id=? "

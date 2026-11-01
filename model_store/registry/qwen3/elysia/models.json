@@ -18,11 +18,22 @@
       "kind": "base",
       "format": "gguf",
       "required_files": [
-        "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf"
+        "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf",
+        "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/mmproj-F16.gguf"
       ],
       "created_at": "2026-10-31T18:36:07.794819+00:00",
-      "prompt_profile": "qwen35"
+      "prompt_profile": "qwen35",
+      "mmproj_file": "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/mmproj-F16.gguf",
+      "mmproj_sha256": "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+      "visual_source": {
+        "repo": "unsloth/Qwen3.5-9B-GGUF",
+        "revision": "3885219b6810b007914f3a7950a8d1b469d598a5",
+        "file": "mmproj-F16.gguf",
+        "size": 918166080,
+        "base": "Qwen/Qwen3.5-9B",
+        "license": "Apache-2.0"
+      }
     }
   ],
-  "activated_at": "2026-10-31T19:06:37.522680+00:00"
+  "activated_at": "2026-11-01T06:09:35.378262+00:00"
 }

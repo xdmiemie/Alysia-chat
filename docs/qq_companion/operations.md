@@ -351,6 +351,21 @@ schema loading and actual AstrBot tool calling convention. `Q3_LOCAL_PASS` is a
 local integration result, not evidence of a live QQ exchange. Q2 unit tests now
 isolate their Broker state, so they cannot contend with a running model stack.
 
+## Q7 native image, animation and video input
+
+Q7 uses the active Qwen3.5-9B-Q8_0 server and a verified F16 projection
+component. Image/sticker/GIF/video have independent evidence gates. Model,
+component, visual prompt, budget or pipeline changes invalidate old evidence.
+All model callers share a foreground-priority queue. See [Q7 operations](q7.md)
+and [acceptance evidence](acceptance.md).
+
+Video sampling is one frame every two seconds, in segments of at most 24 seconds
+/ 12 frames. Each model request currently takes at most four frames; further
+requests cover the remaining frames. Normal startup deploys the plugin and
+loads the projection component once. Set `configs/qq_companion/vision.yaml`
+`enabled: false` to disable visual input. The optional local analysis API starts
+only with `QQ_COMPANION_VISION_API=1`.
+
 ## Rollback
 
 Run `stop_all.ps1`, restore the chosen ignored JSON backups from `storage/qq_companion/config_backups`, then restart only the Stage 10 local entry point with `quickstart/run.ps1`. The Stage 10 baseline is `aca495e801f061210ce4961da8df2f63ab3f3c44`; branch `astrbot-chat` includes it. AstrBot/SnowLuma live under ignored `external/`, and the original runtime and training scripts were not replaced.

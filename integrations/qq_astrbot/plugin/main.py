@@ -35,6 +35,7 @@ from .reply_pacing import (
     parse_followup,
     remaining_seconds,
     split_sentences,
+    text_reply_chains,
     typing_seconds,
 )
 from .reply_content import chat_history, protocol_view, has_control_markup, spoken_text
@@ -54,6 +55,9 @@ class Q1Guard(star.Star):
     def __init__(self, context: star.Context, config=None) -> None:
         super().__init__(context)
         state_dir = Path(os.environ.get("ASTRBOT_CHAT_STATE_DIR", "data/astrbot_chat_q1"))
+        self.test_peer = os.environ.get("QQ_COMPANION_TEST_PEER", "")
+        if self.test_peer and not self.test_peer.isdecimal():
+            raise ValueError("Invalid test peer")
         self.guard = InboundGuard(state_dir / "inbound.sqlite3")
         config = config or {}
         memory = MemoryContext(max_messages=int(config.get("context_messages", 20)),
@@ -97,9 +101,15 @@ class Q1Guard(star.Star):
         self.memory = PersistentMemory(state_dir,
             character=os.environ.get("ASTRBOT_CHAT_CHARACTER_ID", "elysia"),
             timezone_name=str(config.get("memory_timezone", "system")),
-            enabled=bool(config.get("memory_enabled", True)),
-            diary_enabled=bool(config.get("diary_enabled", True)),
+            enabled=not self.test_peer and bool(config.get("memory_enabled", True)),
+            diary_enabled=not self.test_peer and bool(config.get("diary_enabled", True)),
             diary_time=str(config.get("diary_time", "23:30")), logger=self.logger)
+        from .vision_runtime import VisionRuntime
+        self.vision = VisionRuntime(state_dir, self.media.client, context=context, memory=self.memory,
+            character=self.memory.character, logger=self.logger)
+        self.vision.active_scope = lambda scope: self.router.is_active(scope)
+        self.vision.reply_media = self.media
+        self.vision.fragment_window = self.router.context.merge_seconds + 1
 
     async def initialize(self):
         async def provider():
@@ -115,6 +125,9 @@ class Q1Guard(star.Star):
             return path.read_text(encoding="utf-8-sig")
 
         await self.memory.start(provider, self.media.client.admission, persona)
+        await self.vision.start(provider)
+        if self.test_peer:
+            return
         # Protocol credentials are read locally, never exposed as Agent tools.
         from .qzone_client import OneBotHTTP, QzoneClient
         def qzone_client(account):
@@ -163,6 +176,10 @@ class Q1Guard(star.Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize)
     async def filter_inbound(self, event: AstrMessageEvent):
+        if (getattr(self, "test_peer", "") and
+                (event.get_group_id() or str(event.get_sender_id()) != self.test_peer)):
+            event.stop_event()
+            return
         if event.get_platform_name() != "aiocqhttp":
             return
         self.media.resume()
@@ -208,7 +225,7 @@ class Q1Guard(star.Star):
         # This runs before the Runner's session lock and conversation lookup.
         # AiocqhttpMessageEvent.send routes using get_group_id/get_sender_id,
         # so the actual QQ recipient is independent of this history key.
-        event.session_id = scope
+        event.session_id = scope + ":q7-acceptance" if getattr(self, "test_peer", "") else scope
         event.set_extra("qq_scope", scope)
         event.set_extra("qq_incoming", incoming)
         # Group controls do not need GPU admission or a group-info await.
@@ -261,6 +278,8 @@ class Q1Guard(star.Star):
             return
         if sequence is None:
             self._observe_request(event, incoming, hold_music=decision.trigger != 'auto')
+        if vision := getattr(self, "vision", None):
+            vision.observe(event, incoming)
         event.is_at_or_wake_command = True
         event.is_wake = True
         # @ and quote-to-bot bypass the fragment delay. Other admitted events
@@ -361,12 +380,19 @@ class Q1Guard(star.Star):
                     self._release_song_hold(event)
                     return
                 event.set_extra("qq_gpu_lease", lease)
-            req.session_id = scope
-            # Image recognition belongs to Q7's gated visual worker. Never
-            # forward images directly to the text model during Q4.
+            req.session_id = event.session_id if getattr(self, "test_peer", "") else scope
+            # Unvalidated framework references are replaced by Q7's bounded
+            # actual pixels. Ordinary image replies stay in this native Agent.
             req.image_urls = []
             req.extra_user_content_parts = [part for part in req.extra_user_content_parts
                                            if getattr(part, "type", None) != "image_url"]
+            media_status = []
+            if vision := getattr(self, "vision", None):
+                media_status = await vision.prepare(event, req, incoming)
+                if not self._event_active(event):
+                    event.stop_event()
+                    self._release_lease(event)
+                    return
             if incoming.group_id:
                 # Rebuild group input solely from this group's TTL window.
                 # No legacy conversation (or unrelated plugin context) enters it.
@@ -376,13 +402,16 @@ class Q1Guard(star.Star):
             current = asdict(incoming)
             current.pop("is_group_admin")
             current["text"] = self.router.context.text_for(scope, incoming.message_id, incoming.text)
+            if media_status and not current["text"].strip():
+                current["text"] = event.get_extra("qq_vision_question", "")
             music_context = json.loads(self.router.context.render(scope))[-8:]
             while music_context and len(json.dumps(music_context, ensure_ascii=False).encode("utf-8")) > 6000:
                 music_context.pop(0)
             event.set_extra("qq_music_context", music_context)
             req.prompt = json.dumps({"session_id": scope, "current_message": current,
                                      "input_modality": "voice" if event.get_extra("qq_voice_input") else "text",
-                                     "image_understanding_available": False,
+                                     "image_understanding_available": bool(req.image_urls),
+                                     "media_status": media_status,
                                      "recent_messages": [row for row in json.loads(self.router.context.render(scope))
                                                          if row.get('role') != 'assistant']
                                      if incoming.group_id else []}, ensure_ascii=False)
@@ -405,6 +434,8 @@ class Q1Guard(star.Star):
             # follow-ups inherit the complete system from NativeAgentLifecycle.
             event.set_extra("qq_persona_prompt", original_base)
             req.system_prompt = "\n".join((base, prompts["qq_context"]))
+            if media_status:
+                req.system_prompt += "\n" + prompts["vision_context"]
             # The lifecycle inserts these rules as a second system message,
             # retaining them for this run without saving them as chat history.
             event.set_extra("qq_agent_rules_prompt", "\n".join((prompts["reply_output"], prompts["agent_policy"])))
@@ -505,12 +536,7 @@ class Q1Guard(star.Star):
                 except (BudgetExhausted, TimeoutError):
                     chains = []  # Deliver the final text without starting more synthesis.
         if not chains:
-            sentences = split_sentences(reply)
-            limit = 3 if event.get_group_id() else 6
-            if len(sentences) > limit:
-                sentences = sentences[:limit - 1] + ["".join(sentences[limit - 1:])]
-            chains = [MessageChain(chain=[Plain(sentence)]) for sentence in sentences]
-            transcripts = sentences
+            chains, transcripts = text_reply_chains(reply, group=bool(event.get_group_id()))
         event.set_extra("qq_delivery_chains", chains)
         for index, chain in enumerate(chains):
             for part in chain.chain:
@@ -644,7 +670,10 @@ class Q1Guard(star.Star):
                 if not self._event_active(event):
                     return
                 await event.send(MessageChain().message(text))
-                lifecycle.sent(text, model_content=raw)
+                # The parser may limit a multi-sentence output to one sentence.
+                # Keep the untouched generation in audit, and only sent text in history.
+                delivered = json.dumps({"follow_up": text, "thinking_level": level}, ensure_ascii=False)
+                lifecycle.sent(text, model_content=delivered)
                 previous += "\n" + text
         except (Superseded, BudgetExhausted, TimeoutError):
             return
@@ -671,6 +700,8 @@ class Q1Guard(star.Star):
         return f"character_id={character_id}; echo={value[:80]}"
 
     async def terminate(self):
+        if vision := getattr(self, "vision", None):
+            await vision.close()
         if qzone := getattr(self, "qzone", None):
             await qzone.close()
         if memory := getattr(self, "memory", None):

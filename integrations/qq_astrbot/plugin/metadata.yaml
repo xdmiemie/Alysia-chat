@@ -1,4 +1,4 @@
 name: astrbot_chat_q1
-desc: Native Agent with scoped memory, private diaries and gated daily Qzone publishing
+desc: Native multimodal Agent with shared inference queue and gated image, animation and video analysis
 author: astrbot-chat
-version: 0.11.0
+version: 0.12.2

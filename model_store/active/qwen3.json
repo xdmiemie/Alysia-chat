@@ -5,12 +5,15 @@
   "version": "qwen3.5-9b-q8-0-base-v1",
   "model_format": "gguf",
   "required_files": [
-    "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf"
+    "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf",
+    "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/mmproj-F16.gguf"
   ],
   "registry_manifest": "model_store/registry/qwen3/elysia/models.json",
   "runtime": {
     "model_file": "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/Qwen3.5-9B-Q8_0.gguf",
-    "prompt_profile": "qwen35"
+    "prompt_profile": "qwen35",
+    "mmproj_file": "model_store/registry/qwen3/elysia/qwen3.5-9b-q8-0-base-v1/mmproj-F16.gguf",
+    "mmproj_sha256": "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f"
   },
-  "activated_at": "2026-10-31T19:06:37.522680+00:00"
+  "activated_at": "2026-11-01T06:09:35.378262+00:00"
 }

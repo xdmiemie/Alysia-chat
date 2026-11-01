@@ -32,6 +32,42 @@ def debug_records(tmp_path):
             for record in json.loads(path.read_text(encoding="utf-8"))]
 
 
+def test_q7_actual_pixels_and_question_reach_pinned_provider_wire(tmp_path, monkeypatch):
+    from io import BytesIO
+    import base64
+    from PIL import Image
+    monkeypatch.setenv("ASTRBOT_CHAT_STATE_DIR", str(tmp_path))
+    output = BytesIO()
+    Image.new("RGB", (64, 48), "red").save(output, format="JPEG")
+    pixels = "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode()
+    async def check():
+        bodies = []
+        def respond(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": "q7", "object": "chat.completion", "created": 0,
+                "model": "qwen3", "choices": [{"index": 0, "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "red"}}]})
+        provider = ProviderOpenAIOfficial({"id": "astrbot_chat_qwen3", "model": "qwen3", "key": ["local"],
+            "api_base": "http://127.0.0.1:8080/v1", "modalities": ["text", "image"]}, {})
+        await provider.client.close()
+        provider.client = AsyncOpenAI(api_key="local", base_url="http://127.0.0.1:8080/v1", max_retries=0,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+        try:
+            await request_chat(provider, phase="agent", prompt="What color?", image_urls=[pixels, pixels], request_max_retries=1)
+            current = bodies[0]["messages"][-1]["content"]
+            assert any(p.get("type") == "text" and p["text"] == "What color?" for p in current)
+            assert any(p.get("type") == "image_url" and p["image_url"]["url"] == pixels for p in current)
+            positions = [i for i, p in enumerate(current) if p.get("type") == "image_url"]
+            assert len(positions) == 2 and positions[1] > positions[0] + 1
+        finally:
+            await provider.terminate()
+    loop = LocalLoop()
+    try:
+        loop.run_until_complete(check())
+    finally:
+        loop.close()
+
+
 def test_final_main_and_tool_free_followup_options_reach_wire_without_shared_mutation(tmp_path):
     async def check():
         bodies = []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import sys
 import tempfile
@@ -31,6 +32,8 @@ class Qwen3ModelEntry:
     source_run: str | None = None
     export_log: str | None = None
     prompt_profile: str = "qwen3"
+    mmproj_file: Path | None = None
+    mmproj_sha256: str | None = None
 
     @property
     def model_file(self) -> Path:
@@ -63,6 +66,9 @@ class Qwen3ModelEntry:
             },
         }
         adapter = self.lora_adapter
+        if self.mmproj_file is not None:
+            manifest["runtime"]["mmproj_file"] = _relative_path(self.mmproj_file)
+            manifest["runtime"]["mmproj_sha256"] = self.mmproj_sha256
         if adapter is not None:
             manifest["runtime"]["lora_adapter"] = _relative_path(adapter)
             manifest["base_model_id"] = self.base_model_id
@@ -199,6 +205,15 @@ def activate_model(character_id: str, model_id: str, active_manifest: Path | Non
     missing = [path for path in model.required_files if not path.exists()]
     if missing:
         raise FileNotFoundError("Qwen3 model file(s) missing: " + ", ".join(str(path) for path in missing))
+    if model.mmproj_file is not None:
+        if not model.mmproj_sha256 or not model.mmproj_file.is_file():
+            raise ValueError("Registered visual component is missing or has no checksum")
+        checksum = hashlib.sha256()
+        with model.mmproj_file.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+                checksum.update(chunk)
+        if checksum.hexdigest() != model.mmproj_sha256:
+            raise ValueError("Registered visual component checksum mismatch")
 
     data = load_character_manifest(character_id)
     data["active_model_id"] = model_id
@@ -322,6 +337,8 @@ def _entry_from_raw(character_id: str, raw: dict[str, Any]) -> Qwen3ModelEntry:
         source_run=str(raw["source_run"]) if raw.get("source_run") else None,
         export_log=str(raw["export_log"]) if raw.get("export_log") else None,
         prompt_profile=str(raw.get("prompt_profile") or "qwen3"),
+        mmproj_file=_project_path(raw["mmproj_file"]) if raw.get("mmproj_file") else None,
+        mmproj_sha256=raw.get("mmproj_sha256"),
     )
 
 
