@@ -17,6 +17,21 @@ SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
     "uncertainty": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 300}}},
     "required": ["interesting", "funny", "high_quality", *FLAGS, "confidence", "reasons", "uncertainty"]}
 FORMAT = {"type": "json_schema", "json_schema": {"name": "douyin_interest", "strict": True, "schema": grammar_schema(SCHEMA)}}
+TITLE_SCHEMA = {"type": "object", "additionalProperties": False,
+    "properties": {"interested": {"type": "boolean"}, "reason": {"type": "string", "minLength": 1, "maxLength": 160}},
+    "required": ["interested", "reason"]}
+TITLE_FORMAT = {"type": "json_schema", "json_schema": {"name": "douyin_title_interest", "strict": True,
+    "schema": grammar_schema(TITLE_SCHEMA)}}
+
+
+async def title_interest(model, title, persona):
+    raw = await model.complete([
+        {"role": "system", "content": persona + "\n" + load_prompts()["douyin_title_interest"]},
+        {"role": "user", "content": json.dumps({"title": title}, ensure_ascii=False)}],
+        TITLE_FORMAT, phase="douyin_title_interest")
+    value = json.loads(raw) if isinstance(raw, str) else raw
+    jsonschema.validate(value, TITLE_SCHEMA)
+    return value
 
 
 def validate_interest(raw):

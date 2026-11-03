@@ -96,7 +96,8 @@ def test_gallery_covers_every_image_and_resumes_completed_batches(tmp_path, loop
     loop.run_until_complete(scenario())
 
 
-@pytest.mark.parametrize("phase,budgets", [("vision_analyze", [3072, 6144]), ("vision_merge", [4096, 8192])])
+@pytest.mark.parametrize("phase,budgets", [("vision_analyze", [3072, 6144]), ("vision_merge", [4096, 8192]),
+    ("douyin_title_interest", [256, 512])])
 @pytest.mark.parametrize("always_length", [False, True])
 def test_output_retry_uses_larger_wire_budget_and_keeps_truncated_response(tmp_path, loop, monkeypatch, phase, budgets, always_length):
     from integrations.qq_astrbot.plugin import model_debug

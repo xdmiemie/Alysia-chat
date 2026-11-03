@@ -14,7 +14,7 @@ from integrations.qq_astrbot.plugin.inference_queue import state_directory
 
 from .config import ConfigStore
 from .feed_driver import VERSION
-from .media import MAX_VIDEO_SECONDS
+from .media import MAX_VIDEO_SECONDS, SHORT_VIDEO_SECONDS
 from .store import Store
 from .worker import Worker
 
@@ -62,9 +62,13 @@ def create_app(directory=None, config=None, worker_factory=Worker):
 
     @api.get("/health")
     def health():
+        from integrations.qq_astrbot.plugin.vision_config import VisionGates
         return {"state": worker().state, "halt": worker().store.get("halt"), "model_owner": False,
                 "adapter": VERSION, "account_verified": bool(worker().browser.verified_account),
                 "max_video_seconds": MAX_VIDEO_SECONDS, "last_skip": worker().store.get("last_skip"),
+                "short_video_seconds": SHORT_VIDEO_SECONDS,
+                "long_video_quota": worker().store.long_quota(worker().config.read()),
+                "video_capability": VisionGates(worker().directory).status("video"),
                 "last_error": worker().store.get("last_error"),
                 "recovery": worker().store.retries(worker().config.read().account.douyin_id)
                     if worker().config.read().account else []}

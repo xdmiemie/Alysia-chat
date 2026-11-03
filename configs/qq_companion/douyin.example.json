@@ -3,6 +3,7 @@
   "share_enabled": false,
   "draft_only": false,
   "hourly_videos": 20,
+  "long_video_percent": 40,
   "timezone": "Asia/Hong_Kong",
   "start_hour": 10,
   "end_hour": 24,

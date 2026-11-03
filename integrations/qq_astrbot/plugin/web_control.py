@@ -55,6 +55,7 @@ DOUYIN_FIELDS = {
     "share_enabled": "启用好友分享",
     "draft_only": "分享先存草稿",
     "hourly_videos": "每小时视频数",
+    "long_video_percent": "长视频额度占比（%）",
     "start_hour": "后台活动开始小时",
     "end_hour": "后台活动结束小时（24 为零点）",
     "idle_resume_seconds": "QQ 空闲后恢复秒数",
@@ -530,6 +531,7 @@ class WebControl:
                         "name": name,
                         "value": dy[k],
                         "type": type(dy[k]).__name__,
+                        **({"min": 0, "max": 100} if k == "long_video_percent" else {}),
                     }
                     for k, name in DOUYIN_FIELDS.items()
                 ],

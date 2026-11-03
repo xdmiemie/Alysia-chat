@@ -52,6 +52,7 @@ PROMPTS = {
     "vision_merge": ("视频分析合并", "合并多个画面分析批次"),
     "vision_reply": ("视觉结果回复", "将视觉结果转为会话回复时"),
     "douyin_interest": ("抖音兴趣判断", "看完视频后判断有趣、好笑或高质量及分享意图"),
+    "douyin_title_interest": ("抖音标题兴趣预判", "正式观看前，仅凭标题和大肥鱼的性格判断是否想看"),
 }
 for key, title in {
     "emotion": "语音情绪工具",

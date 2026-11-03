@@ -397,6 +397,8 @@ def test_bad_model_settings_are_rejected(panel, patch):
 @pytest.mark.anyio
 async def test_settings_persist_and_change_running_objects(panel):
     current = await panel.read("settings", {})
+    percent = next(field for field in current["douyin"] if field["key"] == "long_video_percent")
+    assert (percent["value"], percent["min"], percent["max"]) == (40, 0, 100)
     await panel.write(
         "settings",
         {
@@ -406,7 +408,7 @@ async def test_settings_persist_and_change_running_objects(panel):
                 "followup_limit": 3,
                 "auto_probability": 0.4,
             },
-            "douyin": {"hourly_videos": 30, "start_hour": 11},
+            "douyin": {"hourly_videos": 30, "start_hour": 11, "long_video_percent": 50},
         },
     )
     assert (
@@ -421,6 +423,8 @@ async def test_settings_persist_and_change_running_objects(panel):
     from services.douyin_worker.config import ConfigStore
 
     assert ConfigStore().read().hourly_videos == 30
+    assert ConfigStore().read().long_video_percent == 50
+    assert ConfigStore().read().long_video_limit == 15
 
 
 @pytest.fixture

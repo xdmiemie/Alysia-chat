@@ -22,7 +22,8 @@ from integrations.qq_astrbot.plugin.vision_media import MediaError
 
 class ModelClient:
     # These are output tokens, independent of the QQ conversation budget.
-    OUTPUT_BUDGETS = {"vision_analyze": (3072, 6144), "vision_merge": (4096, 8192)}
+    OUTPUT_BUDGETS = {"vision_analyze": (3072, 6144), "vision_merge": (4096, 8192),
+                      "douyin_title_interest": (256, 512)}
 
     def __init__(self, directory, vision_config):
         self.directory, self.config = directory, vision_config

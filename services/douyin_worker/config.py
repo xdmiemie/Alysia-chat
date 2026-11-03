@@ -31,6 +31,7 @@ class DouyinConfig(BaseModel):
     share_enabled: StrictBool = False
     draft_only: StrictBool = False
     hourly_videos: int = Field(default=20, ge=1, le=120)
+    long_video_percent: int = Field(default=40, ge=0, le=100)
     timezone: str = "Asia/Hong_Kong"
     start_hour: int = Field(default=10, ge=0, le=23)
     end_hour: int = Field(default=24, ge=1, le=24)
@@ -52,6 +53,10 @@ class DouyinConfig(BaseModel):
         from datetime import datetime
         hour = datetime.fromtimestamp(timestamp, ZoneInfo(self.timezone)).hour
         return self.start_hour <= hour < self.end_hour
+
+    @property
+    def long_video_limit(self):
+        return self.hourly_videos * self.long_video_percent // 100
 
 
 class ConfigStore:

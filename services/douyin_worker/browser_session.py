@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import suppress
 import asyncio
 import json
+import math
 import re
 from urllib.parse import urljoin, urlsplit
 
@@ -97,6 +98,11 @@ class BrowserSession:
                     if url := preferred(address.get("url_list") or []):
                         self.media_urls[key] = url
                         self.media_items[key] = {"kind": "video", "media_url": url}
+                        if title := value.get("desc"):
+                            self.media_items[key]["title"] = str(title)[:500]
+                        duration = video.get("duration")
+                        if type(duration) in (int, float) and math.isfinite(duration) and duration > 0:
+                            self.media_items[key]["duration"] = duration / 1000
                         if fallback:
                             self.media_items[key]["media_variant"] = {"bytes": address.get("data_size"),
                                 "width": address.get("width"), "height": address.get("height"), "fallback": True}
@@ -128,11 +134,12 @@ class BrowserSession:
             for _ in range(50):
                 if item := self.media_items.get(video["id"]):
                     return dict(item)
-                urls = await page.locator("video").evaluate_all(
-                    "vs=>vs.map(v=>{v.pause();return v.currentSrc||v.src;}).filter(u=>/^https?:/.test(u))")
+                items = await page.locator("video").evaluate_all(
+                    "vs=>vs.map(v=>{v.pause();return {kind:'video',media_url:v.currentSrc||v.src,"
+                    "duration:Number.isFinite(v.duration)?v.duration:null};}).filter(v=>/^https?:/.test(v.media_url))")
                 await asyncio.sleep(.1)
             # Only use the DOM fallback after giving gallery metadata time to arrive.
-            return {"kind": "video", "media_url": urls[0]} if len(urls) == 1 else {}
+            return items[0] if len(items) == 1 else {}
         finally:
             await page.close()
 

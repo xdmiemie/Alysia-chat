@@ -277,6 +277,57 @@ def test_session_snapshot_incremental_midnight_and_new_arrival(setup):
     assert not s.rows(bot="9",character="fish",module="qq",long=1)
 
 
+def test_special_generation_uses_real_role_specific_ids(setup):
+    s,t,c,m=setup
+    scope="qq:9:dm:1"
+    user=s.append_event(bot="9",character="fish",module="qq",event_id="request",scope=scope,
+        subject="1",role="user",payload={"text":"long term request"},occurred=c())
+    sent=s.append_event(bot="9",character="fish",module="qq",event_id="sent",scope=scope,
+        subject="9",role="assistant",payload={"text":"actual agreement"},occurred=c())
+    observed=[]
+    async def model(key,payload,schema,tokens):
+        if key=="shared_qq_special":
+            properties=schema["properties"]["entries"]["items"]["properties"]
+            assert properties["user_event"]["enum"]==[user]
+            assert properties["agreement_event"]["enum"]==[sent]
+            observed.append(key)
+        return await m(key,payload,schema,tokens)
+    t.model=model
+    m.special=[dict(user_event=user,agreement_event=sent,intent_quote="long term request",agreement_quote="actual agreement",
+        long_term_intent=True,character_likes=True,attribute="request",summary="remembered request")]
+    assert run(t.process_idle(character="fish",force=True))
+    assert observed==["shared_qq_special"]
+    assert len(s.rows(bot="9",character="fish",kind="qq_explicit_liked"))==1
+
+
+@pytest.mark.parametrize("role",["user","assistant"])
+def test_unpaired_events_can_summarize_without_special_candidates(setup,role):
+    s,t,c,m=setup
+    s.append_event(bot="9",character="fish",module="qq",event_id="unpaired",scope="qq:9:dm:1",
+        subject="1",role=role,payload={"text":"ordinary chat"},occurred=c())
+    assert run(t.process_idle(character="fish",force=True))
+    assert all(key!="shared_qq_special" for key,_ in m.calls)
+    assert len(s.rows(bot="9",character="fish",kind="qq_session_summary"))==1
+    assert not s.rows(bot="9",character="fish",kind="qq_explicit_liked")
+
+
+@pytest.mark.parametrize("bad_reference",["nonexistent","wrong_role"])
+def test_invalid_special_reference_cannot_write_memory(setup,bad_reference):
+    s,t,c,m=setup
+    scope="qq:9:dm:1"
+    user=s.append_event(bot="9",character="fish",module="qq",event_id="request",scope=scope,
+        subject="1",role="user",payload={"text":"long term request"},occurred=c())
+    s.append_event(bot="9",character="fish",module="qq",event_id="sent",scope=scope,
+        subject="9",role="assistant",payload={"text":"actual agreement"},occurred=c())
+    m.special=[dict(user_event=user,agreement_event=user if bad_reference=="wrong_role" else "invented",
+        intent_quote="long term request",agreement_quote="actual agreement",long_term_intent=True,
+        character_likes=True,attribute="request",summary="invalid candidate")]
+    assert not run(t.process_idle(character="fish",force=True))
+    assert not s.rows(bot="9",character="fish",module="qq")
+    with s.connection() as db:
+        assert db.execute("SELECT count(*) FROM sm_events WHERE status='pending'").fetchone()[0]==2
+
+
 def test_hierarchical_diary_covers_more_than_eight(setup):
     s,t,c,m=setup
     for i in range(40):

@@ -27,7 +27,7 @@ from scripts.qq_companion.probe_model_switch import Monitor, wait_ready
 from scripts.qq_companion.q7_fixtures import generate
 from integrations.qq_astrbot.plugin.vision_analysis import VisionAnalyzer
 from integrations.qq_astrbot.plugin.vision_client import LocalVisionClient
-from integrations.qq_astrbot.plugin.vision_config import load_vision_config, VisionGates, fingerprint
+from integrations.qq_astrbot.plugin.vision_config import load_vision_config, VisionGates, fingerprint, capability_fingerprint
 from integrations.qq_astrbot.plugin.vision_media import decode_images
 from integrations.qq_astrbot.plugin.vision_store import VisionStore
 from integrations.qq_astrbot.plugin.inference_queue import InferenceQueue
@@ -160,7 +160,8 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     os.environ["ASTRBOT_CHAT_STATE_DIR"] = str(output)
-    report = {"started": time.time(), "fingerprint": fingerprint(), "capabilities": {}, "qq_connections": 0,
+    report = {"started": time.time(), "fingerprint": fingerprint(), "capability_fingerprint": capability_fingerprint(),
+        "capabilities": {}, "qq_connections": 0,
         "fixture_scope": "original generated geometric/OCR/expression/motion clips, not a natural-photo benchmark"}
     active = json.loads((ROOT / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
     runtime = active["runtime"]
@@ -239,15 +240,16 @@ def main():
         report["normal_requests_passed"] = all(not any("error" in row for row in cap["samples"]) for cap in report["capabilities"].values())
         report["finished"] = time.time()
         report["gate_fingerprint"] = fingerprint()
+        report["capability_unchanged"] = report["capability_fingerprint"] == capability_fingerprint()
         save(output / "report.json", report)
-        if args.enable_passed and not args.quick and report["single_instance_passed"]:
+        if args.enable_passed and not args.quick and report["single_instance_passed"] and report["capability_unchanged"]:
             gates = VisionGates(ROOT / "storage/qq_companion")
             for kind, cap in report["capabilities"].items():
                 if cap["passed"]:
                     gates.record(kind, {"passed": True, "report": str(output / "report.json"),
                         "samples": len(cap["samples"]), "quality_rate": cap["quality_rate"], "time": time.time(),
-                        "scope": report["fixture_scope"]})
-        return 0 if all(cap.get("passed") for cap in report["capabilities"].values()) else 1
+                        "scope": report["fixture_scope"]}, expected_fingerprint=report["capability_fingerprint"])
+        return 0 if report["capability_unchanged"] and all(cap.get("passed") for cap in report["capabilities"].values()) else 1
     finally:
         monitor.stop_event.set()
         if monitor.thread.is_alive():

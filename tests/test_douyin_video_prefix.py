@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from integrations.qq_astrbot.plugin.vision_config import load_vision_config
-from integrations.qq_astrbot.plugin.vision_media import ffmpeg_tool, video_info
-from services.douyin_worker.media import _run, video_prefix
+from integrations.qq_astrbot.plugin.vision_media import MediaError, ffmpeg_tool, video_info
+from services.douyin_worker.media import _run, prepare_video
 from services.douyin_worker.worker import Worker
 
 
@@ -19,8 +19,8 @@ def loop():
     value.close()
 
 
-@pytest.mark.parametrize("duration", [179, 180, 181, 240])
-def test_long_video_retains_only_first_180_seconds_with_audio(tmp_path, loop, duration):
+@pytest.mark.parametrize("duration", [179, 180, 181, 599, 600, 601])
+def test_full_video_or_skip_never_clips_with_audio(tmp_path, loop, duration):
     config = load_vision_config()
     source = tmp_path / "source.mp4"
     subprocess.run([ffmpeg_tool("ffmpeg"), "-v", "error", "-nostdin", "-y",
@@ -29,21 +29,29 @@ def test_long_video_retains_only_first_180_seconds_with_audio(tmp_path, loop, du
         "-vf", "drawbox=color=blue:t=fill:enable='gte(t,180)'", "-c:v", "libx264", "-preset", "ultrafast",
         "-threads", "2", "-c:a", "aac", str(source)], capture_output=True, check=True, timeout=30)
     original = source.read_bytes()
-    data, full_duration = loop.run_until_complete(video_prefix(original, tmp_path, config))
+    if duration > 600:
+        with pytest.raises(MediaError, match="video_too_long"):
+            loop.run_until_complete(prepare_video(original, tmp_path, config))
+        assert not list(tmp_path.glob("douyin-probe-*"))
+        return
+    data, full_duration = loop.run_until_complete(prepare_video(original, tmp_path, config))
     target = tmp_path / "result.mp4"
     target.write_bytes(data)
-    actual_duration, audio = video_info(target, config)
+    actual_duration, audio = video_info(target, {**config, "max_video_seconds": 600})
     assert full_duration == pytest.approx(duration, abs=.01)
-    assert actual_duration == pytest.approx(min(duration, 180), abs=.01)
+    assert actual_duration == pytest.approx(duration, abs=.01)
     assert audio
-    assert data == original if duration <= 180 else data != original
-    assert not list(tmp_path.glob("douyin-prefix-*"))
-    # A blue ending after 180s must never reach the model's input asset.
-    rgb = subprocess.run([ffmpeg_tool("ffmpeg"), "-v", "error", "-ss", "179.5", "-i", str(target),
+    assert data == original
+    assert not list(tmp_path.glob("douyin-probe-*"))
+    if duration > 180:
+        with pytest.raises(MediaError, match="video_duration_exceeded"):
+            video_info(target, config)  # QQ's original limit remains 180 seconds.
+    # The actual ending, including frames after 180s, reaches the model asset.
+    rgb = subprocess.run([ffmpeg_tool("ffmpeg"), "-v", "error", "-ss", str(duration - .5), "-i", str(target),
         "-frames:v", "1", "-vf", "scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"],
         capture_output=True, check=True, timeout=10).stdout
-    if duration >= 180:
-        assert len(rgb) == 3 and rgb[0] > rgb[2] + 100
+    assert len(rgb) == 3
+    assert rgb[2] > rgb[0] + 100 if duration > 180 else rgb[0] > rgb[2] + 100
 
 
 def test_viewing_deadline_advances_while_analysis_is_still_running(tmp_path, loop):
@@ -111,7 +119,7 @@ def test_canceling_decoder_kills_child_process(tmp_path, loop):
     loop.run_until_complete(scenario())
 
 
-def test_worker_analyzes_long_prefix_and_keeps_scope_after_resume(tmp_path, loop, monkeypatch):
+def test_worker_analyzes_full_long_video_and_resumes_once(tmp_path, loop, monkeypatch):
     from services.douyin_worker import worker as module
     from services.douyin_worker.config import ConfigStore
     from services.douyin_worker.interest_scorer import FLAGS
@@ -122,14 +130,16 @@ def test_worker_analyzes_long_prefix_and_keeps_scope_after_resume(tmp_path, loop
     worker = Worker(tmp_path, config=config)
     worker.checkpoint = lambda: None
     monkeypatch.setattr(module.VisionGates, "enabled", lambda *args: True)
-    async def prefix(*args): return b"local prefix", 240
-    monkeypatch.setattr(module, "video_prefix", prefix)
+    async def prepare(*args): return b"complete video", 240
+    monkeypatch.setattr(module, "prepare_video", prepare)
+    async def interested(*args): return {"interested": True, "reason": "want to watch"}
+    monkeypatch.setattr(module, "title_interest", interested)
     async def download(*args): return b"source"
     worker.download = download
     calls = []
     async def analyze(*args, **kwargs):
         calls.append(args[2])
-        return {"summary": "已读取片段", "duration": 180, "confidence": .9,
+        return {"summary": "已读取完整视频", "duration": 240, "confidence": .9,
                 "uncertainty": [], "uncovered_intervals": []}
     worker.analyzer.video = analyze
     async def score(*args):
@@ -145,21 +155,22 @@ def test_worker_analyzes_long_prefix_and_keeps_scope_after_resume(tmp_path, loop
     v = {"id": "7000000000000000001", "url": "https://www.douyin.com/video/7000000000000000001",
          "title": "test", "media_url": "https://v.douyinvod.com/visible.mp4", "duration": 240}
     account = config.read().account.douyin_id
-    worker.store.encounter(account, v)
+    worker.store.observe(account, v)
     loop.run_until_complete(worker.process(config.read(), v))
     row = worker.store.video(account, v["id"])
     result = json.loads(row["analysis"])
     assert row["status"] == "filtered" and not row["error"]
-    assert result["truncated"] and result["source_duration"] == 240
-    assert result["analyzed_range"] == [0, 180] and "仅视频前180秒" in result["summary"]
-    assert "不推断后续内容" in calls[0]
-    # Resume an interrupted job after the prefix was stored but before analysis.
+    assert result["duration"] == 240 and not result.get("truncated")
+    assert "前180秒" not in calls[0]
+    assert worker.store.long_quota(config.read())["used"] == 1
+    # Resume an interrupted job after the complete asset was stored.
     with worker.store.connection() as db:
         db.execute("UPDATE videos SET status='pending',analysis=NULL,interest=NULL")
     v["duration"] = None
     loop.run_until_complete(worker.process(config.read(), v))
     result = json.loads(worker.store.video(account, v["id"])["analysis"])
-    assert result["source_duration"] == 240 and "不推断后续内容" in calls[1]
+    assert result["duration"] == 240 and "前180秒" not in calls[1]
+    assert worker.store.long_quota(config.read())["used"] == 1
 
 
 @pytest.mark.parametrize("http_status", [None, 403])

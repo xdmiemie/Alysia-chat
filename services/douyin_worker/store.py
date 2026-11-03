@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -37,6 +38,9 @@ class Store:
                     previous_error TEXT,created REAL,updated REAL,PRIMARY KEY(account,video,version));
                 CREATE TABLE IF NOT EXISTS watch_events(account TEXT,video TEXT,occurred REAL,
                     PRIMARY KEY(account,video));
+                CREATE TABLE IF NOT EXISTS watch_admissions(account TEXT,video TEXT,kind TEXT,duration REAL,started REAL,
+                    PRIMARY KEY(account,video));
+                CREATE INDEX IF NOT EXISTS admissions_time ON watch_admissions(account,kind,started);
             """)
 
     @contextmanager
@@ -86,6 +90,66 @@ class Store:
                     "WHERE account=? AND id=? AND status='unavailable' AND error='video_too_long'",
                     (now, account, video["id"])).rowcount
             return bool(new)
+
+    def observe(self, account, video):
+        """A candidate is not a watch: no quota or memory timestamp yet."""
+        with self.connection() as db:
+            db.execute("INSERT INTO videos(account,id,url,title,status,updated) VALUES(?,?,?,?,'pending',?) "
+                "ON CONFLICT(account,id) DO UPDATE SET url=excluded.url,"
+                "title=CASE WHEN excluded.title!='' THEN excluded.title ELSE videos.title END",
+                (account, video["id"], video["url"], video.get("title", "")[:500], self.clock()))
+
+    def admission(self, account, video_id):
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM watch_admissions WHERE account=? AND video=?", (account, video_id)).fetchone()
+            return dict(row) if row else None
+
+    def long_quota(self, config):
+        with self.connection() as db:
+            used = db.execute("SELECT count(*) FROM watch_admissions WHERE account=? AND kind='long' AND started>?",
+                (config.account.douyin_id if config.account else "", self.clock() - 3600)).fetchone()[0]
+        return {"limit": config.long_video_limit, "used": used,
+                "remaining": max(0, config.long_video_limit - used), "window_seconds": 3600}
+
+    def admit_watch(self, config, video, *, duration=None, gallery=False):
+        """Atomically charge a formal watch once, including across resume/restart."""
+        from .media import MAX_VIDEO_SECONDS, SHORT_VIDEO_SECONDS
+        if not gallery and (isinstance(duration, bool) or not isinstance(duration, (int, float))
+                or not math.isfinite(duration) or duration <= 0):
+            return "video_duration_unknown"
+        if not gallery and duration > MAX_VIDEO_SECONDS:
+            return "video_too_long"
+        kind = "gallery" if gallery else "long" if duration > SHORT_VIDEO_SECONDS else "short"
+        account, now = config.account.douyin_id, self.clock()
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute("SELECT * FROM watch_admissions WHERE account=? AND video=?",
+                (account, video["id"])).fetchone()
+            if previous and previous["kind"] == kind:
+                db.execute("UPDATE watch_admissions SET duration=? WHERE account=? AND video=?",
+                    (duration, account, video["id"]))
+                return ""
+            if kind == "long":
+                used = db.execute("SELECT count(*) FROM watch_admissions WHERE account=? AND kind='long' AND started>?",
+                    (account, now - 3600)).fetchone()[0]
+                if used >= config.long_video_limit:
+                    return "long_video_quota_exhausted"
+            if not previous:
+                rows = db.execute("SELECT created FROM views WHERE account=? AND created>? ORDER BY created",
+                    (account, now - 3600)).fetchall()
+                if len(rows) >= config.hourly_videos or rows and now - rows[-1][0] < 3600 / config.hourly_videos:
+                    return "rate_wait"
+                db.execute("INSERT INTO views(account,video,created) VALUES(?,?,?)", (account, video["id"], now))
+                db.execute("INSERT OR IGNORE INTO watch_events VALUES(?,?,?)", (account, video["id"], now))
+                db.execute("DELETE FROM views WHERE created<?", (now - 2 * 86400,))
+                if not gallery:
+                    # In the same transaction as admission: a crash cannot leave
+                    # an old 180-second prefix attached to a new full watch.
+                    db.execute("UPDATE videos SET media_id=NULL,analysis=NULL,interest=NULL WHERE account=? AND id=?",
+                        (account, video["id"]))
+            db.execute("INSERT OR REPLACE INTO watch_admissions VALUES(?,?,?,?,?)",
+                (account, video["id"], kind, duration, now if not previous or kind == "long" else previous["started"]))
+        return ""
 
     def skipped_encounter(self, account):
         with self.connection() as db:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+import hashlib
 import json
 import math
 import time
@@ -19,14 +20,15 @@ from integrations.qq_astrbot.plugin.memory_tasks import MemoryTasks
 from integrations.qq_astrbot.plugin.vision_config import VisionGates, load_vision_config, project_root
 from integrations.qq_astrbot.plugin.vision_media import MediaError, validate_url, decode_images
 from integrations.qq_astrbot.plugin.vision_store import VisionStore
+from integrations.qq_astrbot.plugin.prompt_loader import load_prompts
 
 from .browser_session import BrowserSession, BrowserStopped
 from .analysis import DouyinAnalyzer
 from .config import ConfigStore
 from .feed_driver import FeedDriver, UnsupportedRecommendation
-from .interest_scorer import acceptable, recommend, score
+from .interest_scorer import acceptable, recommend, score, title_interest
 from .model_client import ModelClient
-from .media import MAX_VIDEO_SECONDS, video_prefix
+from .media import MAX_VIDEO_SECONDS, SHORT_VIDEO_SECONDS, prepare_video
 from .store import Store
 
 
@@ -47,7 +49,9 @@ class Worker:
         self.feed = FeedDriver(self.browser)
         self.assets = VisionStore(directory, self.vision_config)
         self.model = model or ModelClient(directory, self.vision_config)
-        self.analyzer = DouyinAnalyzer(self.assets, self.vision_config, self.model.call,
+        self.analysis_config = {**self.vision_config, "max_video_seconds": MAX_VIDEO_SECONDS,
+                                "video_job_timeout_seconds": 3600}
+        self.analyzer = DouyinAnalyzer(self.assets, self.analysis_config, self.model.call,
                                        transcribe=getattr(self.model, "transcribe", self.model.media.transcribe))
         self.closed = False
         self.task = None
@@ -60,8 +64,16 @@ class Worker:
         config = self.config.read()
         if self.closed or (self.directory / "stop.requested").exists():
             return "stopping"
-        if self.store.get("halt"):
-            return "halted"
+        if halt := self.store.get("halt"):
+            kind = {"q7_video_gate_required": "video", "q7_image_gate_required": "image"}.get(halt)
+            if kind and VisionGates(self.directory, self.vision_config).enabled(kind):
+                # Only a resolved capability hold is self-recoverable. Captcha,
+                # account errors and uncertain sends still require operator review.
+                self.store.set("halt", None)
+                self.store.set("last_error", None)
+                self.errors = 0
+            else:
+                return "halted"
         if not config.enabled:
             return "disabled"
         if not config.account:
@@ -158,8 +170,71 @@ class Worker:
                     analysis=analysis, shared=True, occurred=occurred, source_ids=[event])
         self.store.set("memory_owners:" + config.account.douyin_id + ":" + video["id"], owners)
 
+    def skip_video(self, config, video, reason):
+        self.store.save_video(config.account.douyin_id, video["id"], "skipped", error=reason)
+        self.store.set("last_skip", {"id": video["id"], "reason": reason, "time": self.clock()})
+        self.state = "item_skipped"
+        return False
+
+    async def prepare_watch(self, config, video):
+        """Title interest first; deterministic duration/quota checks second."""
+        account = config.account.douyin_id
+        self.store.observe(account, video)
+        row = self.store.video(account, video["id"])
+        if row["status"] in {"done", "filtered", "revoked"} or (
+                row["status"] == "unavailable" and row["error"] != "video_too_long"):
+            return False
+        admission = self.store.admission(account, video["id"])
+        video.update(getattr(self.browser, "media_items", {}).get(video["id"], {}))
+        video["title"] = (video.get("title") or row["title"] or "")[:500]
+        if not video["title"].strip():
+            return self.skip_video(config, video, "video_title_unavailable")
+        self.state = "checking_title_interest"
+        from .persona import active_persona
+        active = json.loads((project_root() / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
+        persona = active_persona(project_root(), active["character_id"])
+        signature = hashlib.sha256(json.dumps([active["character_id"], persona,
+            load_prompts()["douyin_title_interest"], video["title"]], ensure_ascii=False).encode()).hexdigest()
+        cache_key = "title_interest:" + account + ":" + video["id"]
+        cached = self.store.get(cache_key)
+        if not cached or cached.get("signature") != signature:
+            decision = await title_interest(self.model, video["title"], persona)
+            self.checkpoint()
+            cached = {"signature": signature, **decision}
+            self.store.set(cache_key, cached)
+        if not cached["interested"]:
+            return self.skip_video(config, video, "title_not_interested")
+        self.checkpoint()
+        self.state = "checking_video_duration"
+        gallery = self.store.get("image_post:" + account + ":" + video["id"])
+        duration = admission["duration"] if admission else video.get("duration")
+        if duration is None and not admission:
+            duration = self.store.get("source_duration:" + account + ":" + video["id"])
+        if not gallery and not admission and (not video.get("kind") or duration is None) and getattr(self.browser, "context", None):
+            # Read native metadata only after interest. This may identify a gallery
+            # whose video element is merely its background music.
+            video.update(await self.browser.resolve_item(video))
+            duration = video.get("duration", duration)
+        is_gallery = bool(gallery) or video.get("kind") == "image_post" or bool(admission and admission["kind"] == "gallery")
+        current = self.config.read()
+        self.checkpoint()
+        if current.account != config.account:
+            raise Paused("account_changed")
+        reason = self.store.admit_watch(current, video, duration=duration, gallery=is_gallery)
+        if reason == "rate_wait":
+            raise Paused(reason)
+        if reason:
+            return self.skip_video(config, video, reason)
+        if not is_gallery:
+            video["duration"] = duration
+        self.store.save_video(account, video["id"], "pending")
+        self.state = "analyzing"
+        return True
+
     async def process(self, config, video):
         account = config.account.douyin_id
+        if not await self.prepare_watch(config, video):
+            return
         row = self.store.video(account, video["id"])
         if not row or row["status"] in {"done", "filtered", "revoked", "unavailable"}:
             return
@@ -253,24 +328,27 @@ class Worker:
                     checkpoint["video"] = video
                     self.store.set("checkpoint", checkpoint)
                 data = await self.download(refreshed)
-            data, duration = await video_prefix(data, self.assets.cache, self.vision_config)
+            try:
+                data, duration = await prepare_video(data, self.assets.cache, self.analysis_config)
+            except MediaError as exc:
+                if str(exc) != "video_too_long":
+                    raise
+                self.skip_video(config, video, "video_too_long")
+                return
+            # Native metadata can be inaccurate. Verify the actual file before
+            # visual/ASR inference; upgrading a short watch requires long quota.
+            self.checkpoint()
+            reason = self.store.admit_watch(self.config.read(), video, duration=duration)
+            if reason:
+                self.skip_video(config, video, reason)
+                return
             video["duration"] = duration
             self.store.set("source_duration:" + account + ":" + video["id"], duration)
             key = self.assets.put(data, owner, "video")
             self.store.save_video(account, video["id"], "pending", media_id=key)
-        source_duration = self.store.get("source_duration:" + account + ":" + video["id"], video.get("duration"))
         question = "理解视频内容、情节、表达和视听信息，为兴趣判断与公共知识记忆提供依据。"
-        if source_duration and source_duration > MAX_VIDEO_SECONDS:
-            question += "素材仅为原视频前180秒，后续未读取，不推断后续内容或结局。"
         analysis = json.loads(row["analysis"]) if row["analysis"] else await self.analyzer.video(
             key, owner, question, check_active=self.checkpoint)
-        if source_duration and source_duration > MAX_VIDEO_SECONDS:
-            analysis = dict(analysis, source_duration=source_duration, truncated=True,
-                            analyzed_range=[0, min(MAX_VIDEO_SECONDS, analysis["duration"])])
-            notice = "仅依据视频前180秒，后续内容未读取。"
-            if notice not in analysis.get("uncertainty", []):
-                analysis["uncertainty"] = [*analysis.get("uncertainty", []), notice]
-                analysis["summary"] = "【仅视频前180秒】" + analysis["summary"]
         return analysis
 
     async def share(self, config, video, analysis, interest):
@@ -413,7 +491,7 @@ class Worker:
                 video = checkpoint.get("video")
                 row = self.store.video(config.account.douyin_id, video["id"]) if video else None
                 if row and row["status"] not in {"done", "filtered", "revoked", "unavailable"}:
-                    checkpoint.setdefault("watch_until", self.clock() + MAX_VIDEO_SECONDS)
+                    checkpoint.setdefault("watch_until", self.clock() + SHORT_VIDEO_SECONDS)
                     self.state = "analyzing"
                     await self.controlled(self.process_visible(config, video, checkpoint))
                 self.checkpoint()
@@ -430,11 +508,7 @@ class Worker:
                     self.state = "rate_wait"
                     await self.browser.pause()
                     return
-                await self.controlled(self.browser.resume())
-                # Playback attaches the native media URL lazily on some feed items.
-                video = await self.controlled(self.feed.current())
             except UnsupportedRecommendation as exc:
-                self.store.skipped_encounter(config.account.douyin_id)
                 self.store.set("last_skip", {"reason": str(exc), "time": self.clock()})
                 await self.controlled(self.feed.next())
                 await self.browser.pause()
@@ -442,17 +516,24 @@ class Worker:
                 self.errors = 0
                 return
             self.checkpoint()
-            fresh = self.store.encounter(config.account.douyin_id, video)
+            try:
+                ready = await self.controlled(self.prepare_watch(config, video))
+            except (MediaError, httpx.HTTPStatusError, jsonschema.ValidationError, json.JSONDecodeError) as exc:
+                self.item_failed(config, video, exc)
+                ready = False
+            if not ready:
+                await self.controlled(self.feed.next())
+                await self.browser.pause()
+                self.errors = 0
+                return
             duration = video.get("duration")
-            limit = min(duration, MAX_VIDEO_SECONDS) if duration and math.isfinite(duration) else MAX_VIDEO_SECONDS
+            limit = min(duration, MAX_VIDEO_SECONDS) if duration and math.isfinite(duration) else SHORT_VIDEO_SECONDS
             checkpoint = {"account": config.account.douyin_id, "video": video,
                           "watch_until": self.clock() + max(0, limit - video.get("position", 0))}
             self.store.set("checkpoint", checkpoint)
-            if fresh:
-                self.state = "analyzing"
-                await self.controlled(self.process_visible(config, video, checkpoint))
-            else:
-                await self.controlled(self.advance_checkpoint(checkpoint))
+            await self.controlled(self.browser.resume())
+            self.state = "analyzing"
+            await self.controlled(self.process_visible(config, video, checkpoint))
             self.store.set("checkpoint", None)
             self.errors = 0
 

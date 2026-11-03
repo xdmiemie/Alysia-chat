@@ -14,6 +14,7 @@ const state = {tab:"videos", page:1, q:"", kind:"shared", memoryFilters:{}, memo
 const labels={ready:"就绪",draining:"等待任务结束",restoring:"正在恢复",recovering:"等待恢复",cover:"正在翻唱",queued:"等待执行",restarting:"正在重启",completed:"已完成",rolled_back:"已回滚",failed:"失败",pending:"等待分析",analyzed:"已分析",rated:"已评价",done:"已完成",filtered:"已跳过",revoked:"记忆已撤回",sent:"分享成功",sending:"正在分享",uncertain:"结果待确认",cooldown_skipped:"分享冷却中，已跳过",daily_limit:"达到每日上限",draft_only:"仅保存草稿",duplicate:"已分享过",sharing_disabled:"分享功能关闭"};
 const label=value=>labels[value]||value;
 Object.assign(labels,{native_share_entry_unavailable:"分享入口不可用，已跳过分享",ambiguous_share_control:"分享入口不明确，已跳过分享",share_service_unavailable:"抖音服务暂时不可用，已跳过分享"});
+Object.assign(labels,{skipped:"已跳过",title_not_interested:"对标题不感兴趣",video_title_unavailable:"未取得标题",video_duration_unknown:"无法确认时长",video_too_long:"超过 600 秒",long_video_quota_exhausted:"长视频额度已用完"});
 const pretty = value => typeof value === "string" ? value : JSON.stringify(value, null, 2);
 const time = value => !value ? "—" : new Date(typeof value === "number" ? value * 1000 : value).toLocaleString("zh-CN", {hour12:false});
 function el(tag, text, className) { const n=document.createElement(tag); if(text!==undefined && text!==null)n.textContent=text; if(className)n.className=className; return n; }
@@ -147,6 +148,9 @@ function renderSettings(data){
  const d=fields(data.douyin),dp=el("div",null,"panel"),whitelist=el("div",null,"panel"),friends=el("div",null,"panel");
  renderWhitelist(whitelist,data.whitelist);renderDouyinWhitelist(friends,data.douyin_whitelist);
  dp.append(el("h2","后台作息与抖音"),el("div",`时区 ${data.timezone}。开始至结束时段允许空闲刷视频，其他时段休息；QQ 全时段正常响应。`,"help"),d.grid);
+ const quota=el("div",null,"help");quota.id="long-video-quota-preview";
+ const updateQuota=()=>{const v=d.values();quota.textContent=`先由大肥鱼根据标题判断兴趣，再检查时长。180 秒以内按短视频处理；超过 180 秒、最多 600 秒使用长视频额度；超过 600 秒直接跳过。当前设置每小时 ${v.hourly_videos} 条 × ${v.long_video_percent}% 向下取整，最多 ${Math.floor(v.hourly_videos*v.long_video_percent/100)} 条长视频（包含在总数内）。按最近 60 分钟计数，重启不清零，额度用完继续挑选短视频。`;};
+ d.grid.addEventListener("input",updateQuota);updateQuota();dp.append(quota);
  const curve=(data.followup_probabilities||[]).map(p=>(p*100).toFixed(2)+"%").join(" → ");
  const groups=[
   ["对话内主动回复","主回复正常发送；只有模型确实想追加一句时才抽取概率并计入保底，命中后重新计数。平均概率指长期实际命中率，低于 1÷保底次数时自动纠正。当前逐次概率："+curve,f=>f.key.startsWith("followup_")],

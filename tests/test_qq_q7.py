@@ -479,6 +479,76 @@ def test_independent_gates_invalidate_when_budgets_change(tmp_path, config):
     assert not VisionGates(tmp_path, changed).enabled("image")
 
 
+def test_memory_code_change_expires_analysis_cache_without_disabling_vision(tmp_path, config, monkeypatch):
+    from integrations.qq_astrbot.plugin import vision_config as module
+    gates = VisionGates(tmp_path, config)
+    gates.record("sticker", {"passed": True, "report": "tested pixels"})
+    original = module.fingerprint(config)
+    read = Path.read_bytes
+    runtime = Path(module.__file__).with_name("vision_runtime.py")
+    # Regression: adding memory/reply bookkeeping used to turn all vision off.
+    monkeypatch.setattr(Path, "read_bytes", lambda path: read(path) + b"\n# memory bookkeeping changed\n"
+                        if path == runtime else read(path))
+    assert module.fingerprint(config) != original
+    assert gates.enabled("sticker")
+    assert not gates.enabled("video")  # No evidence for a different capability.
+
+
+def test_reply_prompt_and_operational_timeouts_do_not_disable_pixels(tmp_path, config, monkeypatch):
+    from integrations.qq_astrbot.plugin import vision_config as module, prompt_loader
+    gates = VisionGates(tmp_path, config)
+    gates.record("image", {"passed": True, "report": "tested pixels"})
+    original = module.fingerprint(config)
+    prompts = prompt_loader.load_prompts()
+    monkeypatch.setattr(prompt_loader, "load_prompts", lambda: {**prompts, "vision_reply": "changed reply wording"})
+    assert module.fingerprint(config) != original
+    assert gates.enabled("image")
+    changed = {**config, "cache_ttl_seconds": 600, "request_timeout_seconds": 120, "media_question_window_seconds": 90}
+    assert VisionGates(tmp_path, changed).enabled("image")
+
+
+@pytest.mark.parametrize("change", ["model", "projector", "backend", "context", "contract"])
+def test_visual_compatibility_changes_still_require_evidence(tmp_path, config, monkeypatch, change):
+    from integrations.qq_astrbot.plugin import vision_config as module
+    root = tmp_path / "project"
+    active_path = root / "model_store/active/qwen3.json"
+    settings_path = root / "configs/runtime/qwen3.yaml"
+    binary = root / "tools/llama.cpp/llama-server.exe"
+    for path in (active_path, settings_path, binary):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    active = {"model_id": "model-a", "runtime": {"mmproj_sha256": "projector-a"}}
+    active_path.write_text(json.dumps(active))
+    settings_path.write_text("context_size: 32768\n")
+    binary.write_bytes(b"backend-a")
+    monkeypatch.setattr(module, "project_root", lambda: root)
+    gates = VisionGates(tmp_path, config)
+    gates.record("image", {"passed": True, "report": "tested pixels"})
+    if change == "model":
+        active_path.write_text(json.dumps({**active, "model_id": "model-b"}))
+    elif change == "projector":
+        active_path.write_text(json.dumps({**active, "runtime": {"mmproj_sha256": "projector-b"}}))
+    elif change == "backend":
+        binary.write_bytes(b"backend-b-different")
+    elif change == "context":
+        settings_path.write_text("context_size: 8192\n")
+    else:
+        monkeypatch.setattr(module, "CAPABILITY_CONTRACT_VERSION", 999)
+    assert gates.status("image") == {"enabled": False, "reason": "model_or_visual_capacity_changed"}
+
+
+def test_gate_upgrade_requires_real_evidence_and_rejects_changed_model(tmp_path, config):
+    from integrations.qq_astrbot.plugin.vision_config import capability_fingerprint, fingerprint
+    gates = VisionGates(tmp_path, config)
+    gates.path.write_text(json.dumps({"fingerprint": fingerprint(config),
+        "capabilities": {"image": {"passed": True, "report": "legacy evidence"}}}))
+    assert gates.status("image")["reason"] == "legacy_evidence_requires_upgrade"
+    with pytest.raises(ValueError, match="vision_changed_during_acceptance"):
+        gates.record("image", {"passed": True, "report": "new evidence"}, expected_fingerprint="another model")
+    assert not gates.enabled("image")
+    gates.record("image", {"passed": True, "report": "new evidence"}, expected_fingerprint=capability_fingerprint(config))
+    assert gates.enabled("image")
+
+
 @pytest.mark.parametrize("extra", [{"confidence": float("nan")}, {"confidence": 1.1},
     {"timestamps": [{"timestamp": 25, "description": "outside"}]}, {"timestamps": [{"timestamp": -1, "description": "negative"}]}])
 def test_rejects_untrustworthy_analysis(extra):

@@ -1,4 +1,4 @@
-"""Bound Douyin analysis to the first three minutes without changing Q7 budgets."""
+"""Validate complete Douyin videos; never clip an over-limit video."""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +11,8 @@ from tempfile import TemporaryDirectory
 
 from integrations.qq_astrbot.plugin.vision_media import MediaError, ffmpeg_tool
 
-MAX_VIDEO_SECONDS = 180
+SHORT_VIDEO_SECONDS = 180
+MAX_VIDEO_SECONDS = 600
 
 
 async def _run(*args, timeout=30):
@@ -29,10 +30,10 @@ async def _run(*args, timeout=30):
             await process.communicate()
 
 
-async def video_prefix(data, directory, config):
-    """Return bounded local media and its original duration; cancellation kills ffmpeg."""
-    with TemporaryDirectory(prefix="douyin-prefix-", dir=directory) as temporary:
-        source, target = Path(temporary) / "source.mp4", Path(temporary) / "prefix.mp4"
+async def prepare_video(data, directory, config):
+    """Verify the actual file duration before any model analysis."""
+    with TemporaryDirectory(prefix="douyin-probe-", dir=directory) as temporary:
+        source = Path(temporary) / "source.mp4"
         source.write_bytes(data)
         raw = await _run(ffmpeg_tool("ffprobe"), "-v", "error", "-show_format", "-show_streams",
                          "-print_format", "json", str(source))
@@ -45,18 +46,8 @@ async def video_prefix(data, directory, config):
                 raise ValueError()
         except (ValueError, KeyError, TypeError) as exc:
             raise MediaError("invalid_video_stream") from exc
-        limit = min(MAX_VIDEO_SECONDS, config["max_video_seconds"])
-        if duration <= limit:
-            return data, duration
-        # Re-encode at the boundary: stream copying may include packets past 180s.
-        edge = config["max_image_long_edge"]
-        await _run(ffmpeg_tool("ffmpeg"), "-v", "error", "-nostdin", "-y", "-hwaccel", "none",
-                   "-i", str(source), "-t", str(limit), "-map", "0:v:0", "-map", "0:a:0?",
-                   "-vf", f"scale=w='min({edge},iw)':h='min({edge},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-                   "-c:v", "libx264", "-preset", "ultrafast", "-threads", "2",
-                   "-b:v", "2M", "-maxrate", "2M", "-bufsize", "4M", "-c:a", "aac", "-b:a", "128k",
-                   "-movflags", "+faststart", str(target), timeout=180)
-        result = target.read_bytes()
-        if not 0 < len(result) <= config["max_video_bytes"]:
+        if duration > MAX_VIDEO_SECONDS:
+            raise MediaError("video_too_long")
+        if not 0 < len(data) <= config["max_video_bytes"]:
             raise MediaError("media_file_too_large")
-        return result, duration
+        return data, duration

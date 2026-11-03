@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -12,6 +13,14 @@ from .inference_queue import state_directory
 from .prompt_loader import prompt_path
 
 KINDS = {"image", "sticker", "gif", "video"}
+# Increment only for a breaking change to the pixel-input contract. Routine
+# memory, reply, prompt and cache changes must not disable a working model.
+CAPABILITY_CONTRACT_VERSION = 1
+CAPACITY_KEYS = frozenset({"max_image_long_edge", "max_image_pixels", "max_image_bytes", "max_video_bytes",
+    "max_video_seconds", "frame_interval_seconds", "segment_seconds", "max_frames_per_segment",
+    "max_frames_per_request", "visual_tokens_per_image", "gif_frames", "gif_max_frames", "asr_enabled"})
+RUNTIME_CAPACITY_KEYS = frozenset({"model_manifest", "context_size", "gpu_layers", "cache_type_k", "cache_type_v",
+    "mmproj_offload", "image_min_tokens", "image_max_tokens", "prompt_cache_mib"})
 
 
 def project_root():
@@ -48,10 +57,11 @@ def load_vision_config():
 
 
 def fingerprint(config=None):
+    """Strict analysis-cache identity, including code and prompts; NOT an on/off switch."""
     root = project_root()
     active = json.loads((root / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
     config = config or load_vision_config()
-    # Identity and immutable component checksum invalidate gates after a model switch.
+    # Model identity and immutable component checksums invalidate cached analysis.
     from .prompt_loader import load_prompts
     prompts = load_prompts()
     binary = root / "tools/llama.cpp/llama-server.exe"
@@ -60,13 +70,35 @@ def fingerprint(config=None):
                "pipeline": {name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest()
                    for name in ("vision_media.py", "vision_analysis.py", "vision_runtime.py", "vision_client.py", "request_provider.py", "model_messages.py")},
                # Sampling/personality controls do not alter pixel ingestion or
-               # memory capacity. Structural changes still require fresh gates.
+               # memory capacity. Structural changes also invalidate analysis.
                "runtime_settings": {key: value for key, value in yaml.safe_load(
                    (root / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig")).items()
                    if key in {"model_manifest", "context_size", "gpu_layers", "cache_type_k", "cache_type_v",
                               "mmproj_offload", "image_min_tokens", "image_max_tokens", "prompt_cache_mib"}},
                "prompts": {key: prompts[key] for key in ("vision_analyze", "vision_merge", "vision_context", "vision_reply")},
                "budgets": {k: v for k, v in config.items() if k != "enabled"}}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+@lru_cache(maxsize=4)
+def _binary_digest(path, size, modified_ns):
+    with Path(path).open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def capability_fingerprint(config=None):
+    """Model/backend/capacity compatibility, independent of memory and reply code."""
+    root = project_root()
+    active = json.loads((root / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
+    settings = yaml.safe_load((root / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig"))
+    config = config or load_vision_config()
+    binary = root / "tools/llama.cpp/llama-server.exe"
+    stat = binary.stat() if binary.is_file() else None
+    payload = {"contract": CAPABILITY_CONTRACT_VERSION, "model": active.get("model_id"),
+        "runtime": active.get("runtime"),
+        "backend_sha256": _binary_digest(str(binary), stat.st_size, stat.st_mtime_ns) if stat else None,
+        "runtime_capacity": {k: v for k, v in settings.items() if k in RUNTIME_CAPACITY_KEYS},
+        "visual_capacity": {k: v for k, v in config.items() if k in CAPACITY_KEYS}}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
@@ -77,24 +109,35 @@ class VisionGates:
         self.path = self.directory / "vision_gates.json"
 
     def enabled(self, kind):
+        return self.status(kind)["enabled"]
+
+    def status(self, kind):
         if kind not in KINDS or not self.config.get("enabled"):
-            return False
+            return {"enabled": False, "reason": "disabled"}
         try:
             report = json.loads(self.path.read_text(encoding="utf-8"))
-            return report.get("fingerprint") == fingerprint(self.config) and report.get("capabilities", {}).get(kind, {}).get("passed") is True
+            if report.get("capability_fingerprint") != capability_fingerprint(self.config):
+                return {"enabled": False, "reason": "model_or_visual_capacity_changed" if report.get("capability_fingerprint")
+                        else "legacy_evidence_requires_upgrade"}
+            if report.get("capabilities", {}).get(kind, {}).get("passed") is not True:
+                return {"enabled": False, "reason": "capability_not_verified"}
+            return {"enabled": True, "reason": "verified"}
         except (OSError, ValueError):
-            return False
+            return {"enabled": False, "reason": "evidence_unavailable"}
 
-    def record(self, kind, evidence):
+    def record(self, kind, evidence, *, expected_fingerprint=None):
         if kind not in KINDS or not evidence.get("passed") or not evidence.get("report"):
             raise ValueError("invalid_vision_gate_evidence")
-        current = fingerprint(self.config)
+        current = capability_fingerprint(self.config)
+        if expected_fingerprint is not None and current != expected_fingerprint:
+            raise ValueError("vision_changed_during_acceptance")
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        if data.get("fingerprint") != current:
-            data = {"fingerprint": current, "capabilities": {}}
+        if data.get("capability_fingerprint") != current:
+            data = {"capability_fingerprint": current, "capabilities": {}}
+        data["fingerprint"] = fingerprint(self.config)  # Audit only; cache changes don't turn capabilities off.
         data["capabilities"][kind] = evidence
         self.directory.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(".tmp")

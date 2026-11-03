@@ -280,6 +280,7 @@ def test_api_authentication_validation_and_hot_frequency(tmp_path, config, monke
             async with httpx.AsyncClient(transport=httpx.ASGITransport(api), base_url="http://localhost") as client:
                 assert (await client.get("/health")).status_code == 401
                 client.headers["Authorization"] = "Bearer test-local-token"
+                assert (await client.get("/health")).json()["video_capability"]["enabled"] is False
                 assert (await client.get("/v1/douyin/frequency")).json() == {"videos_per_hour": 20}
                 assert (await client.put("/v1/douyin/frequency", json={"videos_per_hour": 8})).status_code == 200
                 assert ConfigStore(config.path).read().hourly_videos == 8
@@ -292,6 +293,22 @@ def test_api_authentication_validation_and_hot_frequency(tmp_path, config, monke
         loop.run_until_complete(scenario())
     finally:
         loop.close()
+
+
+@pytest.mark.parametrize("halt,kind", [("q7_video_gate_required", "video"), ("q7_image_gate_required", "image")])
+def test_worker_recovers_only_after_its_missing_visual_capability_is_verified(tmp_path, config, clock, monkeypatch, halt, kind):
+    from services.douyin_worker import worker as module
+    worker = Worker(tmp_path, config=config, clock=lambda: clock[0])
+    worker.store.set("halt", halt)
+    worker.store.set("last_error", "old failure")
+    monkeypatch.setattr(module.VisionGates, "enabled", lambda _, requested: False)
+    assert worker.reason() == "halted"
+    monkeypatch.setattr(module.VisionGates, "enabled", lambda _, requested: requested == kind)
+    assert worker.reason() is None
+    assert worker.store.get("halt") is None and worker.store.get("last_error") is None
+    worker.store.set("halt", "share_result_uncertain")
+    assert worker.reason() == "halted"
+    assert worker.store.get("halt") == "share_result_uncertain"
 
 
 def test_cooldown_candidate_is_skipped_without_browser_or_backlog(tmp_path, config, clock):
@@ -378,6 +395,8 @@ def test_missing_share_entry_finishes_rated_item_and_advances(tmp_path, config, 
     active.write_text(json.dumps({"character_id": "test"}))
     monkeypatch.setattr(module, "project_root", lambda: tmp_path)
     monkeypatch.setattr(persona, "active_persona", lambda *args: "test")
+    async def interested(*args): return {"interested": True, "reason": "want to watch"}
+    monkeypatch.setattr(module, "title_interest", interested)
     loop = LocalLoop()
     async def scenario():
         worker = Worker(tmp_path, config=config, clock=lambda: clock[0])
@@ -392,7 +411,8 @@ def test_missing_share_entry_finishes_rated_item_and_advances(tmp_path, config, 
         worker.remember = remember
         for number in (1, 2):
             item = dict(video(number), kind="image_post")
-            worker.store.encounter(account, item)
+            clock[0] += 180
+            worker.store.observe(account, item)
             worker.store.save_video(account, item["id"], "rated", analysis=analysis(), interest=interest())
             checkpoint = {"account": account, "video": item, "watch_until": clock[0] + 180}
             await worker.process_visible(config.read(), item, checkpoint)
@@ -448,8 +468,11 @@ def test_live_recommendation_is_skipped_immediately_even_during_rate_wait(tmp_pa
         assert worker.store.get("last_skip")["reason"] == "live_recommendation"
         with worker.store.connection() as db:
             assert db.execute("SELECT count(*) FROM videos").fetchone()[0] == 0
+            assert db.execute("SELECT count(*) FROM views").fetchone()[0] == 0
         await worker.step()
         assert flipped == [True, True]
+        # Only an actual watch consumes pacing; unsupported recommendations do not.
+        worker.store.encounter(config.read().account.douyin_id, video())
         async def ordinary(): return video(2)
         worker.feed.current = ordinary
         await worker.step()

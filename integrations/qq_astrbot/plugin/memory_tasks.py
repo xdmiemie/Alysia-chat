@@ -6,6 +6,7 @@ and counts the actual request. Tests inject a deterministic model and clock.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import date, datetime, time as day_time, timedelta
 import json
 from zoneinfo import ZoneInfo
@@ -264,8 +265,19 @@ class MemoryTasks:
             summary = await self.summary("shared_qq_summary", materials, tokens=c["qq_tokens"], chars=c["qq_chars"])
             # Full source, never a summary, proves explicit intent AND actual agreement.
             async def extract(block):
+                user_ids = [r["id"] for r in block if r["role"] == "user"]
+                agreement_ids = [r["id"] for r in block if r["role"] == "assistant"]
+                if not user_ids or not agreement_ids:
+                    return []
+                # Bind structured generation to real, role-correct source IDs.
+                # Free strings let models invent IDs, exhausting retries and
+                # blocking the ordinary summary (and idle video browsing).
+                schema = deepcopy(SPECIAL)
+                properties = schema["properties"]["entries"]["items"]["properties"]
+                properties["user_event"] = {"type": "string", "enum": user_ids}
+                properties["agreement_event"] = {"type": "string", "enum": agreement_ids}
                 try:
-                    return (await self.call("shared_qq_special", {"events": block}, SPECIAL, 1536))["entries"]
+                    return (await self.call("shared_qq_special", {"events": block}, schema, 1536))["entries"]
                 except InputTooLarge:
                     if len(block) < 2:
                         raise
