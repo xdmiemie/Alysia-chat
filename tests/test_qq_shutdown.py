@@ -119,6 +119,11 @@ count = 0
 
 def fake_service(argv, **kwargs):
     global count
+    if scenario.startswith('desktop') and any(arg.startswith('--app=') for arg in argv):
+        owner = real_owner(argv, **kwargs)
+        (directory / ('browser-' + str(owner.process.pid) + '.json')).write_text(
+            json.dumps(owner.process.pid))
+        return owner
     count += 1
     marker = directory / (str(count) + '.json')
     script = ("import json, os, subprocess, sys, time; from pathlib import Path; "
@@ -162,6 +167,9 @@ supervisor.wait_port = wait_port
 supervisor.wait_onebot = lambda *args, **kwargs: None
 supervisor.GPUResourceBroker = Broker
 supervisor.subprocess.run = lambda *args, **kwargs: type('Result', (), {'returncode': 0})()
+if scenario.startswith('desktop'):
+    from scripts.qq_companion import desktop_webui
+    desktop_webui.WEB_URL = sys.argv[4]
 if scenario != 'startup':
     original_port = wait_port
     def wait_port(name, *args):
@@ -212,3 +220,150 @@ def test_real_supervisor_shutdown_with_local_substitutes(tmp_path, scenario):
             process.wait(timeout=10)
             sentinel.kill()
             sentinel.wait(timeout=10)
+
+
+@pytest.mark.skipif(os.name != "nt" or os.environ.get("QQ_TEST_DESKTOP") != "1",
+                    reason="Opt-in real Edge/Chrome windows: set QQ_TEST_DESKTOP=1")
+@pytest.mark.parametrize("scenario", ["desktop-close", "desktop-force"])
+def test_real_webui_controls_supervisor_and_service_trees(tmp_path, scenario):
+    """Exercise actual browser windows with local service substitutes and no accounts."""
+    import ctypes
+    from ctypes import wintypes
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    from scripts.qq_companion import desktop_webui
+
+    desktop_webui.find_browser()
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongW.restype = wintypes.LONG
+    user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+    user32.SetWindowLongW.restype = wintypes.LONG
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+
+    def windows():
+        pids = {json.loads(path.read_text()) for path in tmp_path.glob("browser-*.json")}
+        handles = []
+
+        @callback_type
+        def collect(hwnd, _):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value in pids and user32.IsWindowVisible(hwnd):
+                name = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, name, len(name))
+                style = user32.GetWindowLongW(hwnd, -16)
+                if name.value == "Chrome_WidgetWin_1" and style & 0x00C80000 == 0x00C80000:
+                    handles.append(hwnd)
+            return True
+
+        user32.EnumWindows(collect, 0)
+        return handles
+
+    class Page(BaseHTTPRequestHandler):
+        loads = 0
+
+        def do_GET(self):
+            if self.path == "/":
+                Page.loads += 1
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b'<title>WebUI lifecycle test</title>'
+                             + (b'<meta http-equiv="refresh" content="1">' if Page.loads < 4 else b'')
+                             + b'<h1>Temporary WebUI lifecycle test</h1><p>No models or accounts connected.</p>')
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Page)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    driver = tmp_path / "driver.py"
+    driver.write_text(DRIVER, encoding="utf-8")
+    sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+        creationflags=subprocess.CREATE_NO_WINDOW)
+    with (tmp_path / "driver.log").open("w", encoding="utf-8") as log:
+        process = subprocess.Popen([sys.executable, str(driver), str(ROOT), str(tmp_path), scenario,
+                                   f"http://127.0.0.1:{server.server_port}/"],
+            cwd=ROOT, creationflags=subprocess.CREATE_NO_WINDOW, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            wait_until(lambda: (tmp_path / "ready").exists() or process.poll() is not None)
+            assert process.poll() is None, (tmp_path / "driver.log").read_text(encoding="utf-8")
+            registry = desktop_webui.read_json(tmp_path / "supervisor.json")
+            identity = {key: registry[key] for key in ("supervisor_pid", "supervisor_created_at")}
+
+            def open_window(request_id):
+                desktop_webui.write_json(tmp_path / "desktop.request.json", {
+                    **identity, "request_id": request_id,
+                })
+                wait_until(lambda: desktop_webui.read_json(tmp_path / "desktop.response.json").get(
+                    "request_id") == request_id, timeout=40)
+                response = desktop_webui.read_json(tmp_path / "desktop.response.json")
+                assert response["status"] == "ready", response
+
+            open_window("one")
+            wait_until(lambda: len(windows()) == 1)
+            wait_until(lambda: Page.loads >= 4, timeout=15)
+            handles = windows()
+            user32.ShowWindow(handles[0], 6)  # Minimize after verifying actual page refreshes.
+            time.sleep(desktop_webui.CLOSE_GRACE + 0.5)
+            assert process.poll() is None
+            # Fullscreen removes the native caption; this must not look like exit.
+            original_style = user32.GetWindowLongW(handles[0], -16)
+            user32.SetWindowLongW(handles[0], -16, original_style & ~0x00C80000)
+            try:
+                time.sleep(desktop_webui.CLOSE_GRACE + 0.5)
+                assert process.poll() is None
+            finally:
+                user32.SetWindowLongW(handles[0], -16, original_style)
+            open_window("two")
+            wait_until(lambda: len(windows()) == 2)
+            pids = [pid for marker in tmp_path.glob("[12].json") for pid in json.loads(marker.read_text())]
+            pids += [child.pid for child in psutil.Process(process.pid).children(recursive=True)]
+            if scenario == "desktop-force":
+                process.kill()
+            else:
+                first = windows()[0]
+                user32.ShowWindow(first, 9)
+                assert user32.PostMessageW(first, 0x0112, 0xF060, 0)  # WM_SYSCOMMAND / SC_CLOSE.
+                wait_until(lambda: len(windows()) == 1)
+                time.sleep(desktop_webui.CLOSE_GRACE + 0.5)
+                assert process.poll() is None
+                last = windows()[0]
+                user32.ShowWindow(last, 9)
+                assert user32.PostMessageW(last, 0x0112, 0xF060, 0)
+                try:
+                    wait_until(lambda: not windows())
+                except AssertionError:
+                    for hwnd in windows():
+                        title = ctypes.create_unicode_buffer(256)
+                        user32.GetWindowTextW(hwnd, title, len(title))
+                        print("Remaining test window", hwnd, "closed", last, repr(title.value),
+                              hex(user32.GetWindowLongW(hwnd, -16) & 0xffffffff))
+                    raise
+            process.wait(timeout=20)
+            if scenario == "desktop-close":
+                assert process.returncode == 0, (tmp_path / "driver.log").read_text(encoding="utf-8")
+                assert not (tmp_path / "supervisor.json").exists()
+                assert not (tmp_path / "stop.requested").exists()
+            wait_until(lambda: all(not psutil.pid_exists(pid) for pid in pids))
+            assert not windows()
+            assert sentinel.poll() is None, "Shutdown affected an unrelated process"
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+            sentinel.kill()
+            sentinel.wait(timeout=10)
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=5)

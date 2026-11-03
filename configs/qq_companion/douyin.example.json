@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "share_enabled": false,
+  "draft_only": false,
+  "hourly_videos": 20,
+  "timezone": "Asia/Hong_Kong",
+  "start_hour": 10,
+  "end_hour": 24,
+  "idle_resume_seconds": 60,
+  "daily_share_limit": 5,
+  "share_cooldown_seconds": 3600,
+  "dedup_days": 30,
+  "headless": false,
+  "account": null,
+  "friends": []
+}

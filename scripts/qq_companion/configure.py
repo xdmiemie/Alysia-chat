@@ -21,7 +21,7 @@ PLUGIN_FILES = ("main.py", "guard.py", "reply_pacing.py", "message_router.py",
                 "agent_runtime.py", "agent_tools.py", "reply_content.py", "request_provider.py", "model_debug.py", "context_budget.py", "song_tasks.py",
                 "memory_repository.py", "persistent_memory.py", "diary_jobs.py",
                 "qzone_client.py", "qzone_config.py", "qzone_store.py", "qzone_runtime.py",
-                "inference_queue.py", "vision_config.py", "vision_media.py", "vision_store.py", "vision_analysis.py",
+                "inference_queue.py", "foreground_activity.py", "proactive_store.py", "proactive_runtime.py", "control_catalog.py", "control_store.py", "web_control.py", "vision_config.py", "vision_media.py", "vision_store.py", "vision_analysis.py",
                 "vision_client.py", "vision_runtime.py", "douyin_media.py", "_conf_schema.json", "metadata.yaml")
 
 
@@ -120,6 +120,13 @@ def main() -> int:
             target = plugin_dest / name
             if not target.exists() or source.read_bytes() != target.read_bytes():
                 shutil.copy2(source, target)
+        assets = [*(plugin_src / "views").rglob("*"), *(plugin_src / ".astrbot-plugin").rglob("*")]
+        for source in assets:
+            if source.is_file():
+                target = plugin_dest / source.relative_to(plugin_src)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if not target.exists() or source.read_bytes() != target.read_bytes():
+                    shutil.copy2(source, target)
         print("Configured OneBot reverse WS and QQ hook auto-load on loopback. Backups are in ignored storage/qq_companion/config_backups.")
     else:
         print("Configuration is valid in memory. Use --apply while both services are stopped.")

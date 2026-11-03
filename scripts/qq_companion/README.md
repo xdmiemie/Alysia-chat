@@ -44,6 +44,12 @@ also terminates its managed descendants. `test_qq_shutdown.py` checks startup
 interrupts, repeated console interrupts, launcher exit and forced supervisor
 termination using local stand-ins, without QQ or actual models.
 
+The root `启动astrbot-chat.cmd` opens a separately owned Edge/Chrome app window.
+Closing its last window stops the stack; refreshing or minimizing keeps it alive.
+The browser uses `storage/qq_companion/webui-profile` with browser sync disabled.
+Set `QQ_TEST_DESKTOP=1` when running `tests/test_qq_shutdown.py` to include real
+browser-window tests using a loopback test page and local service stand-ins.
+
 During authorized live tests, `runtime_env/python.exe scripts/qq_companion/live_counts.py` shows aggregate inbound private, group, @, image, voice and reply counts from ignored local SQLite. `live_media_probe.py` can send a small image and one-second tone to an explicitly authorized friend or the sole test group; run `--help` for required target options. Confirm delivery on the other QQ client before recording an acceptance result.
 
 # Q4 local acceptance

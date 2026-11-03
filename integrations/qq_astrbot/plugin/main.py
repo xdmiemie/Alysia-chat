@@ -43,6 +43,7 @@ from .request_provider import request_chat
 from .context_budget import RequestBudget
 from .persistent_memory import PersistentMemory
 from .qzone_runtime import DiaryPublisher
+from .foreground_activity import ForegroundActivity, release_activity_on_error
 
 
 FOLLOWUP_FORMAT = {"type": "json_schema", "json_schema": {"name": "optional_followup", "strict": True,
@@ -59,7 +60,9 @@ class Q1Guard(star.Star):
         if self.test_peer and not self.test_peer.isdecimal():
             raise ValueError("Invalid test peer")
         self.guard = InboundGuard(state_dir / "inbound.sqlite3")
+        self.foreground_activity = ForegroundActivity(state_dir)
         config = config or {}
+        self._ui_config = config
         memory = MemoryContext(max_messages=int(config.get("context_messages", 20)),
                                ttl=float(config.get("context_ttl_seconds", 300)),
                                token_budget=int(config.get("context_token_budget", 2048)),
@@ -110,24 +113,27 @@ class Q1Guard(star.Star):
         self.vision.active_scope = lambda scope: self.router.is_active(scope)
         self.vision.reply_media = self.media
         self.vision.fragment_window = self.router.context.merge_seconds + 1
+        from .proactive_runtime import ProactiveRuntime
+        self.proactive = ProactiveRuntime(self, state_dir)
 
     async def initialize(self):
+        if hasattr(self.context, "register_web_api"):
+            from .web_control import WebControl
+            self.web_control = WebControl(self, self.memory.repository.path.parent, self._ui_config)
         async def provider():
             return await self.context.provider_manager.get_provider_by_id("astrbot_chat_qwen3")
 
         async def persona():
-            from .prompt_loader import prompt_path
-            # Same character source synchronized into AstrBot by model setup.
-            character = self.memory.character
-            if not character.replace("_", "").replace("-", "").isalnum():
-                raise ValueError("Invalid memory character")
-            path = prompt_path().parents[2] / "configs" / "characters" / character / "system_prompt.txt"
-            return path.read_text(encoding="utf-8-sig")
+            selected = await self.context.persona_manager.get_persona(self.memory.character)
+            if selected is None:
+                raise ValueError("Active persona is missing")
+            return selected.system_prompt
 
         await self.memory.start(provider, self.media.client.admission, persona)
         await self.vision.start(provider)
         if self.test_peer:
             return
+        await self.proactive.start()
         # Protocol credentials are read locally, never exposed as Agent tools.
         from .qzone_client import OneBotHTTP, QzoneClient
         def qzone_client(account):
@@ -175,7 +181,10 @@ class Q1Guard(star.Star):
         return count
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize)
+    @release_activity_on_error
     async def filter_inbound(self, event: AstrMessageEvent):
+        if control := getattr(self, "web_control", None):
+            await control.context_gate.wait()
         if (getattr(self, "test_peer", "") and
                 (event.get_group_id() or str(event.get_sender_id()) != self.test_peer)):
             event.stop_event()
@@ -310,11 +319,23 @@ class Q1Guard(star.Star):
             event.set_extra("qq_voice_input", True)
             self.router.context.replace_text(scope, incoming.message_id, transcript)
         event.message_str = self.router.context.text_for(scope, incoming.message_id, incoming.text)
+        if proactive := getattr(self, "proactive", None):
+            proactive.observe(event, incoming, replace_text=True)
         if record is not None and (memory := getattr(self, "memory", None)):
             memory.enqueue(incoming, event.message_str)
             memory.wake()
 
     def _observe_request(self, event, incoming, *, hold_music=True):
+        if not event.get_extra("qq_foreground_activity"):
+            event.set_extra("qq_foreground_activity", self.foreground_activity.begin())
+            # The native pipeline also exits without starting an Agent or
+            # sending a reply. Release on that task's completion/cancellation,
+            # after any awaited typing, TTS, delivery and follow-up work.
+            if task := asyncio.current_task():
+                task.add_done_callback(lambda _: self._release_lease(event))
+        event.set_extra("qq_agent_cleanup", lambda: self._release_lease(event))
+        if proactive := getattr(self, "proactive", None):
+            proactive.observe(event, incoming)
         sequence = self.agent_store.observe(incoming.scope, incoming.message_id)
         session = event.unified_msg_origin
         self.latest_inbound[session] = sequence
@@ -326,7 +347,10 @@ class Q1Guard(star.Star):
             self.media.song_tasks.hold(incoming.scope, incoming.sender_uin, sequence)
         return sequence
 
-    def _release_song_hold(self, event):
+    def _release_song_hold(self, event, *, finish=True):
+        if finish and (activity := getattr(self, "foreground_activity", None)):
+            activity.end(event.get_extra("qq_foreground_activity"))
+            event.set_extra("qq_foreground_activity", None)
         incoming = event.get_extra("qq_incoming")
         tasks = getattr(self.media, 'song_tasks', None)
         if tasks and incoming:
@@ -342,11 +366,13 @@ class Q1Guard(star.Star):
                         self.router.generation(scope) == event.get_extra("qq_control_generation"))))
 
     @filter.on_llm_request(priority=-maxsize)
+    @release_activity_on_error
     async def request_paced_reply(self, event: AstrMessageEvent, req) -> None:
         if event.get_platform_name() == "aiocqhttp" and event.get_extra("qq_reply_started_at") is not None:
             incoming = event.get_extra("qq_incoming")
             if incoming is None or not self._event_active(event):
                 event.stop_event()
+                self._release_lease(event)
                 return
             try:
                 prompts = load_prompts()
@@ -488,7 +514,7 @@ class Q1Guard(star.Star):
         event.set_extra("qq_primary_reply", reply["reply"].strip())
         event.set_extra("qq_voice", reply["voice"])
         event.set_extra("qq_run_context", run_context)
-        self._release_song_hold(event)
+        self._release_song_hold(event, finish=False)
 
     def _release_lease(self, event):
         self._release_song_hold(event)
@@ -496,6 +522,7 @@ class Q1Guard(star.Star):
         event.set_extra("qq_gpu_lease", None)
 
     @filter.on_decorating_result()
+    @release_activity_on_error
     async def delay_paced_reply(self, event: AstrMessageEvent) -> None:
         if event.get_platform_name() != "aiocqhttp" or event.get_extra("qq_agent_run") is None:
             return
@@ -632,7 +659,7 @@ class Q1Guard(star.Star):
         provider = lifecycle.runner.provider
         previous = event.get_extra("qq_primary_reply", "")
         try:
-            while run.followups < MAX_FOLLOWUPS:
+            while run.followups < getattr(self, "followup_limit", MAX_FOLLOWUPS):
                 prompts = load_prompts()
                 dialogue = protocol_view(lifecycle.initial_messages + lifecycle.tool_history() + lifecycle.sent_messages)
                 if not dialogue:
@@ -664,6 +691,14 @@ class Q1Guard(star.Star):
                 text, level, valid = parse_followup(raw, previous)
                 if not valid or not text or has_control_markup(text):
                     return
+                if not self._event_active(event):
+                    return
+                if proactive := getattr(self, "proactive", None):
+                    decision = proactive.store.draw(run.scope, f"{run.run_id}:{run.followups}",
+                        proactive.config["followup_average_probability"], proactive.config["followup_pity_limit"])
+                    self.agent_store.record(run, "followup_probability", decision)
+                    if not decision["hit"]:
+                        return
                 wait = remaining_seconds(text, level, started)
                 if wait > 0:
                     await self.agent_store.wait(run, asyncio.sleep(wait))
@@ -700,6 +735,8 @@ class Q1Guard(star.Star):
         return f"character_id={character_id}; echo={value[:80]}"
 
     async def terminate(self):
+        if proactive := getattr(self, "proactive", None):
+            await proactive.close()
         if vision := getattr(self, "vision", None):
             await vision.close()
         if qzone := getattr(self, "qzone", None):
@@ -707,6 +744,7 @@ class Q1Guard(star.Star):
         if memory := getattr(self, "memory", None):
             await memory.close()
         await self.media.close()
+        self.foreground_activity.forget_process()
         self.guard.close()
         self.router.close()
         self.permissions.close()

@@ -1,4 +1,4 @@
-param([switch]$NoModels, [switch]$WithTTS, [switch]$WithoutTTS)
+param([switch]$NoModels, [switch]$WithTTS, [switch]$WithoutTTS, [switch]$WithDouyin)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $python = Join-Path $root 'runtime_env\python.exe'
@@ -7,5 +7,6 @@ $args = @((Join-Path $PSScriptRoot 'supervisor.py'))
 if ($NoModels) { $args += '--no-models' }
 if ($WithTTS) { $args += '--with-tts' }
 if ($WithoutTTS) { $args += '--without-tts' }
+if ($WithDouyin) { $env:QQ_COMPANION_DOUYIN_WORKER = '1' }
 & $python @args
 exit $LASTEXITCODE

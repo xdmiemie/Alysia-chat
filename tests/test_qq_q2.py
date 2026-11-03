@@ -85,7 +85,7 @@ def test_shared_model_file_drives_server_and_astrbot_limits(tmp_path):
     assert provider['thinking_phases']['compression'] is False
 
 
-def test_persona_sync_updates_prompt_and_clears_disabled_old_examples(tmp_path):
+def test_persona_sync_preserves_operator_prompt_and_dialogs_on_restart(tmp_path):
     import sqlite3
     from scripts.qq_companion.configure_model import sync_persona
     from runtime.qwen3.config import Qwen3Config
@@ -99,7 +99,7 @@ def test_persona_sync_updates_prompt_and_clears_disabled_old_examples(tmp_path):
         db.execute("UPDATE personas SET begin_dialogs='[\"old example\"]'")
     sync_persona(path, 'elysia', 'updated persona', model_config=config)
     with sqlite3.connect(path) as db:
-        assert db.execute('SELECT system_prompt,begin_dialogs FROM personas').fetchone() == ('updated persona', '[]')
+        assert db.execute('SELECT system_prompt,begin_dialogs FROM personas').fetchone() == ('current persona', '["old example"]')
 
 
 def test_media_auth_and_rejected_audio(monkeypatch):

@@ -19,11 +19,26 @@ REQUEST_OPTIONS = frozenset({"response_format", "max_tokens", "temperature", "to
 
 
 PHASE_DEFAULTS = {"agent": True, "selection": True, "followup": False,
-                  "music_result": False, "compression": False, "memory": False, "vision": False}
+                  "music_result": False, "compression": False, "memory": False, "vision": False,
+                  "proactive_plan": False, "proactive_reply": False}
 
 
 def request_config(provider, phase=None):
     config = dict(provider.provider_config)
+    if config.get("id") == "astrbot_chat_qwen3":
+        from .inference_queue import state_directory
+        if (state_directory() / "model_settings.applied.json").exists():
+            from .prompt_loader import prompt_path
+            import yaml
+            values = yaml.safe_load((prompt_path().parents[2] / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig"))
+            config["custom_extra_body"] = {**config.get("custom_extra_body", {}),
+                **{k: values[k] for k in ("temperature", "top_p", "top_k", "max_tokens", "reasoning_budget_tokens")}}
+            config["max_context_tokens"] = values["context_size"]
+            config["context_margin_tokens"] = values["context_margin_tokens"]
+            config["thinking_phases"] = {name: values["enable_thinking"] and values.get("thinking_" + name, False)
+                for name in PHASE_DEFAULTS}
+            config["phase_temperatures"] = {name: values["temperature"] if name in {"agent", "selection"} else
+                values["result_temperature"] if name in {"followup", "music_result"} else values["utility_temperature"] for name in PHASE_DEFAULTS}
     extra = deepcopy(config.get("custom_extra_body") or {})
     if phase is not None:
         if phase not in PHASE_DEFAULTS:

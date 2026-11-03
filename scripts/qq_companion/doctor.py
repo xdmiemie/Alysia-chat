@@ -81,6 +81,10 @@ def main() -> int:
     all_ok &= check("Q1 inbound guard installed", (ASTRBOT / "data" / "plugins" / "astrbot_chat_q1" / "main.py").exists())
     for label, port in (("AstrBot dashboard", 6185), ("AstrBot OneBot", 6199), ("SnowLuma WebUI", 5099), ("SnowLuma HTTP", 3000), ("Qwen3", 8080)):
         check(label, listening(port), f"127.0.0.1:{port}")
+    if os.environ.get("QQ_COMPANION_DOUYIN_WORKER") == "1":
+        all_ok &= check("Q8/Q9 isolated browser environment", (ROOT / "envs/douyin/Scripts/python.exe").is_file())
+        all_ok &= check("Q8/Q9 local account configuration", (ROOT / "configs/qq_companion/douyin.local.json").is_file())
+        check("Q8/Q9 API", listening(8767), "127.0.0.1:8767; manual login/identity verification required")
     return 0 if all_ok else 1
 
 

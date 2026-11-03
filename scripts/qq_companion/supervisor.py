@@ -33,6 +33,11 @@ ASTRBOT = ROOT / "external" / "AstrBot"
 SNOWLUMA = ROOT / "external" / "SnowLuma" / "v2.1.1"
 ASTRBOT_PYTHON = ROOT / "envs" / "astrbot" / "Scripts" / "python.exe"
 MODEL_PYTHON = ROOT / "runtime_env" / "python.exe"
+DOUYIN_PYTHON = ROOT / "envs/douyin/Scripts/python.exe"
+
+
+def douyin_requested():
+    return os.environ.get("QQ_COMPANION_DOUYIN_WORKER") == "1"
 
 
 def ignore_interrupts():
@@ -191,9 +196,11 @@ def preflight(no_models: bool, with_tts: bool, *, local_q4: bool = False) -> Non
         if port_open(port):
             raise RuntimeError(f"Port {port} is already occupied; stop the existing service first")
     if not no_models:
-        for port in (8080, 5001, 8765) + ((8766,) if os.environ.get("QQ_COMPANION_VISION_API") == "1" else ()):
+        for port in (8080, 5001, 8765) + ((8766,) if os.environ.get("QQ_COMPANION_VISION_API") == "1" else ()) + ((8767,) if douyin_requested() else ()):
             if port_open(port):
                 raise RuntimeError(f"Port {port} is already occupied; model/media service would not be owned by this supervisor")
+        if douyin_requested() and not DOUYIN_PYTHON.is_file():
+            raise RuntimeError("Q8/Q9 environment missing: run install_douyin.ps1")
         manifest = json.loads((ROOT / "model_store" / "active" / "qwen3.json").read_text(encoding="utf-8"))
         if not (ROOT / manifest["runtime"]["model_file"]).exists():
             raise RuntimeError("Active Qwen GGUF is missing")
@@ -231,6 +238,9 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False, q7_acceptanc
         raise RuntimeError("OneBot configuration failed; inspect the error above")
     STATE.mkdir(parents=True, exist_ok=True)
     LOGS.mkdir(parents=True, exist_ok=True)
+    from scripts.qq_companion.model_control import ModelControl
+    model_control = ModelControl(ROOT, STATE)
+    model_control.recover()
     STOP_FLAG.unlink(missing_ok=True)
     children: list[dict] = []
     handles = []
@@ -239,12 +249,15 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False, q7_acceptanc
     restart_history: dict[str, list[float]] = {}
     broker = GPUResourceBroker()
     dispatcher = None
+    from scripts.qq_companion.desktop_webui import DesktopWebUI, PROTOCOL
+    desktop = DesktopWebUI(STATE, STOP_FLAG)
     last_cache_cleanup = time.monotonic()
 
     def write_registry():
         temporary = REGISTRY.with_suffix(".tmp")
         temporary.write_text(json.dumps({"supervisor_pid": os.getpid(),
-            "supervisor_created_at": psutil.Process().create_time(), "children": children}, indent=2), encoding="utf-8")
+            "supervisor_created_at": psutil.Process().create_time(), "desktop_protocol": PROTOCOL,
+            "children": children}, indent=2), encoding="utf-8")
         temporary.replace(REGISTRY)
 
     def stop_entry(entry):
@@ -383,12 +396,27 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False, q7_acceptanc
         astr_env["ASTRBOT_DISABLE_METRICS"] = "1"
         start_service("astrbot", [str(ASTRBOT_PYTHON), "-m", "astrbot.cli", "run", "--port", "6185"],
                       ASTRBOT, 6199, 120, astr_env)
+        if not no_models and not q7_acceptance and douyin_requested():
+            douyin_token = STATE / "douyin_token"
+            if not douyin_token.exists():
+                douyin_token.write_text(secrets.token_urlsafe(32), encoding="ascii")
+            from services.douyin_worker.security import protect
+            protect(douyin_token)
+            douyin_env = {**astr_env, "QQ_COMPANION_DOUYIN_TOKEN": douyin_token.read_text(encoding="ascii").strip(),
+                          "PLAYWRIGHT_BROWSERS_PATH": str(ROOT / "tools/playwright-browsers")}
+            start_service("douyin_worker", [str(DOUYIN_PYTHON), "-m", "uvicorn", "services.douyin_worker.app:app",
+                "--host", "127.0.0.1", "--port", "8767"], ROOT, 8767, 45, douyin_env)
         snow_env = os.environ.copy()
         snow_env["PATH"] = str(SNOWLUMA) + os.pathsep + snow_env.get("PATH", "")
         snow_process = start_service("snowluma", [str(SNOWLUMA / "node.exe"), "index.mjs"], SNOWLUMA, 5099, 45, snow_env)
         wait_onebot(snow_process)
+        desktop.start()
         print("Q2 services started. NTQQ must be logged in. Ctrl+C stops managed services.", flush=True)
+        from integrations.qq_astrbot.plugin.foreground_activity import ForegroundActivity
+        foreground = ForegroundActivity(STATE)
         while not STOP_FLAG.exists():
+            if dispatcher is not None:
+                model_control.step(model_switch, dispatcher.state, foreground)
             if dispatcher is not None and dispatcher.state.mode() == "ready":
                 dispatcher.step()
             if dispatcher is not None and time.monotonic() - last_cache_cleanup >= 3600:
@@ -398,7 +426,7 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False, q7_acceptanc
                 if not psutil.pid_exists(entry["pid"]):
                     stop_entry(entry)  # Also closes any surviving grandchildren.
                     name = entry["name"]
-                    optional = name in ("gpt_sovits", "tts_wrapper", "sensevoice", "media_api", "vision_api")
+                    optional = name in ("gpt_sovits", "tts_wrapper", "sensevoice", "media_api", "vision_api", "douyin_worker")
                     if name not in ("astrbot", "snowluma") and not optional:
                         raise RuntimeError(f"Managed service {name} exited; see ignored logs")
                     now = time.monotonic()
@@ -429,6 +457,7 @@ def run(no_models: bool, with_tts: bool, *, local_q4: bool = False, q7_acceptanc
         ignore_interrupts()
         STOP_FLAG.touch()
         try:
+            desktop.close()
             for entry in list(reversed(children)):
                 try:
                     stop_entry(entry)

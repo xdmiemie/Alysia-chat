@@ -59,7 +59,12 @@ def fingerprint(config=None):
     payload = {"model": active.get("model_id"), "runtime": active.get("runtime"), "build": build,
                "pipeline": {name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest()
                    for name in ("vision_media.py", "vision_analysis.py", "vision_runtime.py", "vision_client.py", "request_provider.py", "model_messages.py")},
-               "runtime_settings": yaml.safe_load((root / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig")),
+               # Sampling/personality controls do not alter pixel ingestion or
+               # memory capacity. Structural changes still require fresh gates.
+               "runtime_settings": {key: value for key, value in yaml.safe_load(
+                   (root / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig")).items()
+                   if key in {"model_manifest", "context_size", "gpu_layers", "cache_type_k", "cache_type_v",
+                              "mmproj_offload", "image_min_tokens", "image_max_tokens", "prompt_cache_mib"}},
                "prompts": {key: prompts[key] for key in ("vision_analyze", "vision_merge", "vision_context", "vision_reply")},
                "budgets": {k: v for k, v in config.items() if k != "enabled"}}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

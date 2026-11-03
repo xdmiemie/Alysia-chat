@@ -23,6 +23,8 @@ REQUIRED_PROMPTS = frozenset({
     "memory_use", "memory_extract", "memory_verify", "memory_compress", "memory_shared_topics", "diary_generate", "diary_public",
     "qzone_daily", "qzone_event", "qzone_interaction",
     "vision_analyze", "vision_merge", "vision_context", "vision_reply",
+    "douyin_interest",
+    "proactive_plan", "proactive_review", "proactive_reply",
 })
 
 

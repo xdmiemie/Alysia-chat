@@ -150,8 +150,7 @@ def sync_persona(db_path: Path, character_id: str, prompt: str, *, model_config:
     with sqlite3.connect(db_path, timeout=10) as db:
         db.execute("INSERT INTO personas (persona_id, system_prompt, begin_dialogs, tools, skills, sort_order, created_at, updated_at) "
                    "VALUES (?, ?, ?, 'null', 'null', 0, ?, ?) "
-                   "ON CONFLICT(persona_id) DO UPDATE SET system_prompt=excluded.system_prompt, "
-                   "begin_dialogs=excluded.begin_dialogs, updated_at=excluded.updated_at",
+                   "ON CONFLICT(persona_id) DO NOTHING",
                    (character_id, prompt, dialogs, timestamp, timestamp))
 
 

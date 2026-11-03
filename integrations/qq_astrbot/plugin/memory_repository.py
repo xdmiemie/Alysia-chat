@@ -406,3 +406,15 @@ class MemoryRepository:
             self._put(db, key=identity(character, owner, source_ref), character=character, scope="video", owner=owner,
                 subject="video", fact_key=source_ref, source_type="douyin", source_ref=source_ref,
                 summary=summary[:2000], tags=tags[:12], salience=0.5, confidence=confidence, now=now)
+
+    def add_public_video(self, bot, source_ref, summary, tags, *, character="elysia", confidence=0.8, now=None):
+        """Q8 vetted public video knowledge, never a user's private fact."""
+        owner = shared_owner(bot, character)
+        now = time.time() if now is None else now
+        if not isinstance(summary, str) or not summary.strip() or not 0.7 <= confidence <= 1:
+            raise ValueError("Invalid public video memory")
+        with self.connection() as db:
+            self._put(db, key=identity(character, owner, source_ref), character=character, scope="video", owner=owner,
+                subject="video", fact_key=source_ref, source_type="douyin", source_ref=source_ref,
+                summary=summary[:2000], tags=tags[:12], salience=0.5, confidence=confidence,
+                visibility="shared", now=now)

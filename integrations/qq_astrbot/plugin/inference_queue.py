@@ -82,6 +82,11 @@ class InferenceQueue:
                 raise TimeoutError("inference_queue_deadline")
             if db.execute("SELECT 1 FROM inference_requests WHERE status='running'").fetchone():
                 return False
+            priority = db.execute("SELECT priority FROM inference_requests WHERE id=?", (request_id,)).fetchone()[0]
+            if priority >= 20:
+                from .foreground_activity import ForegroundActivity
+                if ForegroundActivity(self.path.parent).blocked():
+                    return False
             first = db.execute("SELECT id FROM inference_requests WHERE status='waiting' ORDER BY priority,seq LIMIT 1").fetchone()
             if first and first[0] == request_id:
                 db.execute("UPDATE inference_requests SET status='running',started=? WHERE id=?", (now, request_id))

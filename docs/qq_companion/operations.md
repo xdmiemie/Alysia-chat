@@ -1,5 +1,11 @@
 # QQ companion operations (Windows 11)
 
+The authenticated [大肥鱼控制台](webui.md) adds Douyin monitoring, memory and context CRUD,
+model settings with supervised restart, shared persona editing, complete request usage,
+application schedules and Chinese prompt controls to AstrBot's native WebUI.
+Existing AstrBot personas are now preserved across startup; the character text file
+initializes a missing persona only. QQ, diaries and Douyin use the AstrBot persona store.
+
 Q6 publishing, local controls and verification boundaries are documented in
 [q6.md](q6.md). Daily publishing defaults to23:40, two short sentences, once per
 natural day; important calendar/admin events have no daily count quota and are
@@ -359,12 +365,34 @@ component, visual prompt, budget or pipeline changes invalidate old evidence.
 All model callers share a foreground-priority queue. See [Q7 operations](q7.md)
 and [acceptance evidence](acceptance.md).
 
+Deployment checks must include `VisionGates.enabled()` for all previously enabled
+capabilities. The fingerprint includes `request_provider.py`: even adding a
+text-only request phase invalidates the saved visual evidence. Unit tests and a
+healthy model endpoint do not refresh it. Run the full `probe_q7_model.py
+--use-running --enable-passed` acceptance after such a change, then verify the
+source and deployed plugin fingerprints agree. Do not replace the saved
+fingerprint without successful visual evidence. If Douyin already stopped with
+`q7_image_gate_required` or `q7_video_gate_required`, refresh the evidence first,
+then use its authenticated `/v1/douyin/resume` endpoint and verify the checkpoint
+finishes; merely waiting for QQ idle time cannot clear this persistent halt.
+
 Video sampling is one frame every two seconds, in segments of at most 24 seconds
 / 12 frames. Each model request currently takes at most four frames; further
 requests cover the remaining frames. Normal startup deploys the plugin and
 loads the projection component once. Set `configs/qq_companion/vision.yaml`
 `enabled: false` to disable visual input. The optional local analysis API starts
 only with `QQ_COMPANION_VISION_API=1`.
+
+## Q8/Q9 Douyin browsing and native sharing
+
+See [Q8/Q9 operations and API](q8_q9.md). Start with `start_all.ps1 -WithDouyin`
+or `QQ_COMPANION_DOUYIN_WORKER=1`. A separate browser environment owns port 8767,
+while all inference uses the existing resident Qwen. The default is 20 videos/hour
+from 10:00 to 24:00, pausing throughout QQ activity. Frequency changes are hot and
+persistent. Sharing uses the configured Douyin account and mutual Douyin friends,
+with 5 successful shares/day/recipient and a 1-hour cooldown; no QQ forwarding.
+The development build has no first-week manual review. Unknown send outcomes halt
+sharing and require evidence-based reconciliation; they are never auto-retried.
 
 ## Rollback
 

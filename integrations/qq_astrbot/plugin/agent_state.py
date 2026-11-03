@@ -177,7 +177,7 @@ class AgentStore:
 
     def consume(self, run: AgentRun, kind: str):
         self.work(run)
-        field_name, maximum = {"followups": ("followups", MAX_FOLLOWUPS), "reply_retries": ("reply_retries", 1),
+        field_name, maximum = {"followups": ("followups", getattr(self, "max_followups", MAX_FOLLOWUPS)), "reply_retries": ("reply_retries", 1),
                                "requests": ("requests", run.max_requests),
                                "tool_calls": ("tool_calls", run.max_tools)}[kind]
         if getattr(run, field_name) >= maximum:

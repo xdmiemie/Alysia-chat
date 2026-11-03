@@ -1,5 +1,7 @@
 # astrbot-chat
 
+Windows 一键启动：在文件资源管理器中双击根目录的 **`启动astrbot-chat.cmd`**，自动启动 QQ、抖音及模型服务，并打开独立 AstrBot WebUI 窗口。关闭最后一个 WebUI 窗口会自动停止模型和配套服务。控制台的 8 项管理功能和停止方法见 [WebUI 使用说明](docs/qq_companion/webui.md)。
+
 This repository follows `astrbot-chat项目阶段计划.md` for current QQ development.
 The expired WeChat stage plan is retained only as an archive.
 

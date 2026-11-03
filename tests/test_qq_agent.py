@@ -481,6 +481,23 @@ def test_group_does_not_start_private_followup_flow(loop, tmp_path):
     loop.run_until_complete(check())
 
 
+@pytest.mark.parametrize('response,draws', [(followup(None),0), (followup('primary'),0),
+    (tool_call(),0), (LLMResponse('assistant',completion_text='invalid'),0), (followup('one?'),1)])
+def test_only_valid_wanted_followup_enters_probability_gate(loop, tmp_path, monkeypatch, response, draws):
+    from integrations.qq_astrbot.plugin.proactive_store import ProactiveStore, DEFAULTS
+    monkeypatch.setattr('integrations.qq_astrbot.plugin.main.remaining_seconds', lambda *a, **kw:0)
+    async def check():
+        value = await make_run(tmp_path, [candidate('primary')])
+        store = ProactiveStore(tmp_path, rng=SimpleNamespace(random=lambda:.999999))
+        value.owner.proactive = SimpleNamespace(store=store, config=DEFAULTS)
+        value.provider.followup_outputs = [response]
+        await deliver_primary(value)
+        with store.connection() as db:
+            assert db.execute('SELECT count(*) FROM draws').fetchone()[0] == draws
+        assert [chain.get_plain_text() for chain in value.event.sent] == ['primary']
+    loop.run_until_complete(check())
+
+
 def test_provider_fallback_keeps_native_tool_receipts_and_request_budget(loop, tmp_path):
     async def check():
         value = await make_run(tmp_path, [tool_call(), RuntimeError("provider unavailable")])
@@ -1202,6 +1219,8 @@ def test_group_chatter_does_not_invalidate_foreground_or_music(loop, tmp_path):
         value = await make_run(tmp_path, [])
         owner = value.owner
         owner.guard = InboundGuard(tmp_path / 'inbound.db')
+        from integrations.qq_astrbot.plugin.foreground_activity import ForegroundActivity
+        owner.foreground_activity = ForegroundActivity(tmp_path)
         owner.router = MessageRouter(tmp_path / 'routing.db')
         owner.latest_inbound, owner.group_sizes = {}, {}
         owner.media.resume = lambda: None
@@ -1258,6 +1277,93 @@ def test_unavailable_selected_cover_returns_explicit_failure_without_creating_jo
         replay = await value.owner.agent_tools.execute(value.event, "musiccover", {"candidate": 1, "action": "start"})
         assert replay["replayed"] and replay["status"] == "unavailable"
         unregister_active_runner(value.event.unified_msg_origin, value.runner)
+    loop.run_until_complete(check())
+
+
+def foreground_owner(tmp_path):
+    from integrations.qq_astrbot.plugin.foreground_activity import ForegroundActivity
+    from integrations.qq_astrbot.plugin.media_state import MediaState
+    from integrations.qq_astrbot.plugin.song_tasks import SongTasks
+    owner = object.__new__(Q1Guard)
+    owner.foreground_activity = ForegroundActivity(tmp_path)
+    owner.agent_store = AgentStore(tmp_path / 'agent.db')
+    owner.latest_inbound = {}
+    owner.media = SimpleNamespace(client=SimpleNamespace(state=MediaState(tmp_path)),
+                                  song_tasks=SongTasks(tmp_path / 'songs.db'))
+    return owner
+
+
+@pytest.mark.parametrize('exit_path', ['stopped', 'empty_reply', 'exception', 'cancelled', 'delivered'])
+def test_pipeline_releases_foreground_even_without_agent_or_reply(loop, tmp_path, exit_path):
+    from astrbot.core.pipeline.scheduler import PipelineScheduler
+    async def check():
+        owner = foreground_owner(tmp_path)
+        event = Event()
+        incoming = Incoming('999', '101', 'm1', 'hello', '')
+        event.set_extra('qq_incoming', incoming)
+        started, finish = asyncio.Event(), asyncio.Event()
+        class Admit:
+            async def process(self, event):
+                owner._observe_request(event, incoming)
+                started.set()
+        class Exit:
+            async def process(self, event):
+                await finish.wait()
+                if exit_path == 'stopped':
+                    event.stop_event()
+                elif exit_path == 'exception':
+                    raise RuntimeError('later pipeline stage failed')
+                elif exit_path == 'delivered':
+                    # Normal delivery already releases; task completion is idempotent.
+                    owner._release_lease(event)
+                # empty_reply has neither Agent lifecycle nor after_message_sent.
+        scheduler = object.__new__(PipelineScheduler)
+        scheduler.stages = [Admit(), Exit()]
+        task = asyncio.create_task(scheduler._process_stages(event))
+        await started.wait()
+        assert owner.foreground_activity.blocked()
+        await asyncio.sleep(0)
+        assert owner.foreground_activity.blocked()  # Hold through awaited delivery.
+        if exit_path == 'cancelled':
+            task.cancel()
+        else:
+            finish.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+        assert not owner.foreground_activity.blocked()
+        assert event.get_extra('qq_foreground_activity') is None
+        with owner.foreground_activity.connection() as db:
+            since = db.execute('SELECT since FROM idle').fetchone()[0]
+        assert owner.foreground_activity.blocked(60, now=since + 59)
+        assert not owner.foreground_activity.blocked(60, now=since + 61)
+        owner._release_lease(event)
+        with owner.foreground_activity.connection() as db:
+            assert db.execute('SELECT since FROM idle').fetchone()[0] == since
+    loop.run_until_complete(check())
+
+
+def test_finished_pipeline_keeps_other_qq_request_busy(loop, tmp_path):
+    async def check():
+        owner = foreground_owner(tmp_path)
+        started = [asyncio.Event(), asyncio.Event()]
+        finish = [asyncio.Event(), asyncio.Event()]
+        async def pipeline(index):
+            incoming = Incoming('999', str(101 + index), 'm' + str(index), 'hello', '')
+            event = Event()
+            event.set_extra('qq_incoming', incoming)
+            owner._observe_request(event, incoming)
+            started[index].set()
+            await finish[index].wait()
+        tasks = [asyncio.create_task(pipeline(i)) for i in range(2)]
+        await asyncio.gather(*(ready.wait() for ready in started))
+        finish[0].set()
+        await tasks[0]
+        await asyncio.sleep(0)
+        assert owner.foreground_activity.blocked()
+        finish[1].set()
+        await tasks[1]
+        await asyncio.sleep(0)
+        assert not owner.foreground_activity.blocked()
     loop.run_until_complete(check())
 
 

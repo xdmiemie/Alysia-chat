@@ -8,8 +8,10 @@ runtime_env/
 runtime_env_qwen/
 envs/song/
 envs/astrbot/
+envs/douyin/
 tools/ffmpeg/
 tools/llama.cpp/
+tools/playwright-browsers/
 
 storage/logs/*
 storage/temporary/*

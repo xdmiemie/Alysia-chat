@@ -1,4 +1,12 @@
 {
+  "followup_limit": {"description": "每次私聊追加回复决策上限（0–5，0关闭）；每轮可选择不追加", "type": "int", "default": 1},
+  "followup_average_probability": {"description": "对话内主动回复长期平均概率（0–1）；仅模型决定追加才计次，最低为1/保底次数", "type": "float", "default": 0.3},
+  "followup_pity_limit": {"description": "对话内主动回复保底次数（1–100）；命中后重新计数", "type": "int", "default": 5},
+  "context_plans_enabled": {"description": "启用由聊天内容触发的私聊主动计划", "type": "bool", "default": true},
+  "context_plan_limit": {"description": "每个私聊最多待执行聊天计划（1–100）；满额跳过新计划，无冷却", "type": "int", "default": 5},
+  "periodic_proactive_enabled": {"description": "启用固定轮次私聊主动回复判断；没有想说的就跳过", "type": "bool", "default": true},
+  "periodic_interval_minutes": {"description": "固定主动回复判断间隔分钟（1–10080）", "type": "float", "default": 120},
+  "periodic_jitter_minutes": {"description": "固定间隔前后各随机波动分钟（小于间隔）；默认120±20分钟", "type": "float", "default": 20},
   "memory_enabled": {"description": "Q5 自动持久化记忆（含敏感事实；原始事实仅当前私聊或群可用）", "type": "bool", "default": true},
   "memory_timezone": {"description": "日记 IANA 时区；system 使用本机时区并记录解析结果", "type": "string", "default": "system"},
   "diary_enabled": {"description": "每天生成本地私人角色日记；不自动发布", "type": "bool", "default": true},

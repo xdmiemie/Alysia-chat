@@ -125,6 +125,16 @@ def migrate_archive(directory=None):
 
 def append_exchange(record, directory=None):
     directory = Path(directory) if directory is not None else debug_directory()
+    # The durable counter survives archive rotation; UUID prevents double counting.
+    from .control_store import ControlStore
+    if record.get("request_id"):
+        ControlStore(directory.parent.parent).record_usage(record)
+        from .control_store import public_exchange
+        from .prompt_loader import load_prompts
+        try:
+            record = {**record, "prompt_names": public_exchange(record, load_prompts())["prompt_names"]}
+        except (ValueError, OSError, AttributeError):
+            pass
     with _archive_lock(directory):
         _migrate_legacy(directory)
         files = _archive_files(directory)
