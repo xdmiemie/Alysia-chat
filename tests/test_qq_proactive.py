@@ -143,7 +143,7 @@ def runtime(tmp_path, monkeypatch):
             get_config=lambda **kw:config, get_platform_inst=lambda key:platform),
         foreground_activity=ForegroundActivity(tmp_path),
         media=NS(client=NS(state=NS(mode=lambda:'ready'), admission=admission)),
-        memory=NS(provider_factory=provider_factory, persona_factory=persona_factory),
+        memory=NS(provider_factory=provider_factory, persona_factory=persona_factory, record_sent=lambda *args, **kwargs: None),
         logger=NS(exception=lambda *a:None))
     rt = ProactiveRuntime(owner, tmp_path)
     rt.store.clock = lambda: now[0]

@@ -1,4 +1,4 @@
-"""Local operator-only Q5 inspection; no QQ commands, deletion or forgetting API."""
+"""Local operator inspection. Status supports shared memory; content commands inspect legacy data."""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--character", default="elysia")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
-    listing = commands.add_parser("list", help="List every memory without search ranking or a result limit")
+    listing = commands.add_parser("list", help="List legacy memories; inspect shared records through the authenticated WebUI")
     listing.add_argument("--owner", help="Optionally restrict to one exact owner")
     listing.add_argument("--include-archived", action="store_true", help="Also show archived memory records")
     search = commands.add_parser("search")
@@ -30,6 +30,15 @@ def main():
     args = parser.parse_args()
     if not args.database.is_file():
         raise SystemExit("Memory database does not exist yet; start the Q5 plugin first.")
+    if args.command == "status":
+        with sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='sm_meta'").fetchone():
+                result={"schema":"shared-v1","config":json.loads(db.execute("SELECT value FROM sm_meta WHERE key='config'").fetchone()[0]),
+                    "modules":[dict(module=row[0],short=row[1],long=row[2]) for row in db.execute(
+                        "SELECT module,sum(short),sum(long) FROM sm_records WHERE character=? AND status='active' GROUP BY module",(args.character,))],
+                    "pending_sources":db.execute("SELECT count(*) FROM sm_events WHERE character=? AND status='pending'",(args.character,)).fetchone()[0]}
+                print(json.dumps(result,ensure_ascii=False,indent=2))
+                return
     if args.command == "list":
         conditions, params = ["character_id=?"], [args.character]
         if args.owner:

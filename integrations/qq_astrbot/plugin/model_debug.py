@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import inspect
@@ -135,6 +136,19 @@ def append_exchange(record, directory=None):
             record = {**record, "prompt_names": public_exchange(record, load_prompts())["prompt_names"]}
         except (ValueError, OSError, AttributeError):
             pass
+    record = memory_safe_exchange(record)
+    database = directory.parent.parent / "memories.sqlite3"
+    if database.exists():
+        import sqlite3
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='sm_governance'").fetchone():
+                scopes = {r[0] for r in db.execute("SELECT scope FROM sm_governance WHERE retention!='normal' UNION "
+                    "SELECT scope FROM sm_subject_rules WHERE retention!='normal'")}
+                raw = json.dumps(record.get("request"), ensure_ascii=False)
+                if any(scope and scope in raw for scope in scopes) or (scopes and record.get("phase") in {"vision", "proactive_plan", "proactive_reply"}):
+                    record["request"] = {"messages": [], "redacted": "retention_policy"}
+                    response = record.get("response")
+                    record["response"] = {"usage": response.get("usage")} if isinstance(response, dict) else None
     with _archive_lock(directory):
         _migrate_legacy(directory)
         files = _archive_files(directory)
@@ -147,6 +161,51 @@ def append_exchange(record, directory=None):
         records.append(record)
         _write_records(current, records)
         _prune(directory)
+
+
+def memory_safe_exchange(record):
+    """Memory bodies are not a second debug archive or a replay source."""
+    record = deepcopy(record)
+    if record.get("phase") == "memory":
+        record["request"] = {"messages": [], "redacted": "private_memory_task"}
+        response = record.get("response")
+        record["response"] = {"usage": response.get("usage")} if isinstance(response, dict) else None
+        return record
+    def scrub(value):
+        if isinstance(value, dict):
+            return {key: ("[memory view omitted]" if key in {"relevant_memories", "shared_memory", "memory_view"} else scrub(item)) for key, item in value.items()}
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (ValueError, TypeError):
+                return value
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(scrub(parsed), ensure_ascii=False)
+        return value
+    if "request" in record:
+        record["request"] = scrub(record["request"])
+    return record
+
+
+def purge_memory_debug(directory, scopes=()):
+    """Remove governed scope captures and old memory tasks, keeping numeric telemetry."""
+    directory = Path(directory)
+    if not directory.exists():
+        return
+    with _archive_lock(directory):
+        _migrate_legacy(directory)
+        for path in _archive_files(directory):
+            records = []
+            for record in _read_records(path):
+                raw = json.dumps(record.get("request"), ensure_ascii=False)
+                if record.get("phase") == "memory" or any(scope and scope in raw for scope in scopes) or (scopes and record.get("phase") in {"vision", "proactive_plan", "proactive_reply"}):
+                    record["request"] = {"messages": [], "redacted": "memory_governance"}
+                    response = record.get("response")
+                    record["response"] = {"usage": response.get("usage")} if isinstance(response, dict) else None
+                records.append(memory_safe_exchange(record))
+            _write_records(path, records)
 
 
 def _body(content):

@@ -80,6 +80,21 @@ class RequestBudget:
         self.base = base.rstrip("/").removesuffix("/v1") if (
             parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"}) else ""
 
+    async def count_text(self, text):
+        """Real tokenizer for body limits and approximate per-block attribution."""
+        if not self.base:
+            raise ContextCapacityError("local_token_counter_unavailable")
+        def tokenize():
+            request = Request(self.base + "/tokenize", data=json.dumps({"content": text,
+                "add_special": False, "parse_special": False}, ensure_ascii=False).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with build_opener(ProxyHandler({})).open(request, timeout=3) as response:
+                return len(json.load(response)["tokens"])
+        try:
+            return await asyncio.to_thread(tokenize)
+        except Exception as exc:
+            raise ContextCapacityError("local_token_counter_failed") from exc
+
     async def count(self, messages, tools=None):
         if not self.base:
             raise ContextCapacityError("local_token_counter_unavailable")

@@ -440,6 +440,9 @@ def test_real_plugin_lifecycle_has_one_qzone_scheduler_and_closes_it(tmp_path, m
     monkeypatch.setenv("ASTRBOT_CHAT_QZONE_CONFIG", str(path))
     monkeypatch.setenv("ASTRBOT_CHAT_STATE_DIR", str(tmp_path / "state"))
     class Context:
+        @property
+        def conversation_manager(self): return self
+        async def get_conversations(self): return []
         def add_llm_tools(self, *tools): pass
     async def check():
         plugin = Q1Guard(Context(), {"memory_enabled": False})

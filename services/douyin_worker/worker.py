@@ -14,6 +14,8 @@ import jsonschema
 from integrations.qq_astrbot.plugin.foreground_activity import ForegroundActivity
 from integrations.qq_astrbot.plugin.media_state import MediaState
 from integrations.qq_astrbot.plugin.memory_repository import MemoryRepository, shared_owner
+from integrations.qq_astrbot.plugin.shared_memory import SharedMemory, RequestContext
+from integrations.qq_astrbot.plugin.memory_tasks import MemoryTasks
 from integrations.qq_astrbot.plugin.vision_config import VisionGates, load_vision_config, project_root
 from integrations.qq_astrbot.plugin.vision_media import MediaError, validate_url, decode_images
 from integrations.qq_astrbot.plugin.vision_store import VisionStore
@@ -37,6 +39,7 @@ class Worker:
         self.directory, self.clock = directory, clock
         self.config = config or ConfigStore()
         self.store = Store(directory, clock)
+        self.memory = SharedMemory(directory / "memories.sqlite3", clock=clock, initial_timezone=self.config.read().timezone)
         self.foreground = ForegroundActivity(directory)
         self.media_state = MediaState(directory)
         self.vision_config = load_vision_config()
@@ -69,6 +72,13 @@ class Worker:
             return "sleeping"
         if self.foreground.blocked(config.idle_resume_seconds):
             return "chatting_or_idle_cooldown"
+        with self.memory.connection() as db:
+            if db.execute("SELECT 1 FROM sm_events WHERE module='qq' AND status='pending' LIMIT 1").fetchone():
+                return "waiting_for_session_summaries"
+        if self.memory.pressure():
+            return "memory_pressure"
+        if config.timezone != self.memory.config["timezone"]:
+            return "memory_timezone_mismatch"
         if self.media_state.mode() != "ready":
             return "resource_busy"
         return None
@@ -115,18 +125,37 @@ class Worker:
                     return bytes(data)
         raise MediaError("media_redirect_limit")
 
-    def remember(self, config, video, analysis):
+    async def remember(self, config, video, analysis):
         # This public source has no private conversation input. Owner/account mappings
         # come only from Q5's existing registered accounts, never the browser/model.
         active = json.loads((project_root() / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
         character = active["character_id"]
         repo = MemoryRepository(self.directory / "memories.sqlite3")
+        try:
+            occurred = self.store.watch_time(config.account.douyin_id, video["id"])
+        except ValueError:
+            # Old analysis retries have no trustworthy watch timestamp. Keep their
+            # original analysis in the legacy video store, without inventing a date.
+            self.store.set("memory_legacy:" + config.account.douyin_id + ":" + video["id"], "watch_time_unknown")
+            return
         owners = []
         for registered in repo.accounts(character):
             bot = registered["bot"]
-            repo.add_public_video(bot, video["url"], analysis["summary"], analysis.get("objects", [])[:12],
-                                  character=character, confidence=analysis["confidence"], now=self.clock())
-            owners.append([shared_owner(bot, character), character])
+            event = self.memory.append_event(bot=bot, character=character, module="video", scope="",
+                event_id="douyin:" + config.account.douyin_id + ":" + video["id"], subject="character", role="source",
+                occurred=occurred, visibility="shared",
+                payload={"material_id": "douyin:" + video["id"], "analysis": analysis})
+            if event:
+                owners.append([event, character])
+                from .persona import active_persona
+                async def model(key, payload, schema, tokens):
+                    return await self.model.memory_task(self.memory, RequestContext(character, bot, "video",
+                        purpose=key, activity="watching_video", allowed_ids=tuple(item[1] for item in json.loads(tasks.job["snapshot"])
+                            if item[0] == "sm_records")), key, payload, schema, tokens)
+                tasks = MemoryTasks(self.memory, model, count_text=self.model.count_text,
+                    persona=active_persona(project_root(), character), checkpoint=self.checkpoint)
+                await tasks.watch(bot=bot, character=character, event_id=event, material_id="douyin:" + video["id"],
+                    analysis=analysis, shared=True, occurred=occurred, source_ids=[event])
         self.store.set("memory_owners:" + config.account.douyin_id + ":" + video["id"], owners)
 
     async def process(self, config, video):
@@ -158,6 +187,8 @@ class Worker:
                 return
         self.checkpoint()
         self.store.save_video(account, video["id"], "analyzed", analysis=analysis)
+        # Every valid analysis gets an internal character summary, before and independent of sharing.
+        await self.remember(config, video, analysis)
         active = json.loads((project_root() / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
         character = active["character_id"]
         from .persona import active_persona
@@ -165,8 +196,6 @@ class Worker:
         interest = json.loads(row["interest"]) if row["interest"] else await score(self.model, analysis, video["title"], persona)
         self.checkpoint()
         self.store.save_video(account, video["id"], "rated", interest=interest)
-        if acceptable(analysis, interest):
-            self.remember(config, video, analysis)
         if recommend(analysis, interest):
             await self.share(config, video, analysis, interest)
         self.store.save_video(account, video["id"], "done" if acceptable(analysis, interest) else "filtered")

@@ -40,6 +40,35 @@ def picture(color="red", size=(1600, 800)):
     return out.getvalue()
 
 
+def test_raw_vision_analysis_never_receives_role_memory(tmp_path,monkeypatch,loop):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from integrations.qq_astrbot.plugin.vision_runtime import VisionRuntime
+    from integrations.qq_astrbot.plugin.context_budget import RequestBudget
+    from integrations.qq_astrbot.plugin import request_provider
+    class Media:
+        @asynccontextmanager
+        async def admission(self,**kwargs): yield
+    class Memory:
+        enabled=True
+        @property
+        def shared(self): raise AssertionError("raw analysis must not recall memory")
+    calls=[]
+    async def chat(*args,**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(completion_text='{}',tools_call_name=[],raw_completion=None)
+    async def fit(*args,**kwargs): return [],1,0
+    monkeypatch.setattr(request_provider,"request_chat",chat)
+    monkeypatch.setattr(RequestBudget,"fit",fit)
+    runtime=VisionRuntime(tmp_path,Media(),memory=Memory())
+    async def provider(): return SimpleNamespace(provider_config={})
+    runtime.provider_factory=provider
+    schema={"type":"json_object"}
+    assert loop.run_until_complete(runtime.call("vision_analyze",{"source":"synthetic"},[],schema))=='{}'
+    assert calls[0]["response_format"] is schema and calls[0]["func_tool"] is None
+    assert "shared_memory" not in str(calls[0]["contexts"][-1].content)
+
+
 def test_activation_rejects_wrong_projector_before_changing_manifest(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from runtime.qwen3 import model_registry

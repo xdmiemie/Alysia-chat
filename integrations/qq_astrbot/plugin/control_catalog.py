@@ -1,6 +1,19 @@
 """Chinese labels and invocation descriptions for the editable prompt bundle."""
 
 PROMPTS = {
+    "shared_memory_use": ("共享记忆使用规则", "角色记忆任务与请求视图"),
+    "shared_memory_digest": ("候选临时摘要", "大量候选的分层比较；不替换具体视频原文"),
+    "shared_qq_summary": ("会话分事项摘要", "空闲或增量检查点；逐会话生成短期记忆"),
+    "shared_qq_special": ("QQ 特殊候选", "长期意图与角色认同同时成立时"),
+    "shared_qq_review": ("QQ 特殊复核", "特殊条目提升长期前"),
+    "shared_qq_correction": ("已有记忆纠正", "真实用户对已有状态明确纠正时，独立于喜欢判定"),
+    "shared_qq_correction_review": ("纠正依据复核", "更新已有记忆前独立核验"),
+    "shared_video_watch": ("角色观看摘要", "客观分析后的独立内部任务"),
+    "shared_video_daily": ("视频每日整理", "完整自然日结束后"),
+    "shared_video_compact": ("视频十批整理", "十个活跃批次或受控重选"),
+    "shared_diary_daily": ("共享素材私人日记", "次日读取所有合格短期素材"),
+    "shared_diary_public": ("独立公开日记候选", "仅基于允许公开的材料，禁止私人日记换标签"),
+    "shared_diary_compact": ("累计日记整理", "十五条合并，覆盖日期不截断"),
     "model_protocol": ("模型协议", "每次模型请求；当前模型配置可覆盖此项"),
     "qq_context": ("QQ 会话规则", "QQ 主回复及继承其规则的追问"),
     "reply_output": ("回复格式", "主 Agent 生成最终回复"),

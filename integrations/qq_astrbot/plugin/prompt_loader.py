@@ -24,6 +24,9 @@ REQUIRED_PROMPTS = frozenset({
     "qzone_daily", "qzone_event", "qzone_interaction",
     "vision_analyze", "vision_merge", "vision_context", "vision_reply",
     "douyin_interest",
+    "shared_memory_use", "shared_memory_digest", "shared_qq_summary", "shared_qq_special", "shared_qq_review",
+    "shared_qq_correction", "shared_qq_correction_review",
+    "shared_video_watch", "shared_video_daily", "shared_video_compact", "shared_diary_daily", "shared_diary_public", "shared_diary_compact",
     "proactive_plan", "proactive_review", "proactive_reply",
 })
 

@@ -29,6 +29,7 @@ class Incoming:
     post_type: str = "message"
     member_count: int | None = None
     is_group_admin: bool = False
+    occurred_at: float | None = None
 
     @property
     def scope(self) -> str:

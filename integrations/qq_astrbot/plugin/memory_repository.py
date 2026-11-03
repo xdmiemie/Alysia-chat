@@ -115,6 +115,10 @@ class MemoryRepository:
                     'public_candidate' AS privacy_level,created_at
                   FROM diary_entries WHERE public_candidate IS NOT NULL;
             """)
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='sm_meta'").fetchone():
+                for table in ("memory_items", "diary_entries"):
+                    db.execute(f"CREATE TRIGGER IF NOT EXISTS sm_no_insert_{table} BEFORE INSERT ON {table} "
+                               "BEGIN SELECT RAISE(ABORT,'legacy_long_term_write_disabled'); END")
 
     @contextmanager
     def connection(self):
@@ -146,7 +150,7 @@ class MemoryRepository:
         now = time.time() if now is None else now
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM memory_inbox WHERE character_id=? AND status!='done' "
+            row = db.execute("SELECT * FROM memory_inbox WHERE character_id=? AND status='pending' "
                 "AND retry_at<=? AND lease_until<=? ORDER BY created_at,id LIMIT 1", (character, now, now)).fetchone()
             if row:
                 db.execute("UPDATE memory_inbox SET lease_until=? WHERE id=?", (now + 180, row["id"]))

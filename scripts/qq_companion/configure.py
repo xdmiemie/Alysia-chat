@@ -20,6 +20,7 @@ PLUGIN_FILES = ("main.py", "guard.py", "reply_pacing.py", "message_router.py",
                 "media_state.py", "media_decision.py", "media_router.py", "agent_state.py",
                 "agent_runtime.py", "agent_tools.py", "reply_content.py", "request_provider.py", "model_debug.py", "context_budget.py", "song_tasks.py",
                 "memory_repository.py", "persistent_memory.py", "diary_jobs.py",
+                "shared_memory.py", "shared_memory_config.py", "memory_policies.py", "memory_tasks.py", "memory_request.py",
                 "qzone_client.py", "qzone_config.py", "qzone_store.py", "qzone_runtime.py",
                 "inference_queue.py", "foreground_activity.py", "proactive_store.py", "proactive_runtime.py", "control_catalog.py", "control_store.py", "web_control.py", "vision_config.py", "vision_media.py", "vision_store.py", "vision_analysis.py",
                 "vision_client.py", "vision_runtime.py", "douyin_media.py", "_conf_schema.json", "metadata.yaml")

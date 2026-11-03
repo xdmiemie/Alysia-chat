@@ -1,52 +1,24 @@
-"""Q5: automatic fact extraction, scoped recall and bounded read-only model jobs."""
+"""QQ adapter for the common short-term memory service and registered policies."""
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
 import sqlite3
 import time
+import uuid
 
 from .memory_repository import MemoryRepository, owner_bot
 from .prompt_loader import load_prompts
+from .shared_memory import SharedMemory, RequestContext, encoded, digest
+from .memory_tasks import MemoryTasks, InputTooLarge
 
 
-TOPICS = ("music", "food", "games", "reading", "travel", "art", "technology", "daily")
-FACT_SCHEMA = {"type": "object", "properties": {"facts": {"type": "array", "maxItems": 8,
-    "items": {"type": "object", "properties": {
-        "key": {"type": "string", "maxLength": 80},
-        "kind": {"type": "string", "enum": ["preference", "fact", "event"]},
-        "summary": {"type": "string", "maxLength": 400},
-        "evidence": {"type": "string", "minLength": 1, "maxLength": 600},
-        "tags": {"type": "array", "items": {"type": "string", "maxLength": 32}, "maxItems": 8},
-        "salience": {"type": "number", "minimum": 0, "maximum": 1},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "sensitive": {"type": "boolean"},
-        "shared_topic": {"type": ["string", "null"], "enum": [*TOPICS, None]},
-    }, "required": ["key", "kind", "summary", "evidence", "tags", "salience", "confidence", "sensitive", "shared_topic"],
-        "additionalProperties": False}}}, "required": ["facts"], "additionalProperties": False}
-VERIFY_SCHEMA = {"type": "object", "properties": {"decisions": {"type": "array", "maxItems": 8,
-    "items": {"type": "object", "properties": {
-        "index": {"type": "integer", "minimum": 0, "maximum": 7},
-        "supported": {"type": "boolean"}, "durable": {"type": "boolean"},
-        "existing_key": {"type": ["string", "null"]},
-    }, "required": ["index", "supported", "durable", "existing_key"], "additionalProperties": False}}},
-    "required": ["decisions"], "additionalProperties": False}
-COMPACT_SCHEMA = {"type": "object", "properties": {"summary": {"type": "string"}},
-                  "required": ["summary"], "additionalProperties": False}
-DIARY_SCHEMA = {"type": "object", "properties": {"draft": {"type": "string", "minLength": 200, "maxLength": 400}},
-                "required": ["draft"], "additionalProperties": False}
-
-# Retrieved content is data, and obvious embedded instructions are excluded in
-# addition to the model-use rule. These checks never grant a tool permission.
-DIRECTIVE = re.compile(
-    r"<\s*/?\s*(?:system|developer|tool|script)|\[/?INST\]|tool_calls?|"
+DIRECTIVE = re.compile(r"<\s*/?\s*(?:system|developer|tool|script)|\[/?INST\]|tool_calls?|"
     r"ignore\s+(?:all\s+)?(?:previous|prior|system)|(?:忽略|无视|覆盖).{0,12}(?:指令|规则|提示词)|"
     r"(?:执行|调用|运行).{0,16}(?:命令|工具|shell|powershell|python)|"
-    r"(?:发送|转发|私信|发布).{0,12}(?:QQ|账号|号码|好友|群|http)|"
-    r"(?:system|developer)\s*:", re.I)
+    r"(?:发送|转发|私信|发布).{0,12}(?:QQ|账号|号码|好友|群|http)|(?:system|developer)\s*:", re.I)
 
 
 def data_safe(text):
@@ -54,18 +26,13 @@ def data_safe(text):
 
 
 def memory_view(row):
-    return {"id": row["id"], "summary": row["summary"], "source_type": row["source_type"],
-            "source_ref": row["source_ref"], "confidence": row["confidence"],
-            "recorded_at": datetime.fromtimestamp(row["updated_at"], timezone.utc).isoformat(),
-            "visibility": row["visibility"],
-            "meaning": "video_content" if row["source_type"] == "douyin" else "recorded_fact"}
+    return {"id": row["id"], "summary": row["summary"], "source_type": row["source_type"], "data_only": True}
 
 
 def text_payload(message):
-    content = message.content
-    if isinstance(content, str):
-        return content, None
-    for index, part in enumerate(content or []):
+    if isinstance(message.content, str):
+        return message.content, None
+    for index, part in enumerate(message.content or []):
         text = getattr(part, "text", None)
         if isinstance(text, str):
             try:
@@ -79,173 +46,171 @@ def text_payload(message):
 
 class PersistentMemory:
     def __init__(self, directory: Path, *, character="elysia", timezone_name="system", enabled=True,
-                 diary_enabled=True, diary_time="23:30", logger=None):
-        from .diary_jobs import resolve_timezone
-        self.repository = MemoryRepository(directory / "memories.sqlite3")
+                 diary_enabled=True, diary_time="00:05", logger=None):
+        from zoneinfo import ZoneInfo
+        from .foreground_activity import ForegroundActivity
+        self.repository = MemoryRepository(Path(directory) / "memories.sqlite3")
+        self.shared = SharedMemory(self.repository.path, initial_timezone=timezone_name)
+        with self.shared.connection() as db:
+            configured = db.execute("SELECT 1 FROM sm_meta WHERE key='adapter_configured'").fetchone()
+        if not configured:
+            with self.shared.connection() as db:
+                db.execute("INSERT OR IGNORE INTO sm_meta VALUES('adapter_configured','true')")
         self.character, self.enabled, self.diary_enabled = character, enabled, diary_enabled
-        self.zone = resolve_timezone(timezone_name)
-        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", diary_time):
-            raise ValueError("Invalid diary time")
-        self.diary_hour, self.diary_minute = map(int, diary_time.split(":"))
+        self.zone = ZoneInfo(self.shared.config["timezone"])
+        self.diary_hour, self.diary_minute = map(int, self.shared.config["finalize_time"].split(":"))
         self.logger = logger
+        self.foreground = ForegroundActivity(directory)
         self.provider_factory = self.admission = self.persona_factory = None
-        self.scheduler = None
+        self.scheduler = self.worker_task = None
         self.lock = asyncio.Lock()
-        self.worker_task = None
         self.running_tasks = set()
         self.closed = False
 
     def enqueue(self, incoming, text=None):
-        if self.enabled:
-            return self.repository.enqueue(incoming.scope, incoming.sender_uin, incoming.message_id,
-                incoming.text if text is None else text, character=self.character)
-        return False
+        if not self.enabled:
+            return False
+        text = incoming.text if text is None else text
+        if not isinstance(text, str) or not text.strip():
+            return False
+        try:
+            controls = {"/memory no_store": "no_store", "/memory no_long_term": "no_long_term",
+                        "/memory allow": "normal", "不要保存我的聊天内容": "no_store", "不要长期保存我的聊天内容": "no_long_term"}
+            if text.strip() in controls:
+                if incoming.group_id:
+                    self.shared.set_subject_retention(incoming.bot_uin, self.character, incoming.scope,
+                        incoming.sender_uin, controls[text.strip()])
+                else:
+                    self.shared.set_retention(incoming.bot_uin, self.character, incoming.scope, controls[text.strip()])
+                self.shared.scrub_backups()
+                return True
+            with self.repository.connection() as db:
+                db.execute("INSERT OR IGNORE INTO memory_accounts VALUES(?,?,?)", (incoming.bot_uin, self.character, time.time()))
+            return self.shared.append_event(bot=incoming.bot_uin, character=self.character, module="qq",
+                event_id=str(incoming.message_id), scope=incoming.scope, subject=incoming.sender_uin,
+                occurred=getattr(incoming, "occurred_at", None), payload={"text": text})
+        except (sqlite3.Error, OSError) as exc:
+            self._warn("source_persistence_failed", exc)
+            return False
+
+    def record_sent(self, scope, text, *, event_id=None, role="assistant"):
+        if not self.enabled or not text:
+            return
+        try:
+            self.shared.append_event(bot=owner_bot(scope), character=self.character, module="qq", scope=scope,
+                event_id=event_id or uuid.uuid4().hex, subject=owner_bot(scope), role=role, payload={"text": text})
+        except (sqlite3.Error, OSError) as exc:
+            self._warn("sent_receipt_persistence_failed", exc)
+
+    def enqueue_video(self, *, bot, scope, event_id, material_id, analysis, occurred, shared=False):
+        if not self.enabled:
+            return None
+        return self.shared.append_event(bot=bot, character=self.character, module="video", event_id=event_id,
+            scope=scope, subject="character", role="source", occurred=occurred,
+            payload={"material_id": material_id, "analysis": analysis}, visibility="shared" if shared else "session")
+
+    def _warn(self, code, exc):
+        if self.logger:
+            self.logger.warning("Shared memory %s: %s", code, type(exc).__name__)
 
     def wake(self):
-        if not self.closed and self.enabled and self.provider_factory and (
-                self.worker_task is None or self.worker_task.done()):
+        if not self.closed and self.enabled and self.provider_factory and (self.worker_task is None or self.worker_task.done()):
             self.worker_task = asyncio.create_task(self.tick())
 
     async def start(self, provider_factory, admission, persona_factory):
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         self.provider_factory, self.admission, self.persona_factory = provider_factory, admission, persona_factory
-        if not self.enabled:
+        if not self.enabled or self.scheduler:
             return
         self.scheduler = AsyncIOScheduler(timezone=self.zone)
-        # Polling also recovers missed cron dates and leased jobs after crashes.
-        self.scheduler.add_job(self.tick, "interval", seconds=60, id="q5-memory-recovery",
-            coalesce=True, max_instances=1, misfire_grace_time=60)
-        self.scheduler.add_job(self.tick, "cron", hour=self.diary_hour, minute=self.diary_minute,
-            id="q5-diary", coalesce=True, max_instances=1, misfire_grace_time=3600)
+        self.scheduler.add_job(self.tick, "interval", seconds=15, id="q5-memory-recovery", coalesce=True, max_instances=1)
+        self.scheduler.add_job(self.tick, "cron", hour=self.diary_hour, minute=self.diary_minute, id="q5-diary", coalesce=True, max_instances=1)
         self.scheduler.start()
-        if self.logger:
-            self.logger.info("Q5 memory ready; diary timezone=%s time=%02d:%02d", self.zone, self.diary_hour, self.diary_minute)
         self.wake()
 
     async def close(self):
         self.closed = True
         if self.scheduler:
             self.scheduler.shutdown(wait=False)
-        if self.worker_task and not self.worker_task.done():
-            self.worker_task.cancel()
-            await asyncio.gather(self.worker_task, return_exceptions=True)
-        tasks = [task for task in self.running_tasks if task is not asyncio.current_task()]
+        tasks = set(self.running_tasks)
+        if self.worker_task:
+            tasks.add(self.worker_task)
+        tasks.discard(asyncio.current_task())
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _utility(self, provider, prompt, payload, schema, *, max_tokens=1536, wait=None, consume=None):
-        """A provider request, never an Agent: no tools, transport or shell access."""
+    async def _utility(self, provider, prompt, payload, schema, *, max_tokens=1536, wait=None, consume=None, context=None):
         import jsonschema
         from astrbot.core.agent.message import Message
-        from .context_budget import RequestBudget
+        from .context_budget import RequestBudget, ContextCapacityError
         from .request_provider import request_chat
-        messages = [Message(role="system", content=prompt), Message(role="user", content=json.dumps(payload, ensure_ascii=False))]
+        payload = dict(payload)
+        persona = payload.pop("persona", "")
+        messages = [Message(role="system", content=persona + "\n" + prompt), Message(role="user", content=encoded(payload))]
         budget = RequestBudget(provider, "memory")
         budget.output_tokens = max_tokens
-        if budget.window:
-            from .context_budget import ContextCapacityError
-            while True:
-                try:
-                    messages, _, _ = await budget.fit(messages)
-                    break
-                except ContextCapacityError:
-                    if not payload.get("known_facts"):
-                        raise
-                    # Preserve the entire current source; old reference facts
-                    # are an aid for stable keys, not additional new evidence.
-                    payload = dict(payload, known_facts=payload["known_facts"][:len(payload["known_facts"]) // 2])
-                    messages[-1] = Message(role="user", content=json.dumps(payload, ensure_ascii=False))
+        if not budget.window:
+            raise ContextCapacityError("runtime_context_window_required")
+        total = await budget.count(messages)
+        if total + budget.output_tokens + budget.margin_tokens > budget.window:
+            raise InputTooLarge("mandatory_material_exceeds_runtime_window")
+        usage = None
+        if context:
+            from .memory_request import assemble
+            async def count_request(value):
+                return await budget.count([messages[0], Message(role="user", content=encoded(value))])
+            payload, usage = await assemble(self.shared, context, payload, count_request=count_request,
+                count_text=budget.count_text, window=budget.window, output=max_tokens, margin=budget.margin_tokens,
+                model=digest(encoded(provider.provider_config)))
+            messages[-1] = Message(role="user", content=encoded(payload))
         if consume:
             consume()
         operation = request_chat(provider, phase="memory", contexts=messages, func_tool=None,
-            response_format={"type": "json_schema", "json_schema": {"name": "memory_job", "strict": True, "schema": schema}},
+            response_format={"type": "json_schema", "json_schema": {"name": "shared_memory_task", "strict": True, "schema": schema}},
             max_tokens=max_tokens, temperature=0.0, request_max_retries=1)
-        response = await wait(operation) if wait else await asyncio.wait_for(operation, 60)
+        response = await wait(operation) if wait else await asyncio.wait_for(operation, 180)
         if response.tools_call_name:
             raise ValueError("memory_unexpected_tool_call")
-        if getattr(response, "raw_completion", None):
-            choices = getattr(response.raw_completion, "choices", None)
-            if choices and choices[0].finish_reason in {"length", "content_filter"}:
-                raise ValueError("memory_incomplete_output")
+        choices = getattr(getattr(response, "raw_completion", None), "choices", None)
+        if choices and choices[0].finish_reason in {"length", "content_filter"}:
+            raise ValueError("memory_incomplete_output")
         value = json.loads(response.completion_text or "")
         jsonschema.validate(value, schema)
+        if context and usage:
+            usage["model"] = provider.provider_config.get("model", provider.provider_config.get("id"))
+            self.shared.record_usage(context, **usage)
         return value
 
-    async def _compress(self, provider, memories, target, *, wait=None, consume=None):
-        from .context_budget import ContextCapacityError
-        try:
-            return (await self._utility(provider, load_prompts()["memory_compress"],
-                {"memories": memories, "target_tokens": target}, COMPACT_SCHEMA,
-                max_tokens=min(2048, max(128, target // 2)), wait=wait, consume=consume))["summary"]
-        except ContextCapacityError:
-            if len(memories) <= 1:
-                raise
-            # One logical compaction may need several bounded read-only calls.
-            # No input facts are lost just to fit the compressor's own window.
-            middle = len(memories) // 2
-            left = await self._compress(provider, memories[:middle], max(64, target // 2), wait=wait, consume=consume)
-            right = await self._compress(provider, memories[middle:], max(64, target // 2), wait=wait, consume=consume)
-            return left + "\n" + right
-
-    async def extract_one(self, provider):
-        source = self.repository.claim_source(character=self.character)
-        if not source:
-            return False
-        try:
-            text = json.loads(source["payload"])["text"]
-            if not data_safe(text):
-                self.repository.save_extraction(source, [], {})
-                return True
-            payload = {"message": text, "speaker": source["sender_key"],
-                "recorded_at": datetime.fromtimestamp(source["created_at"], self.zone).isoformat(),
-                "known_facts": self.repository.known(source["owner_key"], source["sender_key"], self.character)}
-            value = await self._utility(provider, load_prompts()["memory_extract"], payload, FACT_SCHEMA)
-            facts = [f for f in value["facts"] if f["confidence"] >= 0.65 and f["summary"].strip()
-                     and f["evidence"].strip() and f["evidence"].strip() in text
-                     and re.fullmatch(r"[\w.-]{1,80}", f["key"]) and data_safe(f["summary"])
-                     and all(data_safe(tag) for tag in f["tags"])]
-            if facts:
-                # A second, independent task checks meaning and permanence. An
-                # exact quote alone cannot detect a reversed subject or invented cause.
-                review = await self._utility(provider, load_prompts()["memory_verify"],
-                    {**payload, "candidates": facts}, VERIFY_SCHEMA)
-                decisions = review["decisions"]
-                if (len(decisions) != len(facts)
-                        or {d["index"] for d in decisions} != set(range(len(facts)))):
-                    raise ValueError("memory_incomplete_verification")
-                known_keys = {r["fact_key"] for r in payload["known_facts"]}
-                accepted = []
-                for decision in decisions:
-                    if not decision["supported"] or not decision["durable"]:
-                        continue
-                    fact = dict(facts[decision["index"]])
-                    existing = decision["existing_key"]
-                    if existing is not None:
-                        if existing not in known_keys or ":" in existing:
-                            raise ValueError("memory_invalid_existing_key")
-                        fact["key"] = existing
-                    elif fact["key"] in known_keys:
-                        # Do not overwrite an unrelated known property just
-                        # because extraction reused its name.
-                        continue
-                    accepted.append(fact)
-                facts = accepted
-            topics = json.loads(load_prompts()["memory_shared_topics"])
-            self.repository.save_extraction(source, facts, topics)
-            return True
-        except asyncio.CancelledError:
-            self.repository.fail_source(source["id"], "canceled")
-            raise
-        except Exception as exc:
-            self.repository.fail_source(source["id"], type(exc).__name__)
-            if self.logger:
-                self.logger.warning("Q5 extraction deferred: %s", type(exc).__name__)
-            return False
+    async def tasks(self, provider, *, background=True):
+        from .context_budget import RequestBudget
+        budget = RequestBudget(provider, "memory")
+        async def model(key, payload, schema, tokens):
+            module = tasks.job["module"] if tasks.job else ("video" if "video" in key else "diary" if "diary" in key else "qq")
+            bot, scope, allowed = (tasks.job["bot"] if tasks.job else ""), "", ()
+            if tasks.job:
+                snapshot = json.loads(tasks.job["snapshot"])
+                allowed = tuple(item[1] for item in snapshot if item[0] == "sm_records")
+                if snapshot:
+                    with self.shared.connection() as db:
+                        row = db.execute(f"SELECT scope FROM {snapshot[0][0]} WHERE id=?", (snapshot[0][1],)).fetchone()
+                        scope = row[0] if row else ""
+            context = RequestContext(self.character, bot, module, scope,
+                internal=(module == "diary" and not key.endswith("_public")) or key in {"shared_video_daily", "shared_video_compact"},
+                allowed_ids=allowed,
+                purpose=key, activity="memory_maintenance" if key != "shared_video_watch" else "watching_video")
+            return await self._utility(provider, load_prompts()[key] + "\n" + load_prompts()["shared_memory_use"],
+                payload, schema, max_tokens=tokens, context=context)
+        def checkpoint():
+            if self.closed or (background and self.foreground.blocked()):
+                raise asyncio.CancelledError()
+        persona = await self.persona_factory() if self.persona_factory else ""
+        tasks = MemoryTasks(self.shared, model, count_text=budget.count_text, persona=persona, checkpoint=checkpoint)
+        return tasks
 
     async def tick(self):
-        if self.closed or not self.enabled or self.lock.locked():
+        if self.closed or not self.enabled or self.lock.locked() or not self.provider_factory:
             return
         async with self.lock:
             task = asyncio.current_task()
@@ -254,42 +219,46 @@ class PersistentMemory:
                 provider = await self.provider_factory()
                 if provider is None:
                     return
-                # The whole background job holds a normal Broker lease. It
-                # waits through cover/vision/training and never starts a model.
+                idle = not self.foreground.blocked()
+                # request_chat owns the per-call queue; nesting a queue lease here deadlocks.
                 async with self.admission():
-                    for _ in range(16):
-                        if not await self.extract_one(provider):
-                            break
-                    if self.diary_enabled:
-                        from .diary_jobs import due_dates
-                        now = datetime.now(self.zone)
-                        for account in self.repository.accounts(self.character):
-                            completed = 0
-                            for day in due_dates(account["first_seen"], now, self.diary_hour, self.diary_minute):
-                                if not self.repository.diary(account["bot"], self.character, day.isoformat()):
-                                    await self.generate_diary(provider, account["bot"], day)
-                                    completed += 1
-                                    if completed >= 7:
-                                        break  # bounded catch-up; next tick continues
+                    tasks = await self.tasks(provider, background=idle)
+                    await tasks.process_idle(character=self.character, force=idle)
+                    if idle and not self.foreground.blocked():
+                        await tasks.process_videos(self.character)
+                        await tasks.catch_up(self.character, diary=self.diary_enabled)
+                self.shared.cleanup()
             except asyncio.CancelledError:
-                raise
+                if self.closed:
+                    raise
             except Exception as exc:
-                if self.logger:
-                    self.logger.warning("Q5 background job deferred: %s", type(exc).__name__)
+                self._warn("background_deferred", exc)
             finally:
                 self.running_tasks.discard(task)
 
-    async def prepare(self, messages, provider, scope, tools=None, *, wait=None, consume=None, record=None):
+    async def process_idle(self):
+        await self.tick()
+        return not self.pending_sessions()
+
+    def pending_sessions(self):
+        with self.shared.connection() as db:
+            return bool(db.execute("SELECT 1 FROM sm_events WHERE character=? AND module='qq' AND status='pending' LIMIT 1", (self.character,)).fetchone())
+
+    async def extract_one(self, provider):
+        """Compatibility scheduler hook: session summarization, never fact extraction."""
+        return await (await self.tasks(provider, background=False)).process_idle(character=self.character, force=True)
+
+    async def generate_diary(self, provider, bot, day):
+        return await (await self.tasks(provider, background=False)).diary_day(bot, self.character, day.isoformat())
+
+    async def prepare(self, messages, provider, scope, tools=None, *, wait=None, consume=None, record=None, phase="agent", output_tokens=None):
         try:
-            return await self._prepare(messages, provider, scope, tools, wait=wait, consume=consume, record=record)
+            return await self._prepare(messages, provider, scope, tools, record=record, phase=phase, output_tokens=output_tokens)
         except (sqlite3.Error, OSError) as exc:
-            if self.logger:
-                self.logger.warning("Q5 recall unavailable: %s", type(exc).__name__)
+            self._warn("recall_unavailable", exc)
             return messages
 
-    async def _prepare(self, messages, provider, scope, tools=None, *, wait=None, consume=None, record=None):
-        """Inject only into a copied CURRENT user payload, never durable history."""
-        from astrbot.core.agent.message import Message
+    async def _prepare(self, messages, provider, scope, tools=None, *, record=None, phase="agent", output_tokens=None):
         from .context_budget import RequestBudget
         if not self.enabled:
             return messages
@@ -310,119 +279,61 @@ class PersistentMemory:
         if payload.get("session_id") != scope:
             raise ValueError("memory_scope_mismatch")
         payload.pop("relevant_memories", None)
-        rows = [r for r in self.repository.retrieve(scope, payload["current_message"].get("text", ""), character=self.character)
-                if data_safe(r["summary"])]
+        payload.pop("shared_memory", None)
         result = list(messages)
-        result[current] = messages[current].model_copy(deep=True)
-        self._replace_payload(result[current], payload, part_index)
-        if not rows:
+        copied = result[current] = messages[current].model_copy(deep=True)
+        self._replace_payload(copied, payload, part_index)
+        budget = RequestBudget(provider, phase)
+        if output_tokens is not None:
+            budget.output_tokens = output_tokens
+        if not budget.window:
             return result
-        budget = RequestBudget(provider, "agent")
-        if budget.window <= 0:
-            return result  # No declared context window means no guessed allowance.
-        # Reserve system/tool schemas plus the entire current user/tool round;
-        # older complete rounds can subsequently be dropped by RequestBudget.
-        systems = [m for m in messages[:current] if m.role == "system"]
-        base_current = messages[current].model_copy(deep=True)
-        self._replace_payload(base_current, payload, part_index)
-        base_tokens = await budget.count(systems + [base_current] + messages[current + 1:], tools)
-        limit = budget.window - budget.output_tokens - budget.margin_tokens
-        allowance = max(0, min(budget.window // 4, limit - base_tokens))
-        if allowance < 128:
+        # Fit baseline first. Optional memory never evicts additional dialogue or receipts.
+        result, base, _ = await budget.fit(result, tools)
+        if not any(m is copied for m in result):
             return result
-
-        async def size(items):
-            return await budget.count([Message(role="user", content=json.dumps(items, ensure_ascii=False))])
-
-        selected = [memory_view(r) for r in rows]
-        compression_error = None
-        # Count the envelope as well as fact text. The final full-request fit is
-        # still authoritative and includes actual tool schemas and template.
-        if await size(selected) > allowance:
-            key, compact = self.repository.compacted(scope, self.character, rows, allowance)
-            if compact is None:
-                try:
-                    summary = await self._compress(provider,
-                        [{k: item[k] for k in ("summary", "source_type", "recorded_at", "confidence", "visibility")}
-                         for item in selected], max(64, allowance - 128), wait=wait, consume=consume)
-                    if not summary.strip() or not data_safe(summary):
-                        raise ValueError("invalid_memory_compaction")
-                    compact = [{"id": key, "summary": summary, "source_type": "compressed_memory",
-                                "source_kinds": sorted({r["source_type"] for r in rows}),
-                                "visibility": "current_session_only"}]
-                    if await size(compact) <= allowance:
-                        self.repository.save_compaction(key, scope, self.character, compact, [r["id"] for r in rows])
-                    else:
-                        compact = None
-                except Exception as exc:
-                    # A failed read-only compression cannot block ordinary chat.
-                    # Global cancellation/deadline still propagates below.
-                    from .agent_state import Superseded, BudgetExhausted
-                    if isinstance(exc, (Superseded, BudgetExhausted, TimeoutError)):
-                        raise
-                    compression_error = type(exc).__name__
-                    if self.logger:
-                        self.logger.warning("Q5 compression deferred: %s", compression_error)
-                    compact = None
-            if compact is not None:
-                selected = compact
+        context = RequestContext(self.character, owner_bot(scope), "qq", scope,
+            query=payload["current_message"].get("text", ""), activity="chatting", purpose=phase)
+        allowance = max(0, budget.window - budget.output_tokens - budget.margin_tokens - base)
+        view = await self.shared.build_memory_view(context, count=budget.count_text, available=allowance)
+        for row in self.repository.retrieve(scope, context.query, character=self.character, limit=8):
+            item = dict(memory_view(row), module="legacy", kind="legacy", coverage=[row["created_at"], row["updated_at"]])
+            cost = await budget.count_text(encoded(item))
+            used = sum(a["tokens"] for a in view["attribution"]) + view["common_tokens"]
+            if data_safe(row["summary"]) and used + cost <= view["available"]:
+                view["items"].append(item)
+                view["attribution"].append(dict(module="legacy", layer="long", tokens=cost))
+        while True:
+            payload["relevant_memories"] = view["items"]
+            payload["shared_memory"] = {"recent": view["recent"], "activity": "chatting", "data_only": True}
+            self._replace_payload(copied, payload, part_index)
+            total = await budget.count(result, tools)
+            if total + budget.output_tokens + budget.margin_tokens <= budget.window and total - base <= self.shared.config["memory_tokens"]:
+                break
+            if view["items"]:
+                view["items"].pop()
+                view["attribution"].pop()
+            elif view["recent"]:
+                view["recent"], view["common_tokens"] = [], 0
             else:
-                # Keep complete high-ranked facts, never cut JSON or invent a
-                # summary when the model failed. Original records stay intact.
-                while selected and await size(selected) > allowance:
-                    selected.pop()
-        payload["relevant_memories"] = selected
-        self._replace_payload(result[current], payload, part_index)
+                payload.pop("shared_memory", None)
+                payload.pop("relevant_memories", None)
+                self._replace_payload(copied, payload, part_index)
+                total = base
+                break
+        attributed = sum(a["tokens"] for a in view["attribution"]) + view["common_tokens"]
+        usage = dict(model=provider.provider_config.get("model", provider.provider_config.get("id")), window=budget.window,
+            total_input=total, reserved_output=budget.output_tokens, memory_budget=view["available"], memory_tokens=max(0, total-base),
+            attribution=view["attribution"], common_tokens=view["common_tokens"], wrapper_tokens=max(0, total-base)-attributed,
+            count_method="actual_template_tokenizer", attribution_method="separate_blocks_estimate", purpose=phase)
+        self.shared.record_usage(context, **usage)
         if record:
-            record({"allowance_tokens": allowance, "retrieved": len(rows), "injected": len(selected),
-                    "compressed": bool(selected and selected[0].get("source_type") == "compressed_memory"),
-                    "compression_error": compression_error})
+            record(dict(request_id=context.request_id, allowance_tokens=view["available"], injected=len(view["items"]), **usage))
         return result
 
     @staticmethod
     def _replace_payload(message, payload, part_index):
-        raw = json.dumps(payload, ensure_ascii=False)
         if part_index is None:
-            message.content = raw
+            message.content = encoded(payload)
         else:
-            message.content[part_index].text = raw
-
-    async def generate_diary(self, provider, bot, day):
-        from .diary_jobs import diary_window
-        key = f"diary:{bot}:{self.character}:{day.isoformat()}"
-        if self.repository.diary(bot, self.character, day.isoformat()) or not self.repository.claim_job(key):
-            return False
-        try:
-            start, end = diary_window(day, self.zone, self.diary_hour, self.diary_minute)
-            if self.repository.sources_pending(bot, self.character, end.timestamp()):
-                self.repository.finish_job(key, "pending_extraction")
-                return False
-            private = self.repository.diary_material(bot, self.character, start.timestamp(), end.timestamp())
-            public = self.repository.diary_material(bot, self.character, start.timestamp(), end.timestamp(), shared=True)
-            persona = await self.persona_factory() if self.persona_factory else ""
-            prompt = load_prompts()["diary_generate"]
-            payload = {"date": day.isoformat(), "timezone": str(self.zone), "persona": persona,
-                       "materials": [memory_view(r) for r in private if data_safe(r["summary"])]}
-            draft = (await self._utility(provider, prompt, payload, DIARY_SCHEMA, max_tokens=1024))["draft"]
-            if not data_safe(draft):
-                raise ValueError("invalid_diary")
-            public_draft = None
-            if public:
-                # Separate request, no private facts, IDs, source refs or draft.
-                public_payload = {"date": day.isoformat(), "timezone": str(self.zone), "persona": persona,
-                    "materials": [{"summary": r["summary"], "source_type": "processed_summary"} for r in public]}
-                public_draft = (await self._utility(provider, load_prompts()["diary_public"],
-                    public_payload, DIARY_SCHEMA, max_tokens=1024))["draft"]
-                if not data_safe(public_draft) or re.search(r"https?://|[0-9]{5,}|qq[:：]", public_draft, re.I):
-                    raise ValueError("invalid_public_diary")
-            result = self.repository.save_diary(bot, self.character, day.isoformat(), draft, public_draft, private)
-            self.repository.finish_job(key)
-            return result
-        except asyncio.CancelledError:
-            self.repository.finish_job(key, "canceled")
-            raise
-        except Exception as exc:
-            self.repository.finish_job(key, type(exc).__name__)
-            if self.logger:
-                self.logger.warning("Q5 diary deferred: %s", type(exc).__name__)
-            return False
+            message.content[part_index].text = encoded(payload)

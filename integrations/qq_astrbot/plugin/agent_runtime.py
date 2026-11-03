@@ -92,6 +92,7 @@ class NativeAgentLifecycle:
         self.final_content = ""
         self.tool_outputs = []
         self.tool_reasoning = {}
+        self.memory_receipts = set()
         existing = runner.req.tool_calls_result
         self.initial_tool_results = len(existing if isinstance(existing, list) else [existing] if existing else [])
         self.finished = False
@@ -234,6 +235,8 @@ class NativeAgentLifecycle:
         if self.finished:
             self.restore_history()
         self.store.record(self.run, "sent", {"text": text, "modality": modality})
+        if memory := self.event.get_extra("qq_persistent_memory"):
+            memory.record_sent(self.run.scope, text)
         return content
 
     @staticmethod
@@ -293,7 +296,13 @@ class NativeAgentLifecycle:
                 yield self.fallback()
                 return
             self.update_execution_state()
+            self.restore_tool_reasoning()
             if memory := self.event.get_extra("qq_persistent_memory"):
+                for receipt in self.tool_history():
+                    if receipt.role == "tool" and receipt.tool_call_id not in self.memory_receipts:
+                        memory.record_sent(self.run.scope, str(receipt.content),
+                            event_id="tool:" + self.run.run_id + ":" + str(receipt.tool_call_id), role="receipt")
+                        self.memory_receipts.add(receipt.tool_call_id)
                 def consume_memory_request():
                     if self.run.requests >= self.run.max_requests - 1:
                         raise ValueError("memory_compaction_budget_unavailable")
@@ -303,7 +312,6 @@ class NativeAgentLifecycle:
                     wait=lambda operation: self.store.wait(self.run, operation, timeout=60),
                     consume=consume_memory_request,
                     record=lambda payload: self.store.record(self.run, "memory_context", payload))
-            self.restore_tool_reasoning()
             budget = RequestBudget(self.runner.provider, "agent")
             messages, tokens, dropped = await self.store.wait(self.run,
                 budget.fit(self.runner.run_context.messages, self.runner.req.func_tool), timeout=10)

@@ -35,6 +35,8 @@ class Store:
                     PRIMARY KEY(account,video,recipient));
                 CREATE TABLE IF NOT EXISTS retry_jobs(account TEXT,video TEXT,version TEXT,state TEXT,
                     previous_error TEXT,created REAL,updated REAL,PRIMARY KEY(account,video,version));
+                CREATE TABLE IF NOT EXISTS watch_events(account TEXT,video TEXT,occurred REAL,
+                    PRIMARY KEY(account,video));
             """)
 
     @contextmanager
@@ -72,6 +74,7 @@ class Store:
     def encounter(self, account, video):
         now = self.clock()
         with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO watch_events VALUES(?,?,?)", (account, video["id"], now))
             db.execute("INSERT INTO views(account,video,created) VALUES(?,?,?)", (account, video["id"], now))
             db.execute("DELETE FROM views WHERE created<?", (now - 2 * 86400,))
             new = db.execute("INSERT OR IGNORE INTO videos(account,id,url,title,status,updated) "
@@ -88,6 +91,14 @@ class Store:
         with self.connection() as db:
             db.execute("INSERT INTO views(account,video,created) VALUES(?,'',?)", (account, self.clock()))
             db.execute("DELETE FROM views WHERE created<?", (self.clock() - 2 * 86400,))
+
+    def watch_time(self, account, video_id):
+        with self.connection() as db:
+            row = db.execute("SELECT occurred FROM watch_events WHERE account=? AND video=?", (account, video_id)).fetchone()
+        if not row:
+            # Historical retries lack reliable watch dates; do not invent one from completion time.
+            raise ValueError("legacy_watch_time_unknown")
+        return row[0]
 
     def video(self, account, video_id):
         with self.connection() as db:
@@ -200,8 +211,13 @@ class Store:
             raise ValueError("unknown_video")
         refs = self.get("memory_owners:" + account + ":" + video_id, [])
         repo = MemoryRepository(self.directory / "memories.sqlite3")
+        from integrations.qq_astrbot.plugin.shared_memory import SharedMemory
+        shared = SharedMemory(repo.path, clock=self.clock)
+        for key, character in refs:
+            shared.withdraw(key, reason="video_revoked")
         with repo.connection() as db:
             for owner, character in refs:
                 db.execute("UPDATE memory_items SET deleted_at=?,updated_at=? WHERE id=?",
                     (self.clock(), self.clock(), identity(character, owner, row["url"])))
         self.save_video(account, video_id, "revoked")
+        shared.scrub_backups()

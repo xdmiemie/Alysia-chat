@@ -28,6 +28,46 @@ class ModelClient:
         self.directory, self.config = directory, vision_config
         self.media = MediaClient(directory)
 
+    async def count_text(self, text):
+        async with httpx.AsyncClient(base_url="http://127.0.0.1:8080", trust_env=False, timeout=5) as client:
+            response = await client.post("/tokenize", json={"content": text, "add_special": False, "parse_special": False})
+            response.raise_for_status()
+            return len(response.json()["tokens"])
+
+    async def memory_task(self, service, context, key, payload, schema, tokens):
+        import jsonschema
+        from integrations.qq_astrbot.plugin.memory_request import assemble
+        from integrations.qq_astrbot.plugin.shared_memory import encoded, digest
+        settings = yaml.safe_load((project_root() / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig"))
+        prompts = load_prompts()
+        payload = dict(payload)
+        system = payload.pop("persona", "") + "\n" + prompts[key] + "\n" + prompts["shared_memory_use"]
+        def messages(value):
+            return [{"role": "system", "content": system}, {"role": "user", "content": encoded(value)}]
+        async def count_request(value):
+            async with httpx.AsyncClient(base_url="http://127.0.0.1:8080", trust_env=False, timeout=5) as client:
+                response = await client.post("/apply-template", json={"messages": messages(value), "chat_template_kwargs": {"enable_thinking": False}})
+                response.raise_for_status()
+                prompt = response.json()["prompt"]
+                if isinstance(prompt, list):
+                    return len(prompt)
+                response = await client.post("/tokenize", json={"content": prompt, "add_special": False, "parse_special": True})
+                response.raise_for_status()
+                return len(response.json()["tokens"])
+        active = json.loads((project_root() / "model_store/active/qwen3.json").read_text(encoding="utf-8-sig"))
+        payload, usage = await assemble(service, context, payload, count_request=count_request, count_text=self.count_text,
+            window=settings["context_size"], output=tokens, margin=settings["context_margin_tokens"], model=digest(encoded([settings, active])))
+        result = await self._complete(messages(payload), {"type": "json_schema", "json_schema": {
+            "name": key, "strict": True, "schema": schema}}, max_tokens=tokens)
+        choice = result["choices"][0]
+        if choice.get("finish_reason") != "stop" or choice["message"].get("tool_calls"):
+            raise ValueError("invalid_memory_model_response")
+        value = json.loads(choice["message"]["content"])
+        jsonschema.validate(value, schema)
+        usage["model"] = result.get("model", active.get("id", "active local model"))
+        service.record_usage(context, **usage)
+        return value
+
     async def call(self, prompt_key, payload, images, response_format):
         content = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
         for index, image in enumerate(images):
@@ -165,4 +205,5 @@ class ModelClient:
                         "top_k": settings.get("top_k", 20), "max_tokens": max_tokens, "stream": False,
                         "response_format": response_format, "chat_template_kwargs": {"enable_thinking": False},
                         "reasoning_budget_tokens": 0})
+                    result["model"] = model
             return result

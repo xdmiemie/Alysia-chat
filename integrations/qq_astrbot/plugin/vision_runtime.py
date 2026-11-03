@@ -250,13 +250,7 @@ class VisionRuntime:
                         deadline=job["deadline"], check_active=check_active), max(1, job["deadline"] - time.time()))
                     check_active()
                     self.store.finish_job(job["id"], value)
-                    # External media remains video knowledge, never a user fact.
-                    from .persistent_memory import data_safe
-                    if (job["origin"] and self.memory and value["confidence"] >= 0.65 and not value["uncovered_intervals"]
-                            and data_safe(value["summary"]) and all(data_safe(tag) for tag in value["objects"][:12])):
-                        self.memory.repository.add_video(job["owner"], job["source"] or job["media_id"],
-                            value["summary"], value["objects"][:12], character=self.character,
-                            confidence=value["confidence"])
+                    self.remember_analysis(job, value)
                     await self.deliver(job, value)
                 except asyncio.CancelledError:
                     raise
@@ -272,6 +266,7 @@ class VisionRuntime:
                 await asyncio.sleep(1)
 
     async def deliver(self, job, value):
+        self.remember_analysis(job, value)
         if not job["origin"] or self.context is None:
             return
         if not self.active_scope(job["owner"]):
@@ -290,11 +285,29 @@ class VisionRuntime:
         task = prompts["vision_reply"]
         messages = [Message(role="system", content=persona + "\n" + task + "\n" + prompts["reply_output"]),
             Message(role="user", content=task + "\n" + json.dumps({"question": job["question"], "analysis": value}, ensure_ascii=False))]
-        await RequestBudget(provider, "vision").fit(messages)
+        budget = RequestBudget(provider, "vision")
+        usage = context = None
+        if self.memory and getattr(self.memory, "enabled", False):
+            from .memory_request import assemble
+            from .shared_memory import RequestContext, encoded, digest
+            from .memory_repository import owner_bot
+            context = RequestContext(self.character, owner_bot(job["owner"]), "video", job["owner"],
+                query=job["question"], purpose="vision_reply", activity="replying_about_video")
+            messages[0].content += "\n" + prompts["shared_memory_use"]
+            async def count_request(payload):
+                return await budget.count([messages[0], Message(role="user", content=encoded(payload))])
+            payload, usage = await assemble(self.memory.shared, context, {"question": job["question"], "analysis": value},
+                count_request=count_request, count_text=budget.count_text, window=budget.window, output=budget.output_tokens,
+                margin=budget.margin_tokens, model=digest(encoded(provider.provider_config)))
+            messages[-1] = Message(role="user", content=encoded(payload))
+        await budget.fit(messages)
         started = time.monotonic()
         async with self.media.admission():
             result = await request_chat(provider, phase="vision", contexts=messages,
                 func_tool=None, response_format=REPLY_FORMAT, request_max_retries=1)
+        if usage:
+            usage["model"] = provider.provider_config.get("model", provider.provider_config.get("id"))
+            self.memory.shared.record_usage(context, **usage)
         from .agent_runtime import parse_final_reply
         raw = result.completion_text or ""
         try:
@@ -339,6 +352,16 @@ class VisionRuntime:
                 raise
             else:
                 self.store.delivery(job["id"], "sent")
+                if self.memory:
+                    self.memory.record_sent(job["owner"], text, event_id="video-reply:" + job["id"])
+
+    def remember_analysis(self, job, value):
+        if job["origin"] and self.memory:
+            from .memory_repository import owner_bot
+            from .shared_memory import canonical_video_id
+            self.memory.enqueue_video(bot=owner_bot(job["owner"]), scope=job["owner"], event_id="qq-video:" + job["id"],
+                material_id=canonical_video_id(job["source"] or job["media_id"]), analysis=value, occurred=job["created"])
+            self.memory.wake()
 
     async def close(self):
         self.closed = True

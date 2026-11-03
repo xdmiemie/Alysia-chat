@@ -116,6 +116,13 @@ class DiaryPublisher:
         if not path.exists():
             return []
         with sqlite3.connect("file:" + path.as_posix() + "?mode=ro", uri=True) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='sm_records'").fetchone():
+                # New private diaries are never relabeled public. Only a separate
+                # shared-input projection may become a publication candidate.
+                rows = db.execute("SELECT body FROM sm_records WHERE bot=? AND character=? AND day=? "
+                    "AND kind='diary_public' AND visibility='shared' AND retention='normal' AND status='active'",
+                    (account, self.memory.character, day)).fetchall()
+                return [r[0] for r in rows if public_text(r[0], 400)]
             row = db.execute("SELECT draft FROM diary_public_candidates WHERE bot=? AND character_id=? AND entry_date=?",
                              (account, self.memory.character, day)).fetchone()
             if row:

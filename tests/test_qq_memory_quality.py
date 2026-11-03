@@ -8,6 +8,28 @@ from integrations.qq_astrbot.plugin.memory_repository import MemoryRepository, i
 from tests.test_qq_memory import remember
 
 
+@pytest.mark.parametrize("intent,liked,agreement,quote,expected",[
+    (True,True,True,True,True),(False,True,True,True,False),(True,False,True,True,False),
+    (True,True,False,True,False),(True,True,True,False,False)])
+def test_special_requires_and_and_actual_sent_evidence(tmp_path,intent,liked,agreement,quote,expected):
+    from tests.test_shared_memory import Clock,Model,count,run
+    from integrations.qq_astrbot.plugin.shared_memory import SharedMemory
+    from integrations.qq_astrbot.plugin.memory_tasks import MemoryTasks
+    clock,model=Clock(),Model()
+    s=SharedMemory(tmp_path/"m.db",clock=clock)
+    tasks=MemoryTasks(s,model,count_text=count)
+    user=s.append_event(bot="9",character="fish",module="qq",event_id="user",scope="qq:9:dm:1",subject="1",payload={"text":"long term request"})
+    sent=s.append_event(bot="9",character="fish",module="qq",event_id="sent",scope="qq:9:dm:1",subject="9",role="assistant" if agreement else "user",payload={"text":"actual agreement"})
+    model.special=[dict(user_event=user,agreement_event=sent,intent_quote="long term request" if quote else "fabricated",agreement_quote="actual agreement",long_term_intent=intent,character_likes=liked,attribute="request",summary="understood request")]
+    run(tasks.process_idle(character="fish",force=True))
+    rows=s.rows(bot="9",character="fish",kind="qq_explicit_liked")
+    assert bool(rows)==expected
+    if expected:
+        assert not rows[0]["long"]
+        assert run(tasks.review_special(rows[0]))
+        assert len(s.rows(bot="9",character="fish",kind="qq_explicit_liked",long=1))==1
+
+
 def test_shared_topic_is_single_record_with_daily_observations(tmp_path):
     repo = MemoryRepository(tmp_path / "memory.db")
     remember(repo, ref="first", now=1000)
@@ -45,50 +67,3 @@ def test_legacy_duplicates_archive_without_merging_owners_or_events(tmp_path):
     with repo.connection() as db:
         assert db.execute("SELECT count(*) FROM memory_items WHERE source_type='qq_message' AND deleted_at IS NULL").fetchone()[0] == 4
         assert db.execute("SELECT count(*) FROM memory_revisions WHERE payload LIKE '%canonical_id%'").fetchone()[0] == 1
-
-
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="AstrBot requires Python 3.12")
-@pytest.mark.parametrize("case", ["copied_old", "missing_quote", "wrong_meaning", "temporary", "corrected_alias", "unrelated_key", "missing_review", "foreign_key"])
-def test_extraction_requires_current_evidence_and_independent_review(tmp_path, monkeypatch, case):
-    import asyncio
-    from integrations.qq_astrbot.plugin.persistent_memory import PersistentMemory
-    from tests.test_qq_memory_runtime import facts
-
-    async def check():
-        service = PersistentMemory(tmp_path, timezone_name="UTC")
-        remember(service.repository, key="music_preference", summary="101喜欢周杰伦", sensitive=True)
-        message = "我现在更喜欢林俊杰"
-        evidence = message
-        summary = "101现在更喜欢林俊杰"
-        if case == "copied_old":
-            message, evidence, summary = "这个是你哦", "喜欢周杰伦", "101喜欢周杰伦"
-        if case == "missing_quote":
-            evidence = "我很喜欢音乐"
-        if case in {"wrong_meaning", "temporary", "unrelated_key"}:
-            message = evidence = "不用唱啦，熬夜再给你加功能呢"
-            summary = "用户表示不想唱歌，因为熬夜会添加新功能。"
-        service.repository.enqueue("qq:999:dm:101", "101", "new", message, now=2000)
-        candidate = facts(summary, evidence=evidence, key="favorite_singer" if case == "corrected_alias" else "music_preference")
-        calls = []
-
-        async def utility(provider, prompt, payload, schema, **kwargs):
-            calls.append(payload)
-            if "candidates" not in payload:
-                return candidate
-            if case == "missing_review":
-                return {"decisions": []}
-            return {"decisions": [{"index": 0, "supported": case != "wrong_meaning",
-                "durable": case != "temporary", "existing_key":
-                "foreign_owner_key" if case == "foreign_key" else None if case == "unrelated_key" else "music_preference"}]}
-
-        monkeypatch.setattr(service, "_utility", utility)
-        ok = await service.extract_one(object())
-        rows = service.repository.known("qq:999:dm:101", "101", "elysia")
-        assert len(rows) == 1
-        assert rows[0]["summary"] == (summary if case == "corrected_alias" else "101喜欢周杰伦")
-        assert len(calls) == (1 if case in {"copied_old", "missing_quote"} else 2)
-        assert ok == (case not in {"missing_review", "foreign_key"})
-        with service.repository.connection() as db:
-            row = db.execute("SELECT source_ref FROM memory_items WHERE fact_key='music_preference'").fetchone()
-            assert row[0] == ("new" if case == "corrected_alias" else "m1")
-    asyncio.run(check())

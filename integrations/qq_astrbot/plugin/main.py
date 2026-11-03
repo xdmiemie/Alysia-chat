@@ -97,16 +97,18 @@ class Q1Guard(star.Star):
                                                    for r in self.agent_store.active.values())
         self.media.record_delivery = self.agent_store.record_id
         def record_group_result(scope, key, text):
+            if memory := getattr(self, "memory", None):
+                memory.record_sent(scope, text, event_id='song:' + key, role="receipt")
             self.router.context.add(scope, ContextMessage(
                 scope.split(":")[1], "bot", text, ["song:" + key], False, None, time.time(), "assistant"))
             self.router.context.remember_protocol(scope, 'song:' + key, [{'role': 'assistant', 'content': text}])
         self.media.record_group_result = record_group_result
         self.memory = PersistentMemory(state_dir,
             character=os.environ.get("ASTRBOT_CHAT_CHARACTER_ID", "elysia"),
-            timezone_name=str(config.get("memory_timezone", "system")),
+            timezone_name=str(config.get("memory_timezone", "Asia/Hong_Kong")),
             enabled=not self.test_peer and bool(config.get("memory_enabled", True)),
             diary_enabled=not self.test_peer and bool(config.get("diary_enabled", True)),
-            diary_time=str(config.get("diary_time", "23:30")), logger=self.logger)
+            diary_time=str(config.get("diary_time", "00:05")), logger=self.logger)
         from .vision_runtime import VisionRuntime
         self.vision = VisionRuntime(state_dir, self.media.client, context=context, memory=self.memory,
             character=self.memory.character, logger=self.logger)
@@ -225,6 +227,7 @@ class Q1Guard(star.Star):
             reply_sender=next((str(p.sender_id) for p in chain if isinstance(p, Reply)), ""),
             member_count=None,
             is_group_admin=sender.get("role") in ("owner", "admin"),
+            occurred_at=float(raw["time"]) if isinstance(raw.get("time"), (int, float)) and raw["time"] > 0 else None,
         )
         try:
             scope = incoming.scope
@@ -467,7 +470,7 @@ class Q1Guard(star.Star):
             event.set_extra("qq_agent_rules_prompt", "\n".join((prompts["reply_output"], prompts["agent_policy"])))
             if memory := getattr(self, "memory", None):
                 event.set_extra("qq_persistent_memory", memory)
-                event.set_extra("qq_agent_rules_prompt", event.get_extra("qq_agent_rules_prompt") + "\n" + prompts["memory_use"])
+                event.set_extra("qq_agent_rules_prompt", event.get_extra("qq_agent_rules_prompt") + "\n" + prompts["shared_memory_use"])
             task_input = json.loads(req.prompt)
             tasks = getattr(self.media, 'song_tasks', None)
             task_input['active_music_tasks'] = [{k: row[k] for k in ('id', 'mode', 'title', 'state')}
@@ -608,6 +611,8 @@ class Q1Guard(star.Star):
             if lifecycle:
                 content = lifecycle.sent(text, modality="voice" if is_voice else "text",
                     primary=True, complete=index == len(chains) - 1)
+            elif (memory := getattr(self, "memory", None)) and (incoming := event.get_extra("qq_incoming")):
+                memory.record_sent(incoming.scope, text, event_id=f"reply:{incoming.message_id}:{index}")
             if event.get_group_id() and text:
                 incoming = event.get_extra("qq_incoming")
                 key = 'assistant:' + incoming.message_id
@@ -670,6 +675,7 @@ class Q1Guard(star.Star):
                 budget.output_tokens = 160
                 if memory := event.get_extra("qq_persistent_memory"):
                     messages = await memory.prepare(messages, provider, run.scope,
+                        phase="followup", output_tokens=160,
                         wait=lambda operation: self.agent_store.wait(run, operation, timeout=60),
                         consume=lambda: self.agent_store.consume(run, "requests"))
                 fitted, tokens, dropped = await self.agent_store.wait(run, budget.fit(messages), timeout=10)

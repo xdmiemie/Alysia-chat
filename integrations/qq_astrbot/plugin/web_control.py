@@ -171,7 +171,7 @@ class WebControl:
         p.memory.enabled = not p.test_peer and c.get("memory_enabled", True)
         p.memory.diary_enabled = not p.test_peer and c.get("diary_enabled", True)
         p.memory.diary_hour, p.memory.diary_minute = map(
-            int, c.get("diary_time", "23:30").split(":")
+            int, (p.memory.shared.config["finalize_time"] if hasattr(p.memory, "shared") else c.get("diary_time", "00:05")).split(":")
         )
         if p.memory.scheduler:
             p.memory.scheduler.reschedule_job(
@@ -391,6 +391,8 @@ class WebControl:
                     ]
             return {"rows": rows, "total": total, "page": page}
         if endpoint == "memory":
+            if hasattr(p.memory, "shared"):
+                return self.read_shared_memory(query, page, limit, offset, search)
             repo = p.memory.repository
             kind = query.get("kind", "memory")
             with repo.connection() as db:
@@ -812,7 +814,84 @@ class WebControl:
             return {"message": "提示词已保存；下一次调用读取新内容"}
         raise ValueError("此页面不支持写入")
 
+    def read_shared_memory(self, query, page, limit, offset, search):
+        memory = self.plugin.memory
+        s, char = memory.shared, memory.character
+        # Administrator authentication occurs in the registered route, before this method.
+        kind = query.get("kind", "shared")
+        if kind in {"memory", "diary", "legacy"}:
+            table, body_col = ("diary_entries", "draft") if kind == "diary" else ("memory_items", "summary")
+            with s.connection() as db:
+                where = "character_id=? AND " + body_col + " LIKE ?"
+                if table == "memory_items":
+                    where += " AND deleted_at IS NULL"
+                args = (char, "%" + search + "%")
+                total = db.execute(f"SELECT count(*) FROM {table} WHERE {where}", args).fetchone()[0]
+                rows = [dict(r) for r in db.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?", (*args, limit, offset))]
+            return dict(rows=[{**r, "legacy": True} for r in rows], total=total, page=page,
+                inventory=s.get_inventory_stats(char), requests=s.get_request_usage(character=char))
+        clauses, args = ["r.character=?", "r.status='active'", "(r.body LIKE ? OR r.scope LIKE ?)"], [char, "%"+search+"%", "%"+search+"%"]
+        for column in ("module", "scope", "visibility", "day", "kind"):
+            value = query.get("record_type" if column == "kind" else column)
+            if value:
+                clauses.append("r." + column + "=?")
+                args.append(value)
+        if query.get("batch"):
+            clauses.append("r.id IN (SELECT record_id FROM sm_members WHERE batch=? UNION SELECT summary_id FROM sm_batches WHERE id=?)")
+            args.extend([query["batch"], query["batch"]])
+        if query.get("layer") in {"short", "long"}:
+            clauses.append("r." + query["layer"] + "=1")
+        where = " AND ".join(clauses)
+        with s.connection() as db:
+            total = db.execute("SELECT count(*) FROM sm_records r WHERE " + where, args).fetchone()[0]
+            rows = [dict(r) for r in db.execute("SELECT r.* FROM sm_records r WHERE " + where + " ORDER BY r.occurred DESC LIMIT ? OFFSET ?", (*args, limit, offset))]
+            for row in rows:
+                row["consumers"] = [dict(r) for r in db.execute("SELECT consumer,state,reason FROM sm_consumers WHERE record_id=?", (row["id"],))]
+        return dict(rows=rows, total=total, page=page, inventory=s.get_inventory_stats(char), requests=s.get_request_usage(character=char))
+
+    def write_shared_memory(self, body):
+        s, char = self.plugin.memory.shared, self.plugin.memory.character
+        action = body.get("action")
+        if action == "configure":
+            config = s.configure(body.get("values", {}))
+            self.apply_app()
+            self.plugin.memory.wake()
+            return dict(config=config, message="配置已保存；预算和 TTL 下次请求生效，降低历史精选上限需重选任务成功后生效")
+        if action == "retry":
+            with s.connection() as db:
+                if not db.execute("SELECT 1 FROM sm_jobs WHERE id=? AND character=?", (body.get("id"), char)).fetchone():
+                    raise ValueError("任务不存在")
+            s.retry(body["id"])
+            self.plugin.memory.wake()
+            return {"message": "已恢复同一任务，不新增批次"}
+        if action == "retention":
+            scope = body.get("scope", "")
+            bot = owner_bot(scope)
+            s.set_retention(bot, char, scope, body.get("retention"))
+            s.scrub_backups()
+            return {"message": "保留限制已生效；受影响派生内容已撤回"}
+        key = body.get("id")
+        if body.get("kind") in {"memory", "diary", "legacy"}:
+            if action != "delete":
+                raise ValueError("历史兼容数据只读；可撤回，不能继续使用旧长期写入口")
+            s.govern_legacy(key, character=char)
+            return {"message": "历史记录及派生内容已撤回，正文与受管理备份已清理"}
+        with s.connection() as db:
+            row = db.execute("SELECT version FROM sm_records WHERE id=? AND character=?", (key, char)).fetchone()
+        if not row or row[0] != body.get("version"):
+            raise ValueError("记录已改变，请刷新")
+        if action == "delete":
+            s.withdraw(key)
+            s.scrub_backups()
+            return {"message": "已撤回来源及所有派生摘要，不保留被删除正文"}
+        if action == "correct":
+            s.correct_record(key, body.get("text"), body["version"], character=char)
+            return {"message": "纠正已生效；含旧内容的派生摘要已撤回"}
+        raise ValueError("只允许配置、重试、纠正和数据治理；新业务内容须先通过模块短期入口")
+
     def write_memory(self, body):
+        if hasattr(self.plugin.memory, "shared"):
+            return self.write_shared_memory(body)
         repo, char = self.plugin.memory.repository, self.plugin.memory.character
         kind, action = body.get("kind", "memory"), body.get("action", "save")
         key, now = body.get("id"), time.time()

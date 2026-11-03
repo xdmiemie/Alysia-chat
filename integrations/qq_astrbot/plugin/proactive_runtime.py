@@ -224,10 +224,26 @@ class ProactiveRuntime:
                         if str(exc) != 'current_turn_exceeds_context_capacity' or not payload_copy['conversation']:
                             raise
                         payload_copy['conversation'].pop(0)
+                memory_usage = memory_context = None
+                if key == 'proactive_reply' and hasattr(self.owner.memory, 'shared') and self.owner.memory.enabled and budget.window:
+                    from .shared_memory import RequestContext, encoded, digest
+                    from .memory_request import assemble
+                    memory_context = RequestContext(self.owner.memory.character, peer['bot'], 'qq', peer['scope'],
+                        purpose='proactive_reply', activity='authorized_proactive_reply')
+                    system += '\n' + load_prompts()['shared_memory_use']
+                    async def count_request(value):
+                        return await budget.count([Message(role='system',content=system),Message(role='user',content=encoded(value))])
+                    payload_copy, memory_usage = await assemble(self.owner.memory.shared, memory_context, payload_copy,
+                        count_request=count_request,count_text=budget.count_text,window=budget.window,output=budget.output_tokens,
+                        margin=budget.margin_tokens,model=digest(encoded(provider.provider_config)))
+                    fitted=[Message(role='system',content=system),Message(role='user',content=encoded(payload_copy))]
                 response = await request_chat(provider, phase=phase, session_id=peer['scope'], contexts=fitted,
                     func_tool=None, max_tokens=budget.output_tokens,
                     response_format={'type':'json_schema','json_schema':{'name':key,'strict':True,'schema':grammar_schema(schema)}},
                     request_max_retries=1, queue_priority=20, **request_options)
+                if memory_usage:
+                    memory_usage['model']=provider.provider_config.get('model',provider.provider_config.get('id'))
+                    self.owner.memory.shared.record_usage(memory_context, **memory_usage)
                 if response.tools_call_name:
                     raise ValueError('proactive_unexpected_tool_call')
                 value = json.loads(response.completion_text or '')
@@ -338,6 +354,8 @@ class ProactiveRuntime:
                 if not data.get('message_id'):
                     raise RuntimeError('proactive_send_unconfirmed')
                 self.store.finish(plan['id'], 'sent', text=text, receipt=str(data['message_id']))
+                if memory := getattr(self.owner, 'memory', None):
+                    memory.record_sent(peer['scope'], text, event_id='proactive:' + str(data['message_id']))
                 reserved = False
                 manager = self.owner.context.conversation_manager
                 conversation = await manager.get_conversation(peer['origin'], cid)

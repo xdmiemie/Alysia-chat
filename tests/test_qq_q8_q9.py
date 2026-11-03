@@ -388,7 +388,8 @@ def test_missing_share_entry_finishes_rated_item_and_advances(tmp_path, config, 
         async def forbidden(*args, **kwargs): pytest.fail("cached evaluation must be reused")
         worker.feed.next, worker.feed.share = next_item, missing_entry
         worker.analyzer.gallery, worker.model.call = forbidden, forbidden
-        worker.remember = lambda *args: remembered.append(args[1]["id"])
+        async def remember(*args): remembered.append(args[1]["id"])
+        worker.remember = remember
         for number in (1, 2):
             item = dict(video(number), kind="image_post")
             worker.store.encounter(account, item)
@@ -509,11 +510,20 @@ def test_worker_remember_binds_registered_bot_records_and_character(tmp_path, co
     repo = MemoryRepository(tmp_path / "memories.sqlite3")
     repo.enqueue("qq:999:dm:101", "101", "register", "会话原文不进入公共视频摘要", now=clock[0])
     repo.enqueue("qq:998:dm:101", "101", "other", "其他角色", character="another", now=clock[0])
+    with repo.connection() as db:
+        db.execute("UPDATE memory_inbox SET status='done',payload='{}'")
     worker = Worker(tmp_path, config=config, clock=lambda: clock[0])
     worker.store.encounter(config.read().account.douyin_id, video())
-    worker.remember(config.read(), video(), analysis(summary="公开知识视频"))
-    result = repo.retrieve("qq:999:dm:102", "知识", now=clock[0])
-    assert len(result) == 1 and result[0]["summary"] == "公开知识视频"
-    assert repo.retrieve("qq:998:dm:102", "知识", now=clock[0]) == []
+    from services.douyin_worker import persona
+    from integrations.qq_astrbot.plugin.shared_memory import RequestContext
+    monkeypatch.setattr(persona, "active_persona", lambda *args: "test persona")
+    async def memory_task(*args): return {"summary": "I watched a public knowledge video."}
+    async def count_text(text): return len(text)
+    worker.model.memory_task, worker.model.count_text = memory_task, count_text
+    asyncio.run(worker.remember(config.read(), video(), analysis(summary="public knowledge")))
+    result = worker.memory.candidates(RequestContext("elysia", "999", "qq", "qq:999:dm:102"))
+    assert len(result) == 1 and result[0]["short"] and not result[0]["long"]
+    assert result[0]["body"] == "I watched a public knowledge video."
+    assert worker.memory.candidates(RequestContext("elysia", "998", "qq", "qq:998:dm:102")) == []
     worker.store.revoke_memory(config.read().account.douyin_id, video()["id"])
     assert repo.retrieve("qq:999:dm:102", "知识", now=clock[0]) == []
