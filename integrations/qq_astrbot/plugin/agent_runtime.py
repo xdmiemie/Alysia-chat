@@ -288,6 +288,9 @@ class NativeAgentLifecycle:
     async def responses(self, **kwargs):
         try:
             self.store.work(self.run)
+            if self.event.get_extra("qq_search_closed") and self.runner.req.func_tool:
+                from .web_search import SEARCH_NAMES
+                self.runner.req.func_tool.tools = [tool for tool in self.runner.req.func_tool.tools if tool.name not in SEARCH_NAMES]
             self.tool_history()  # Restore ignored delivery content on the native tool messages.
             native_limit = self.runner._step_budget_max
             if (self.run.requests >= self.run.max_requests or self.run.tool_calls >= self.run.max_tools

@@ -4,6 +4,7 @@ enabled: false
 account_id: ""
 timezone: Asia/Hong_Kong
 daily_time: "23:40"
+# Legacy compatibility only: due posts now remain eligible across midnight.
 daily_deadline: "23:59"
 daily_max_chars: 100
 # Only self or the explicit friend_allowlist. Never silently publish to everyone.

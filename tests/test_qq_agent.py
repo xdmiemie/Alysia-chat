@@ -166,6 +166,25 @@ async def execute(value):
     return [text for text in results if text]
 
 
+def test_search_quota_refusal_still_delivers_native_final_reply(loop, tmp_path, monkeypatch):
+    monkeypatch.setenv("ASTRBOT_CHAT_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-offline-test")
+    config = tmp_path / "search.yaml"
+    config.write_text("enabled: true\nmonthly_credit_limit: 0\n")
+    monkeypatch.setenv("ASTRBOT_CHAT_SEARCH_CONFIG", str(config))
+    async def check():
+        value = await make_run(tmp_path, [tool_call("web_search", {"query": "public fact"}), candidate("已有信息仍然可以回答。")])
+        output = await execute(value)
+        assert output == ["已有信息仍然可以回答。"]
+        assert value.event.get_extra("qq_search_closed") is True
+        assert "web_search" not in value.runner.req.func_tool.names()
+        assert "read_webpage" not in value.runner.req.func_tool.names()
+        receipts = [m for m in value.provider.contexts[-1] if m["role"] == "tool"]
+        assert receipts and "free_quota_exhausted" in json.dumps(receipts)
+        assert value.provider.main_calls == 2
+    loop.run_until_complete(check())
+
+
 def test_native_delivery_utility_does_not_send_internal_tool_notices(loop, tmp_path):
     from astrbot.core.astr_agent_run_util import run_agent
     async def check():
@@ -318,7 +337,7 @@ def test_separate_system_rules_survive_tool_rounds_and_followup_without_entering
     async def check():
         prompts = load_prompts()
         persona = "CURRENT PERSONA"
-        rules = "\n".join((prompts["reply_output"], prompts["agent_policy"]))
+        rules = "\n".join((prompts["reply_output"], prompts["agent_policy"], prompts["web_search_policy"]))
         history = [{"role": "user", "content": "past request"},
                    {"role": "assistant", "content": "actually sent"}]
         value = await make_run(tmp_path, [tool_call(), candidate("primary")],

@@ -358,13 +358,23 @@ class WebControl:
                 rows = [
                     dict(r)
                     for r in db.execute(
-                        "SELECT * FROM videos WHERE "
+                        "SELECT videos.*, state.value AS title_interest FROM videos "
+                        "LEFT JOIN state ON state.key = 'title_interest:' || videos.account || ':' || videos.id WHERE "
                         + where
                         + " ORDER BY updated DESC LIMIT ? OFFSET ?",
                         (*args, limit, offset),
                     )
                 ]
                 for row in rows:
+                    title_interest = json.loads(row["title_interest"]) if row["title_interest"] else None
+                    row["title_interest"] = (
+                        {key: title_interest[key] for key in ("interested", "reason")}
+                        if isinstance(title_interest, dict)
+                        and type(title_interest.get("interested")) is bool
+                        and isinstance(title_interest.get("reason"), str)
+                        and title_interest["reason"].strip()
+                        else None
+                    )
                     row["analysis"] = (
                         json.loads(row["analysis"]) if row["analysis"] else None
                     )

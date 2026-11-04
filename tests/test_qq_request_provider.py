@@ -116,7 +116,7 @@ def test_final_main_and_tool_free_followup_options_reach_wire_without_shared_mut
             assert main["tool_choice"] == "auto" and "response_format" not in main
             assert "response_format" not in by_prompt["direct tools"]
             assert {tool["function"]["name"] for tool in main["tools"]} == {
-                "emotion", "musiccover", "music", "sticker", "weapi"}
+                "emotion", "musiccover", "music", "sticker", "weapi", "web_search", "read_webpage"}
             assert "tools" not in followup and "tool_choice" not in followup
             assert followup["response_format"] == FOLLOWUP_FORMAT
             assert followup["max_tokens"] == 160 and followup["temperature"] == 0.5

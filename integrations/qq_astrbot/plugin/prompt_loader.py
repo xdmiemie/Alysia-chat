@@ -11,6 +11,7 @@ import yaml
 
 
 REQUIRED_PROMPTS = frozenset({
+    "web_search_policy", "tool_web_search", "tool_read_webpage",
     "qq_context", "reply_output", "model_protocol",
     "astrbot_safety", "astrbot_tool_call", "datetime_reminder",
     "echo_description", "echo_value_description",
@@ -88,7 +89,7 @@ def apply_tool_descriptions(tool_set, prompts: dict[str, str]) -> None:
     if tool_set is None:
         return
     for tool in tool_set.tools:
-        if tool.name in {"emotion", "musiccover", "music", "sticker", "weapi"}:
+        if tool.name in {"emotion", "musiccover", "music", "sticker", "weapi", "web_search", "read_webpage"}:
             from .agent_tools import schemas
             tool.description = prompts["tool_" + tool.name]
             tool.parameters = schemas(prompts)[tool.name]

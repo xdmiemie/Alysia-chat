@@ -145,7 +145,7 @@ class PersistentMemory:
         import jsonschema
         from astrbot.core.agent.message import Message
         from .context_budget import RequestBudget, ContextCapacityError
-        from .request_provider import request_chat
+        from .search_provider import request_search_chat as request_chat
         payload = dict(payload)
         persona = payload.pop("persona", "")
         messages = [Message(role="system", content=persona + "\n" + prompt), Message(role="user", content=encoded(payload))]
@@ -165,11 +165,9 @@ class PersistentMemory:
                 count_text=budget.count_text, window=budget.window, output=max_tokens, margin=budget.margin_tokens,
                 model=digest(encoded(provider.provider_config)))
             messages[-1] = Message(role="user", content=encoded(payload))
-        if consume:
-            consume()
         operation = request_chat(provider, phase="memory", contexts=messages, func_tool=None,
             response_format={"type": "json_schema", "json_schema": {"name": "shared_memory_task", "strict": True, "schema": schema}},
-            max_tokens=max_tokens, temperature=0.0, request_max_retries=1)
+            max_tokens=max_tokens, temperature=0.0, request_max_retries=1, before_request=consume)
         response = await wait(operation) if wait else await asyncio.wait_for(operation, 180)
         if response.tools_call_name:
             raise ValueError("memory_unexpected_tool_call")

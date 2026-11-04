@@ -312,7 +312,7 @@ def test_unpaired_events_can_summarize_without_special_candidates(setup,role):
 
 
 @pytest.mark.parametrize("bad_reference",["nonexistent","wrong_role"])
-def test_invalid_special_reference_cannot_write_memory(setup,bad_reference):
+def test_invalid_special_reference_cannot_write_candidate_or_block_summary(setup,bad_reference):
     s,t,c,m=setup
     scope="qq:9:dm:1"
     user=s.append_event(bot="9",character="fish",module="qq",event_id="request",scope=scope,
@@ -322,10 +322,12 @@ def test_invalid_special_reference_cannot_write_memory(setup,bad_reference):
     m.special=[dict(user_event=user,agreement_event=user if bad_reference=="wrong_role" else "invented",
         intent_quote="long term request",agreement_quote="actual agreement",long_term_intent=True,
         character_likes=True,attribute="request",summary="invalid candidate")]
-    assert not run(t.process_idle(character="fish",force=True))
-    assert not s.rows(bot="9",character="fish",module="qq")
+    assert run(t.process_idle(character="fish",force=True))
+    assert len(s.rows(bot="9",character="fish",kind="qq_session_summary"))==1
+    assert not s.rows(bot="9",character="fish",kind="qq_explicit_liked")
     with s.connection() as db:
-        assert db.execute("SELECT count(*) FROM sm_events WHERE status='pending'").fetchone()[0]==2
+        assert db.execute("SELECT count(*) FROM sm_events WHERE status='pending'").fetchone()[0]==0
+        assert db.execute("SELECT state,error FROM sm_jobs WHERE operation='special'").fetchone()[:]==("failed","ValidationError")
 
 
 def test_hierarchical_diary_covers_more_than_eight(setup):

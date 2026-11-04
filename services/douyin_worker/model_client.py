@@ -1,4 +1,4 @@
-"""Cancelable, tool-free HTTP inference in the existing Q7 queue."""
+"""Cancelable HTTP inference with bounded shared search in the existing Q7 queue."""
 from __future__ import annotations
 
 import json
@@ -18,6 +18,7 @@ from integrations.qq_astrbot.plugin.model_messages import separate_image_parts
 from integrations.qq_astrbot.plugin.prompt_loader import load_prompts
 from integrations.qq_astrbot.plugin.vision_config import project_root
 from integrations.qq_astrbot.plugin.vision_media import MediaError
+from integrations.qq_astrbot.plugin.search_loop import complete_with_search, SearchContextOverflow, ToolCallStream
 
 
 class ModelClient:
@@ -139,9 +140,15 @@ class ModelClient:
                 logging.getLogger(__name__).exception("Could not record Douyin model usage")
 
     async def _complete(self, messages, response_format, *, max_tokens=None):
+        async def call(current, tools, fmt):
+            return await self._complete_once(current, fmt, max_tokens=max_tokens, tools=tools)
+        return await complete_with_search(call, messages, response_format)
+
+    async def _complete_once(self, messages, response_format, *, max_tokens=None, tools=None):
         settings = yaml.safe_load((project_root() / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig"))
         max_tokens = max_tokens or settings["max_tokens"]
-        messages = [{**m, "content": separate_image_parts(m["content"])} for m in messages]
+        from integrations.qq_astrbot.plugin.model_messages import normalize_messages
+        messages = normalize_messages(messages)
         count_messages = json.loads(json.dumps(messages))
         images = 0
         for message in count_messages:
@@ -163,6 +170,7 @@ class ModelClient:
                 # Streaming lets llama.cpp observe a disconnected client during
                 # generation. A non-streaming disconnect can retain the slot.
                 content, finish, size, usage = [], None, 0, None
+                tool_stream = ToolCallStream()
                 async with client.stream("POST", "/v1/chat/completions", json={**body, "stream": True,
                         "stream_options": {"include_usage": True}}) as response:
                     response.raise_for_status()
@@ -182,19 +190,21 @@ class ModelClient:
                         for choice in item.get("choices", []):
                             delta = choice.get("delta", {})
                             if delta.get("tool_calls"):
-                                raise MediaError("unexpected_douyin_tool_call")
+                                tool_stream.add(delta["tool_calls"])
                             if delta.get("content"):
                                 content.append(delta["content"])
                             if choice.get("finish_reason"):
                                 finish = choice["finish_reason"]
-                return {"choices": [{"finish_reason": finish, "message": {"role": "assistant", "content": "".join(content)}}], "usage": usage}
+                return {"choices": [{"finish_reason": finish, "message": tool_stream.message("".join(content))}], "usage": usage}
             template = await post("/apply-template", {"messages": count_messages,
-                "chat_template_kwargs": {"enable_thinking": False}})
+                "chat_template_kwargs": {"enable_thinking": False}, **({"tools": tools} if tools else {})})
             prompt = template["prompt"]
             text_tokens = len(prompt) if isinstance(prompt, list) else len((await post("/tokenize",
                 {"content": prompt, "add_special": False, "parse_special": True}))["tokens"])
             if images > self.config["max_frames_per_request"] or (text_tokens + images * self.config["visual_tokens_per_image"]
                     + max_tokens + settings["context_margin_tokens"] > settings["context_size"]):
+                if tools or any(m.get("role") == "tool" for m in messages):
+                    raise SearchContextOverflow("multimodal_context_capacity_exceeded")
                 raise MediaError("multimodal_context_capacity_exceeded")
             async with InferenceQueue(self.directory).admission(priority=20, phase="douyin", timeout=180, images=images):
                 async with self.media.admission(timeout=180):
@@ -204,7 +214,9 @@ class ModelClient:
                     result = await completion({"model": model, "messages": messages,
                         "temperature": settings.get("utility_temperature", 0), "top_p": settings.get("top_p", .9),
                         "top_k": settings.get("top_k", 20), "max_tokens": max_tokens, "stream": False,
-                        "response_format": response_format, "chat_template_kwargs": {"enable_thinking": False},
+                        **({"response_format": response_format} if response_format else {}),
+                        **({"tools": tools, "tool_choice": "auto"} if tools else {}),
+                        "chat_template_kwargs": {"enable_thinking": False},
                         "reasoning_budget_tokens": 0})
                     result["model"] = model
             return result

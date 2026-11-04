@@ -68,22 +68,27 @@ def fingerprint(config=None):
     build = {"size": binary.stat().st_size, "modified_ns": binary.stat().st_mtime_ns} if binary.is_file() else None
     payload = {"model": active.get("model_id"), "runtime": active.get("runtime"), "build": build,
                "pipeline": {name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest()
-                   for name in ("vision_media.py", "vision_analysis.py", "vision_runtime.py", "vision_client.py", "request_provider.py", "model_messages.py")},
+                   for name in ("vision_media.py", "vision_analysis.py", "vision_runtime.py", "vision_client.py", "request_provider.py", "model_messages.py",
+                                "web_search.py", "search_loop.py", "search_provider.py")},
                # Sampling/personality controls do not alter pixel ingestion or
                # memory capacity. Structural changes also invalidate analysis.
                "runtime_settings": {key: value for key, value in yaml.safe_load(
                    (root / "configs/runtime/qwen3.yaml").read_text(encoding="utf-8-sig")).items()
                    if key in {"model_manifest", "context_size", "gpu_layers", "cache_type_k", "cache_type_v",
                               "mmproj_offload", "image_min_tokens", "image_max_tokens", "prompt_cache_mib"}},
-               "prompts": {key: prompts[key] for key in ("vision_analyze", "vision_merge", "vision_context", "vision_reply")},
+               "prompts": {key: prompts[key] for key in ("vision_analyze", "vision_merge", "vision_context", "vision_reply",
+                                                        "web_search_policy", "tool_web_search", "tool_read_webpage")},
                "budgets": {k: v for k, v in config.items() if k != "enabled"}}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 @lru_cache(maxsize=4)
 def _binary_digest(path, size, modified_ns):
+    digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def capability_fingerprint(config=None):

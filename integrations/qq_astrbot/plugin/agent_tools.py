@@ -13,6 +13,7 @@ from .agent_state import BudgetExhausted, Superseded
 from .prompt_loader import load_prompts
 from .reply_content import has_control_markup, spoken_text
 from .context_budget import tool_result_view
+from .web_search import SearchService, SEARCH_NAMES, rejected, tool_schemas
 
 EMOTIONS = ["neutral", "happy", "sad", "surprised", "gentle", "serious"]
 STICKERS = ["happy", "sad", "surprised", "gentle", "serious"]
@@ -32,6 +33,7 @@ def schemas(prompts):
     song = obj({"candidate": prop("integer", "tool_candidate", minimum=1),
                 "action": prop("string", "tool_song_action", enum=["start", "cancel", "replace"])}, [])
     return {
+        **{tool["function"]["name"]: tool["function"]["parameters"] for tool in tool_schemas(prompts)},
         "emotion": obj({"text": prop("string", "tool_speech_text", minLength=1, maxLength=500),
                         "emotion": prop("string", "tool_emotion_value", enum=EMOTIONS)}, ["text", "emotion"]),
         "musiccover": song,
@@ -113,6 +115,15 @@ class AgentTools:
 
     async def dispatch(self, event, name, args, key):
         owner, run = self.owner, event.get_extra("qq_agent_run")
+        if name in SEARCH_NAMES:
+            count = event.get_extra("qq_search_calls", 0)
+            if event.get_extra("qq_search_closed") or count >= 3:
+                return rejected("search_turn_limit")
+            event.set_extra("qq_search_calls", count + 1)
+            result = await SearchService().execute(name, args)
+            if result.get("continue_without_search") or count + 1 >= 3:
+                event.set_extra("qq_search_closed", True)
+            return result
         media = owner.media
         if name == "emotion":
             if has_control_markup(args["text"]):

@@ -467,7 +467,7 @@ class Q1Guard(star.Star):
                 req.system_prompt += "\n" + prompts["vision_context"]
             # The lifecycle inserts these rules as a second system message,
             # retaining them for this run without saving them as chat history.
-            event.set_extra("qq_agent_rules_prompt", "\n".join((prompts["reply_output"], prompts["agent_policy"])))
+            event.set_extra("qq_agent_rules_prompt", "\n".join((prompts["reply_output"], prompts["agent_policy"], prompts["web_search_policy"])))
             if memory := getattr(self, "memory", None):
                 event.set_extra("qq_persistent_memory", memory)
                 event.set_extra("qq_agent_rules_prompt", event.get_extra("qq_agent_rules_prompt") + "\n" + prompts["shared_memory_use"])

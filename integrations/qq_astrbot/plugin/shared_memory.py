@@ -23,6 +23,15 @@ from .shared_memory_config import PARAMETERS, defaults, read_config, validate_co
 
 SCHEMA_VERSION = 1
 
+# Only internal codes may be persisted; arbitrary exception messages can contain
+# private messages or model output (notably jsonschema.ValidationError).
+JOB_ERROR_CODES = frozenset({
+    "summary_character_limit", "summary_token_limit", "empty_summary",
+    "special_missing_real_agreement", "special_agreement_precedes_intent",
+    "special_unsupported_quote", "special_summary_too_long", "invalid_existing_special",
+    "special_cannot_replace_other_attribute", "memory_unexpected_tool_call", "memory_incomplete_output",
+})
+
 
 def canonical_video_id(value):
     match = re.search(r"(?:douyin:|/video/|/note/|modal_id=)(\d+)", str(value))
@@ -431,9 +440,12 @@ class SharedMemory:
             return result
 
     def fail_job(self, job, error):
+        detail = type(error).__name__
+        if type(error) is ValueError and str(error) in JOB_ERROR_CODES:
+            detail += ":" + str(error)
         with self.connection() as db:
             db.execute("UPDATE sm_jobs SET state='failed',lease=0,attempts=attempts+1,error=?,retry_at=?,updated=? "
-                "WHERE id=? AND token=? AND state='running'", (type(error).__name__, self.clock() + 60, self.clock(), job["id"], job["token"]))
+                "WHERE id=? AND token=? AND state='running'", (detail, self.clock() + 60, self.clock(), job["id"], job["token"]))
             # Failed inputs still require consumers; release pins to permit governance.
             db.execute("DELETE FROM sm_pins WHERE job=? AND EXISTS(SELECT 1 FROM sm_jobs WHERE id=? AND token=?)", (job["id"], job["id"], job["token"]))
 
@@ -718,7 +730,10 @@ class SharedMemory:
                 "AND coalesce(retired,created)<? AND status NOT IN ('withdrawn','purged') "
                 "AND NOT EXISTS(SELECT 1 FROM sm_pins p WHERE p.record_id=sm_records.id)", (cutoff,)).rowcount
             db.execute("UPDATE sm_events SET payload='',status='purged' WHERE status='done' AND created<? "
-                "AND NOT EXISTS(SELECT 1 FROM sm_pins p WHERE p.record_id=sm_events.id)", (cutoff,))
+                "AND NOT EXISTS(SELECT 1 FROM sm_pins p WHERE p.record_id=sm_events.id) "
+                "AND NOT EXISTS(SELECT 1 FROM sm_edges e JOIN sm_consumers c ON c.record_id=e.child "
+                "JOIN sm_records r ON r.id=e.child WHERE e.parent=sm_events.id AND r.status='active' "
+                "AND c.consumer='qq_special' AND c.state='pending')", (cutoff,))
             db.execute("DELETE FROM sm_jobs WHERE state='done' AND updated<?", (cutoff,))
             db.execute("DELETE FROM sm_members WHERE batch IN (SELECT id FROM sm_batches WHERE active=0 AND retired<?)", (cutoff,))
             db.execute("DELETE FROM sm_tokens WHERE hash NOT IN (SELECT hash FROM sm_records WHERE body!='')")

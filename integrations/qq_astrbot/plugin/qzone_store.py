@@ -35,6 +35,10 @@ class QzoneStore:
                   ON qzone_outbox(account,kind,source_id);
                 CREATE TABLE IF NOT EXISTS qzone_scan (
                   account TEXT, day TEXT, PRIMARY KEY(account,day));
+                CREATE TABLE IF NOT EXISTS qzone_schedule (
+                  account TEXT PRIMARY KEY, start_day TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS qzone_backfill (
+                  account TEXT, day TEXT, PRIMARY KEY(account,day));
             """)
 
     @contextmanager
@@ -88,6 +92,31 @@ class QzoneStore:
         with self.connection() as db:
             row = db.execute("SELECT * FROM qzone_outbox WHERE id=?", (key,)).fetchone()
             return dict(row) if row else None
+
+    def schedule_start(self, account, day):
+        """Persist the activation date so downtime cannot skip later due dates."""
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO qzone_schedule VALUES(?,?)", (account, day))
+            return db.execute("SELECT start_day FROM qzone_schedule WHERE account=?", (account,)).fetchone()[0]
+
+    def request_backfill(self, account, day):
+        from datetime import date
+        if date.fromisoformat(day).isoformat() != day:
+            raise ValueError("invalid_qzone_backfill_date")
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO qzone_backfill VALUES(?,?)", (account, day))
+
+    def backfill_dates(self, account):
+        with self.connection() as db:
+            return [r[0] for r in db.execute("SELECT day FROM qzone_backfill WHERE account=? ORDER BY day", (account,))]
+
+    def restore_missed(self, account):
+        # Only the former time-window expiry is reversible. Writes with an
+        # uncertain result and audience changes must never be replayed.
+        with self.connection() as db:
+            db.execute("UPDATE qzone_outbox SET status='draft',updated=? WHERE account=? "
+                "AND kind IN ('daily','event') AND status='expired' AND attempts=0 "
+                "AND platform_id IS NULL AND error IS NULL", (time.time(), account))
 
     def rows(self, account, *, statuses=None):
         with self.connection() as db:
@@ -147,4 +176,5 @@ class QzoneStore:
                     for r in db.execute("SELECT * FROM qzone_gates WHERE account=?", (account,))},
                     "outbox": {r[0]: r[1] for r in db.execute(
                         "SELECT status,count(*) FROM qzone_outbox WHERE account=? GROUP BY status", (account,))},
-                    "stopped": self.stopped(account)}
+                    "stopped": self.stopped(account),
+                    "backfill_dates": self.backfill_dates(account)}

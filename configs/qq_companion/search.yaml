@@ -1,0 +1,5 @@
+# All modules share storage/qq_companion/web_search.sqlite3.
+# Key: TAVILY_API_KEY or storage/qq_companion/tavily_api_key (ignored by Git).
+# Only a free Tavily account with Pay as you go disabled is accepted.
+enabled: true
+monthly_credit_limit: 1000

@@ -8,7 +8,9 @@ initializes a missing persona only. QQ, diaries and Douyin use the AstrBot perso
 
 Q6 publishing, local controls and verification boundaries are documented in
 [q6.md](q6.md). Daily publishing defaults to23:40, two short sentences, once per
-natural day; important calendar/admin events have no daily count quota and are
+content date; missed daily and calendar/admin jobs are backfilled after downtime
+from the persisted activation date. `qzone.py backfill --date yesterday` queues an
+earlier date explicitly. Important events have no daily count quota and are
 deduplicated. Edit `configs/qq_companion/qzone.local.yaml` for time/audience/events
 and `configs/qq_companion/prompts.yaml` keys `qzone_daily`, `qzone_event`,
 `qzone_interaction` for wording. Local policy reloads every minute. Friend
@@ -393,6 +395,50 @@ persistent. Sharing uses the configured Douyin account and mutual Douyin friends
 with 5 successful shares/day/recipient and a 1-hour cooldown; no QQ forwarding.
 The development build has no first-week manual review. Unknown send outcomes halt
 sharing and require evidence-based reconciliation; they are never auto-retried.
+
+## Tavily free-only search
+
+`web_search` and `read_webpage` are shared by QQ's native tool loop and the
+memory/Qzone, proactive, video and Douyin model callers. The model chooses when
+to use them. Background tasks retain their existing JSON output contracts and
+inference queue. Context compression and delivery-only follow-ups remain local.
+
+Configure `configs/qq_companion/search.yaml` and put the Tavily key in ignored
+`storage/qq_companion/tavily_api_key`, or set `TAVILY_API_KEY`. Keep the account on
+the free Researcher plan with Pay as you go off. Do not enable AstrBot's separate
+built-in web search: it does not share this guard. No key enters prompts or logs.
+
+Before every outbound search/extract, `/usage` must confirm a known free plan,
+zero paid usage and remaining account/key credits. Explicit paid allowance,
+invalid/missing billing fields or failed usage checks refuse the request.
+Researcher currently reports `paygo_limit: null`; this is accepted only with
+the known free plan, never treated as additional credit. The shared SQLite
+ledger atomically reserves credits across processes, survives restarts and key
+changes, and caps the UTC calendar month at at most 1,000 (config may lower it).
+Account usage from other applications is included in the preflight check.
+
+Basic search always costs/reserves one credit; automatic depth selection and
+advanced search are disabled. A single-page basic extraction conservatively
+reserves one credit even if Tavily bills less. Ambiguous timeouts retain the
+reservation, so this project can stop slightly before the account allowance is
+fully spent. No automatic retry, provider fallback, key rotation or paid upgrade
+occurs. HTTP quota errors latch until next month; new-month calls must still
+pass the live account check. All deployments should share this state directory;
+keep provider-side paid billing disabled even if the key is used elsewhere.
+
+On denial or network failure the current model turn receives an unavailable
+receipt, loses search access and finishes its normal reply/structured task.
+Search results are untrusted public reference material, not personal memories
+or proof of what a user said. Each generation permits at most three web calls.
+
+```powershell
+# Local budget only; no network.
+envs/astrbot/Scripts/python.exe scripts/qq_companion/search.py
+# Read-only provider usage verification; spends no search credits.
+envs/astrbot/Scripts/python.exe scripts/qq_companion/search.py --account
+# Optional live test; consumes at most one free credit.
+envs/astrbot/Scripts/python.exe scripts/qq_companion/search.py --query "Tavily API documentation"
+```
 
 ## Rollback
 

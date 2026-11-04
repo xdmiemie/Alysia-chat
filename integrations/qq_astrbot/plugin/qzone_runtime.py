@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
 import re
@@ -133,17 +133,19 @@ class DiaryPublisher:
                 return []  # Quiet day: never substitute the private draft.
             account_exists = db.execute("SELECT 1 FROM memory_accounts WHERE bot=? AND character_id=?",
                                        (account, self.memory.character)).fetchone()
-            return None if account_exists else []  # Pending Q5 work waits until today's deadline.
+            return None if account_exists else []  # Pending Q5 work remains eligible across midnight.
 
-    async def generate(self, key, materials, config):
+    async def generate(self, key, materials, config, *, day=None):
         if any(not public_text(m, 400) for m in materials):
             raise ValueError("qzone_non_public_material")
         prompts = load_prompts()
         async with self.memory.admission():
             provider = await self.memory.provider_factory()
             persona = await self.memory.persona_factory() if self.memory.persona_factory else ""
+            today = self.now(config).date().isoformat()
             value = await self.memory._utility(provider, prompts[key], {
-                "persona": persona, "materials": materials, "date": self.now(config).date().isoformat(),
+                "persona": persona, "materials": materials, "date": day or today,
+                "publication_date": today, "is_backfill": bool(day and day < today),
                 "max_characters": config["daily_max_chars"]}, TEXT_SCHEMA, max_tokens=384)
         return two_sentences(value, config["daily_max_chars"])
 
@@ -183,12 +185,15 @@ class DiaryPublisher:
         current = self.config()
         if self.closed or current != config or row["account"] != current["account_id"] or not self.can_send(current, row["kind"]):
             return False
-        if row["day"] != self.now(current).date().isoformat():
+        now = self.now(current)
+        today = now.date().isoformat()
+        if row["day"] > today:
+            return False
+        if row["kind"] not in {"daily", "event"} and row["day"] != today:
             self.store.finish(row["id"], "expired")
             return False
-        if row["kind"] == "daily" and not current["daily_time"] <= self.now(current).strftime("%H:%M") <= current["daily_deadline"]:
-            if self.now(current).strftime("%H:%M") > current["daily_deadline"]:
-                self.store.finish(row["id"], "expired")
+        scheduled_time = current.get(row["kind"] + "_time")
+        if row["day"] == today and scheduled_time and now.strftime("%H:%M") < scheduled_time:
             return False
         interaction = row["kind"] in {"comment", "like"}
         target, _, tid = row["target"].partition(":")
@@ -343,28 +348,46 @@ class DiaryPublisher:
                 now = now or self.now(config)
                 if now.tzinfo is None:
                     raise ValueError("qzone_aware_clock_required")
+                now = now.astimezone(resolve_timezone(config["timezone"]))
                 day, clock = now.date().isoformat(), now.strftime("%H:%M")
+                first = date.fromisoformat(self.store.schedule_start(account, day))
                 if not self.can_send(config, "daily"):
                     return
                 client = self.client_factory(account)
                 await self.reconcile(client, account)
+                self.store.restore_missed(account)
                 audience = self.audience(config)
+                for row in self.store.rows(account, statuses={"draft"}):
+                    await self.deliver(row, config, client)
                 existing = self.store.rows(account)
-                if config["daily_time"] <= clock <= config["daily_deadline"] and not any(
-                        r["kind"] == "daily" and r["day"] == day for r in existing):
-                    materials = self.candidate(account, day)
-                    if materials is not None:
-                        text = await self.generate("qzone_daily", materials, config)
-                        self.store.draft(account, "daily", day, "daily:" + day, text, audience)
-                if clock >= config["event_time"]:
+                dates = set(self.store.backfill_dates(account))
+                while first <= now.date():
+                    dates.add(first.isoformat())
+                    first += timedelta(days=1)
+                for due_day in sorted(d for d in dates if d <= day):
+                    if self.closed or not self.can_send(config, "daily") or self.config() != config:
+                        return
+                    if (due_day < day or clock >= config["daily_time"]) and not any(
+                            r["kind"] == "daily" and r["day"] == due_day for r in existing):
+                        materials = self.candidate(account, due_day)
+                        if materials is not None:
+                            text = await self.generate("qzone_daily", materials, config, day=due_day)
+                            row = self.store.draft(account, "daily", due_day, "daily:" + due_day, text, audience)
+                            await self.deliver(row, config, client)
+                    if due_day == day and clock < config["event_time"]:
+                        continue
+                    event_day = date.fromisoformat(due_day)
                     for event in config["events"]:
                         scheduled = date.fromisoformat(event["date"])
-                        if (scheduled == now.date() or (event.get("annual", False)
-                                and (scheduled.month, scheduled.day) == (now.month, now.day))):
-                            source = "event:" + event["id"] + ":" + day
+                        if (scheduled == event_day or (event.get("annual", False)
+                                and (scheduled.month, scheduled.day) == (event_day.month, event_day.day))):
+                            source = "event:" + event["id"] + ":" + due_day
                             if not any(r["kind"] == "event" and r["source_id"] == source for r in existing):
-                                text = await self.generate("qzone_event", [event["text"]], config)
-                                self.store.draft(account, "event", day, source, text, audience)
+                                if not self.can_send(config, "event") or self.config() != config:
+                                    return
+                                text = await self.generate("qzone_event", [event["text"]], config, day=due_day)
+                                row = self.store.draft(account, "event", due_day, source, text, audience)
+                                await self.deliver(row, config, client)
                 await self.interactions(client, config, now)
                 for row in self.store.rows(account, statuses={"draft"}):
                     if self.closed or self.store.stopped(account):

@@ -164,6 +164,7 @@ class MemoryTasks:
                 complete = False
                 continue
             complete = bool(await self.session(bot, character, scope, day, rows, retention)) and complete
+        await self.process_specials(character)
         return complete
 
     async def correct_existing(self, bot, character, scope, rows):
@@ -251,6 +252,46 @@ class MemoryTasks:
         event_key = identity(scope, day, source_ids)
         materials = [dict(id=r["id"], subject=r["subject"], role=r["role"], occurred=r["occurred"],
             summary=json.loads(r["payload"]).get("text", "")) for r in rows]
+
+        async def generate():
+            return await self.summary("shared_qq_summary", materials, tokens=c["qq_tokens"], chars=c["qq_chars"])
+
+        def commit(db, result):
+            key = s.append_short_term(bot=bot, character=character, module="qq", kind="qq_session_summary",
+                event_id=event_key, body=result["summary"], scope=scope, visibility="session", retention=retention,
+                occurred=rows[0]["occurred"], start=min(r["occurred"] for r in rows), end=max(r["occurred"] for r in rows),
+                parents=source_ids, db=db)
+            db.executemany("UPDATE sm_events SET status='done' WHERE id=?", [(i,) for i in source_ids])
+            # Persist optional extraction with the summary, including across a crash.
+            # Its failures must never roll back the real conversation's summary/ACK.
+            # Legacy/imported summaries have no original chat to extract from.
+            db.execute("INSERT OR IGNORE INTO sm_consumers SELECT id,'qq_special','pending','',? "
+                "FROM sm_records WHERE id=? AND retention='normal'", (s.clock(), key))
+            return key
+        return await self.run(bot=bot, character=character, module="qq", operation="session", day=day,
+            suffix=event_key, inputs=rows, generate=generate, commit=commit)
+
+    async def process_specials(self, character):
+        with self.service.connection() as db:
+            pending = [dict(r) for r in db.execute("SELECT r.* FROM sm_records r JOIN sm_consumers c ON c.record_id=r.id "
+                "WHERE r.character=? AND r.status='active' AND c.state='pending' AND c.consumer='qq_special' "
+                "ORDER BY r.created,r.id", (character,))]
+        for row in pending:
+            await self.extract_special(row)
+
+    async def extract_special(self, session):
+        s, c = self.service, self.service.config
+        bot, character, scope = session["bot"], session["character"], session["scope"]
+        with s.connection() as db:
+            rows = [dict(r) for r in db.execute("SELECT s.* FROM sm_edges e JOIN sm_events s ON s.id=e.parent "
+                "WHERE e.child=? ORDER BY s.seq", (session["id"],))]
+            if session["retention"] != "normal" or not rows or any(
+                    r["status"] != "done" or r["retention"] != "normal" or not r["payload"] for r in rows):
+                s.ack(db, [session["id"]], "qq_special", skipped="special_sources_unavailable")
+                return False
+        source_ids = {r["id"] for r in rows}
+        materials = [dict(id=r["id"], subject=r["subject"], role=r["role"], occurred=r["occurred"],
+            summary=json.loads(r["payload"]).get("text", "")) for r in rows]
         # An actual agreement can arrive just after the previous checkpoint.
         # Prior real messages supply evidence only; they are not summarized again.
         with s.connection() as db:
@@ -262,7 +303,6 @@ class MemoryTasks:
             summary=json.loads(r["payload"]).get("text", "")) for r in reversed(prior)] + materials
 
         async def generate():
-            summary = await self.summary("shared_qq_summary", materials, tokens=c["qq_tokens"], chars=c["qq_chars"])
             # Full source, never a summary, proves explicit intent AND actual agreement.
             async def extract(block):
                 user_ids = [r["id"] for r in block if r["role"] == "user"]
@@ -270,8 +310,7 @@ class MemoryTasks:
                 if not user_ids or not agreement_ids:
                     return []
                 # Bind structured generation to real, role-correct source IDs.
-                # Free strings let models invent IDs, exhausting retries and
-                # blocking the ordinary summary (and idle video browsing).
+                # Free strings let models invent IDs and exhaust retries.
                 schema = deepcopy(SPECIAL)
                 properties = schema["properties"]["entries"]["items"]["properties"]
                 properties["user_event"] = {"type": "string", "enum": user_ids}
@@ -283,58 +322,59 @@ class MemoryTasks:
                         raise
                     middle = len(block) // 2
                     return await extract(block[:middle]) + await extract(block[middle:])
-            entries = await extract(evidence) if retention == "normal" else []
+            entries = await extract(evidence)
             index = {r["id"]: r for r in evidence}
-            valid = []
-            for e in entries:
+            valid, rejected = [], []
+            for position, e in enumerate(entries):
                 user, agreement = index.get(e["user_event"]), index.get(e["agreement_event"])
                 if not e["long_term_intent"] or not e["character_likes"]:
                     continue
+                reason = None
                 if not user or not agreement or user["role"] != "user" or agreement["role"] != "assistant":
-                    raise ValueError("special_missing_real_agreement")
-                if not {user["id"], agreement["id"]} & set(source_ids):
+                    reason = "special_missing_real_agreement"
+                elif not {user["id"], agreement["id"]} & source_ids:
                     continue
-                if agreement["occurred"] < user["occurred"]:
-                    raise ValueError("special_agreement_precedes_intent")
-                if not e["intent_quote"].strip() or not e["agreement_quote"].strip() or e["intent_quote"] not in user["summary"] or e["agreement_quote"] not in agreement["summary"]:
-                    raise ValueError("special_unsupported_quote")
-                if len(e["summary"]) > c["qq_chars"] or await self.count_text(e["summary"]) > c["qq_tokens"]:
-                    raise ValueError("special_summary_too_long")
-                valid.append((e, user["subject"]))
-            return summary["summary"], valid
+                elif agreement["occurred"] < user["occurred"]:
+                    reason = "special_agreement_precedes_intent"
+                elif not e["intent_quote"].strip() or not e["agreement_quote"].strip() or e["intent_quote"] not in user["summary"] or e["agreement_quote"] not in agreement["summary"]:
+                    reason = "special_unsupported_quote"
+                elif len(e["summary"]) > c["qq_chars"] or await self.count_text(e["summary"]) > c["qq_tokens"]:
+                    reason = "special_summary_too_long"
+                if reason:
+                    rejected.append({"index": position, "reason": reason})
+                else:
+                    valid.append((e, user["subject"]))
+            return valid, rejected
 
         def commit(db, result):
-            summary, entries = result
-            key = s.append_short_term(bot=bot, character=character, module="qq", kind="qq_session_summary",
-                event_id=event_key, body=summary, scope=scope, visibility="session", retention=retention,
-                occurred=rows[0]["occurred"], start=min(r["occurred"] for r in rows), end=max(r["occurred"] for r in rows),
-                parents=source_ids, db=db)
+            entries, rejected = result
             for e, subject in entries:
                 s.append_short_term(bot=bot, character=character, module="qq", kind="qq_explicit_liked",
                     event_id=identity(e["user_event"], e["attribute"]), body=e["summary"], scope=scope,
                     subject=subject, visibility="session", occurred=next(r["occurred"] for r in evidence if r["id"] == e["user_event"]),
                     parents=[e["user_event"], e["agreement_event"]], metadata=e, db=db)
-            db.executemany("UPDATE sm_events SET status='done' WHERE id=?", [(i,) for i in source_ids])
-            # Cursor is the per-event ACK, so late/out-of-order events cannot be skipped by a max(seq).
-            return key
-        return await self.run(bot=bot, character=character, module="qq", operation="session", day=day,
-            suffix=event_key, inputs=[*prior, *rows], generate=generate, commit=commit)
+            s.ack(db, [session["id"]], "qq_special")
+            return {"accepted": len(entries), "rejected": rejected}
+        return await self.run(bot=bot, character=character, module="qq", operation="special", day=session["day"],
+            suffix=session["id"], inputs=[session, *prior, *rows], generate=generate, commit=commit)
 
     async def review_special(self, row):
         s = self.service
         with s.connection() as db:
             old = [dict(r) for r in db.execute("SELECT * FROM sm_records WHERE bot=? AND character=? AND scope=? AND subject=? "
                 "AND kind='qq_explicit_liked' AND long=1 AND status='active'", (row["bot"], row["character"], row["scope"], row["subject"]))]
+        attribute = json.loads(row["metadata"]).get("attribute", "").strip().casefold()
+        matches = [r for r in old if r["hash"] == row["hash"] or (attribute and
+            json.loads(r["metadata"]).get("attribute", "").strip().casefold() == attribute)]
+        schema = deepcopy(REVIEW)
+        schema["properties"]["existing_id"] = {"type": ["string", "null"], "enum": [None, *[r["id"] for r in matches]]}
         async def generate():
             return await self.call("shared_qq_review", {"candidate": self.material(row), "evidence": json.loads(row["metadata"]),
-                "current": [self.material(r) for r in old]}, REVIEW, 512)
+                "current": [self.material(r) for r in matches]}, schema, 512)
         def commit(db, value):
             existing = value["existing_id"]
-            if existing and existing not in {r["id"] for r in old}:
+            if existing and existing not in {r["id"] for r in matches}:
                 raise ValueError("invalid_existing_special")
-            attribute = json.loads(row["metadata"]).get("attribute", "").strip().casefold()
-            matches = [r for r in old if r["hash"] == row["hash"] or (attribute and
-                json.loads(r["metadata"]).get("attribute", "").strip().casefold() == attribute)]
             if not existing and matches:
                 # A missing model reference must not multiply an identical request.
                 existing = max(matches, key=lambda r: r["created"])["id"]

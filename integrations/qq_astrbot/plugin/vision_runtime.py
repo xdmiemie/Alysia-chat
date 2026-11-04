@@ -120,7 +120,7 @@ class VisionRuntime:
     async def call(self, prompt_key, payload, images, response_format):
         from astrbot.core.agent.message import Message
         from .context_budget import RequestBudget
-        from .request_provider import request_chat
+        from .search_provider import request_search_chat as request_chat
         provider = await self.provider_factory()
         content = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
         for index, url in enumerate(images):
@@ -277,7 +277,7 @@ class VisionRuntime:
         from .vision_config import project_root
         persona = (project_root() / "configs/characters" / self.character / "system_prompt.txt").read_text(encoding="utf-8-sig")
         # This is prose generation with the same Provider, no Agent/tools/history.
-        from .request_provider import request_chat
+        from .search_provider import request_search_chat as request_chat
         from .context_budget import RequestBudget
         from astrbot.core.agent.message import Message
         provider = await self.provider_factory()

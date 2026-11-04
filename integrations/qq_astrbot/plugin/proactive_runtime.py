@@ -187,7 +187,7 @@ class ProactiveRuntime:
         import jsonschema
         from astrbot.core.agent.message import Message
         from .context_budget import RequestBudget, ContextCapacityError
-        from .request_provider import request_chat
+        from .search_provider import request_search_chat as request_chat
         from .vision_analysis import grammar_schema
         async def call():
             await self.check_services(peer)

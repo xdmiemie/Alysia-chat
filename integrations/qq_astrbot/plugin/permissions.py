@@ -14,7 +14,8 @@ FORBIDDEN = frozenset({"DELETE", "PROFILE_CHANGE", "UPLOAD_ARBITRARY", "EXEC_SHE
                        "MODEL_ACTIVATE", "TRAIN", "WRITE_SYSTEM_FILES"})
 # Trusted source registration, never inferred from a tool name/description/model output.
 TOOL_ACTIONS = {"q2_echo": "READ_PUBLIC", "weapi": "READ_PUBLIC", "emotion": "SPEECH",
-                "music": "MUSIC", "musiccover": "MUSIC", "sticker": "STICKER"}
+                "music": "MUSIC", "musiccover": "MUSIC", "sticker": "STICKER",
+                "web_search": "READ_PUBLIC", "read_webpage": "READ_PUBLIC"}
 
 
 class PermissionPolicy:

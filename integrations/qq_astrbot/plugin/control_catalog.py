@@ -1,6 +1,9 @@
 """Chinese labels and invocation descriptions for the editable prompt bundle."""
 
 PROMPTS = {
+    "web_search_policy": ("联网搜索规则", "聊天、空间、记忆、主动消息和视频理解的公开知识查询"),
+    "tool_web_search": ("联网搜索工具", "模型需要查询公开概念或核实最新事实时"),
+    "tool_read_webpage": ("网页阅读工具", "模型需要读取公开网页原文时"),
     "shared_memory_use": ("共享记忆使用规则", "角色记忆任务与请求视图"),
     "shared_memory_digest": ("候选临时摘要", "大量候选的分层比较；不替换具体视频原文"),
     "shared_qq_summary": ("会话分事项摘要", "空闲或增量检查点；逐会话生成短期记忆"),

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -173,7 +173,7 @@ def test_public_candidate_never_reads_private_draft(setup):
     assert "TOP SECRET" not in json.dumps(service.store.rows(ACCOUNT))
 
 
-def test_pending_diary_deferred_and_past_days_not_published(setup):
+def test_pending_diary_deferred_and_past_draft_backfilled(setup):
     service, client, _, _, repository, calls = setup
     with repository.connection() as db:
         db.execute("INSERT INTO memory_accounts VALUES(?,?,?)", (ACCOUNT, "elysia", NOW.timestamp() - 86400))
@@ -181,7 +181,155 @@ def test_pending_diary_deferred_and_past_days_not_published(setup):
     assert not calls and not client.writes
     service.store.draft(ACCOUNT, "daily", "2026-10-29", "yesterday", TEXT, {"visibility": "self", "friends": []})
     run(service.tick(NOW))
-    assert service.store.rows(ACCOUNT)[0]["status"] == "expired"
+    assert service.store.rows(ACCOUNT)[0]["status"] == "sent"
+    assert len(client.writes) == 1
+
+
+def test_restart_backfills_all_missed_dates_before_todays_due_time(setup, monkeypatch):
+    service, client, _, path, _, calls = setup
+    run(service.tick(NOW))
+    now = (NOW + timedelta(days=4)).replace(hour=9)
+    restarted = DiaryPublisher(service.directory, service.memory, lambda _: client, configuration=path)
+    monkeypatch.setattr(restarted, "now", lambda _: now)
+    run(restarted.tick(now))
+    run(restarted.tick(now))
+    assert [r["day"] for r in service.store.rows(ACCOUNT, statuses={"sent"})] == [
+        "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"]
+    assert len(client.writes) == len(calls) == 4
+    assert calls[-1]["date"] == "2026-11-02"
+    assert calls[-1]["publication_date"] == "2026-11-03"
+    assert calls[-1]["is_backfill"] is True
+
+
+def test_backfill_request_uses_requested_day_public_materials_once(setup):
+    service, client, _, _, repository, calls = setup
+    with repository.connection() as db:
+        db.execute("INSERT INTO diary_entries VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("past", ACCOUNT, "elysia", "2026-10-29", "PRIVATE", "private", "往日的公开心情", "[]", None, 1))
+    service.store.request_backfill(ACCOUNT, "2026-10-29")
+    service.store.request_backfill(ACCOUNT, "2026-10-29")
+    run(service.tick(NOW))
+    run(service.tick(NOW))
+    assert len(client.writes) == 2
+    assert calls[0]["date"] == "2026-10-29"
+    assert calls[0]["materials"] == ["往日的公开心情"]
+    assert service.store.backfill_dates(ACCOUNT) == ["2026-10-29"]
+
+
+def test_due_post_still_runs_after_former_deadline(setup):
+    service, client, config, path, _, _ = setup
+    config["daily_deadline"] = "23:41"
+    save_config(config, path)
+    run(service.tick(NOW))
+    assert len(client.writes) == 1
+    assert service.store.rows(ACCOUNT)[0]["status"] == "sent"
+
+
+def test_backfill_pending_candidate_survives_midnight(setup, monkeypatch):
+    service, client, _, _, repository, calls = setup
+    with repository.connection() as db:
+        db.execute("INSERT INTO memory_accounts VALUES(?,?,?)", (ACCOUNT, "elysia", NOW.timestamp()))
+    run(service.tick(NOW))
+    now = (NOW + timedelta(days=1)).replace(hour=9)
+    monkeypatch.setattr(service, "now", lambda _: now)
+    run(service.tick(now))
+    assert not client.writes and not calls
+    with repository.connection() as db:
+        db.execute("INSERT INTO diary_entries VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("late", ACCOUNT, "elysia", "2026-10-30", "PRIVATE", "private", "迟到的公开心情", "[]", None, 1))
+    run(service.tick(now))
+    assert len(client.writes) == 1
+    assert calls[0]["materials"] == ["迟到的公开心情"]
+
+
+def test_missed_event_and_annual_event_backfilled_once(setup, monkeypatch):
+    service, client, config, path, _, calls = setup
+    config["events"] = [
+        {"id": "once", "date": "2026-10-31", "text": "公开纪念日"},
+        {"id": "annual", "date": "2025-10-31", "annual": True, "text": "公开节日"}]
+    save_config(config, path)
+    run(service.tick(NOW))
+    now = (NOW + timedelta(days=2)).replace(hour=8)
+    monkeypatch.setattr(service, "now", lambda _: now)
+    run(service.tick(now))
+    run(service.tick(now))
+    events = [r for r in service.store.rows(ACCOUNT, statuses={"sent"}) if r["kind"] == "event"]
+    assert len(events) == 2 and all(r["day"] == "2026-10-31" for r in events)
+    assert len(client.writes) == 4
+    assert all(c["is_backfill"] for c in calls[1:])
+
+
+def test_only_unattempted_time_expiries_are_restored(setup):
+    service, client, config, _, _, _ = setup
+    rows = []
+    for offset, status, error, attempted in [
+        (1, "expired", None, False), (2, "expired", "audience_changed", False),
+        (3, "unknown", None, True), (4, "failed", None, True), (5, "expired", None, True)]:
+        day = (NOW.date() - timedelta(days=offset)).isoformat()
+        row = service.store.draft(ACCOUNT, "daily", day, "daily:" + day, TEXT, service.audience(config))
+        if attempted:
+            service.store.claim(row["id"])
+        service.store.finish(row["id"], status, error=error)
+        rows.append(row)
+    run(service.tick(NOW))
+    assert [service.store.get(r["id"])["status"] for r in rows] == ["sent", "expired", "unknown", "failed", "expired"]
+    assert len(client.writes) == 2
+
+
+def test_future_drafts_wait_and_past_interactions_still_expire(setup):
+    service, client, config, path, _, _ = setup
+    row = service.store.draft(ACCOUNT, "daily", "2026-10-31", "daily:2026-10-31", TEXT, service.audience(config))
+    assert not run(service.deliver(row, config, client))
+    assert service.store.get(row["id"])["status"] == "draft"
+    config.update(interactions_enabled=True, friend_allowlist=["10001"])
+    save_config(config, path)
+    for capability in ("read_friend", "comment"):
+        service.store.gate(ACCOUNT, capability, True)
+    row = service.store.draft(ACCOUNT, "comment", "2026-10-29", "10001:post", TEXT, {}, target="10001:post")
+    assert not run(service.deliver(row, config, client))
+    assert service.store.get(row["id"])["status"] == "expired"
+    assert not client.writes
+
+
+def test_model_failure_remains_due_after_restart(setup, monkeypatch):
+    service, client, _, path, _, _ = setup
+    original = service.memory._utility
+    async def unavailable(*args, **kwargs):
+        raise TimeoutError("model unavailable")
+    service.memory._utility = unavailable
+    run(service.tick(NOW))
+    assert not service.store.rows(ACCOUNT)
+    service.memory._utility = original
+    now = (NOW + timedelta(days=1)).replace(hour=9)
+    restarted = DiaryPublisher(service.directory, service.memory, lambda _: client, configuration=path)
+    monkeypatch.setattr(restarted, "now", lambda _: now)
+    run(restarted.tick(now))
+    assert [(r["day"], r["status"]) for r in service.store.rows(ACCOUNT)] == [("2026-10-30", "sent")]
+
+
+def test_scheduler_uses_configured_timezone_for_due_dates(setup, monkeypatch):
+    service, _, _, _, _, _ = setup
+    local = NOW + timedelta(minutes=30)
+    monkeypatch.setattr(service, "now", lambda _: local)
+    run(service.tick(local.astimezone(ZoneInfo("UTC"))))
+    # It is already Oct 31 locally, before today's scheduled time. Do not
+    # create an Oct 30 post just because UTC still has the previous date.
+    assert not service.store.rows(ACCOUNT)
+    assert service.store.schedule_start(ACCOUNT, "2020-01-01") == "2026-10-31"
+
+
+def test_backfill_cli_queues_exact_past_date_and_rejects_future(setup, monkeypatch):
+    import scripts.qq_companion.qzone as cli
+    service, client, _, path, _, _ = setup
+    monkeypatch.setattr(cli, "STATE", service.directory)
+    monkeypatch.setattr(cli.DiaryPublisher, "now", staticmethod(lambda _: NOW))
+    args = SimpleNamespace(command="backfill", config=path, account=ACCOUNT, date="yesterday")
+    assert run(cli.main_async(args)) == 0
+    assert service.store.backfill_dates(ACCOUNT) == ["2026-10-29"]
+    args.date = "2026-10-31"
+    with pytest.raises(ValueError):
+        run(cli.main_async(args))
+    assert not client.writes
 
 
 def test_unknown_write_is_reserved_and_never_replayed(setup):

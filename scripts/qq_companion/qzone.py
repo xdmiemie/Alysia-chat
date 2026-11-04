@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime
+from datetime import date, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -203,6 +203,13 @@ async def main_async(args):
         raise ValueError("qzone_account_required")
     if args.command == "status":
         print(json.dumps(store.summary(account), ensure_ascii=False, indent=2))
+    elif args.command == "backfill":
+        today = DiaryPublisher.now(config).date()
+        day = today - timedelta(days=1) if args.date == "yesterday" else date.fromisoformat(args.date)
+        if day >= today:
+            raise ValueError("qzone_backfill_requires_past_date")
+        store.request_backfill(account, day.isoformat())
+        print("Q6 backfill queued for " + day.isoformat() + "; the publisher will process it on its next tick.")
     elif args.command == "discover-friends":
         return 0 if await discover(account, args.config) else 2
     elif args.command == "test-self":
@@ -244,6 +251,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "stop", "resume", "discover-friends", "reconcile"):
         commands.add_parser(name)
+    p = commands.add_parser("backfill")
+    p.add_argument("--date", default="yesterday", help="YYYY-MM-DD or yesterday in the configured timezone")
     p = commands.add_parser("configure")
     p.add_argument("--time")
     switch = p.add_mutually_exclusive_group()
